@@ -41,7 +41,7 @@ function tableHtml() {
   if (!n.list.length) return emptyState('activity', 'Nessuna connessione', 'Premi Aggiorna per leggere le connessioni attive.');
   const rows = filtered();
   if (!rows.length) return emptyState('search', 'Nessuna connessione corrisponde', 'Cambia la ricerca o il filtro sullo stato.');
-  return table({ columns, rows, sort: n.sort, cls: 'list-h' });
+  return table({ columns, rows, sort: n.sort, cls: 'list-h', rowAttrs: (c) => `data-ctx="conn" data-key="${esc(rowKey(c))}"` });
 }
 
 function pills() {
@@ -130,6 +130,9 @@ function connMenu(anchor, k) {
     { ic: 'globe', label: 'WHOIS dell\'indirizzo remoto', disabled: !remote, run: () => navigate('whois', { target: c.remoteAddress, start: true }) },
     { ic: 'copy', label: 'Copia l\'indirizzo remoto', disabled: !remote, run: () => call('setClipboard', { text: c.remoteAddress }).then(() => toast('Indirizzo copiato.', { tone: 'success' }), toastError) },
     { sep: true },
+    { ic: 'external', label: 'Apri l\'indirizzo remoto nel browser', disabled: !remote, run: () => call('launch', { kind: c.remotePort === 443 ? 'https' : 'http', host: c.remoteAddress, port: c.remotePort }).catch(toastError) },
+    { ic: 'activity', label: 'Ping continuo (prompt)', disabled: !remote, run: () => call('launch', { kind: 'ping', host: c.remoteAddress, port: 0 }).catch(toastError) },
+    { sep: true },
     { ic: 'power', label: 'Termina il processo…', danger: true, disabled: c.processId <= 4, run: () => killProcess(c) },
   ]);
 }
@@ -160,4 +163,5 @@ definePage('netstat', {
   leave: () => { /* il timer resta: refresh() non fa nulla fuori dalla pagina */ },
   onInput: (el, field) => { if (field === 'q') { S.netstat.q = el.value; renderTable(); } },
   onSort: (k) => { S.netstat.sort = nextSort(S.netstat.sort, k); renderTable(); },
+  onContext: (row, point) => connMenu(point, row.dataset.key),
 });

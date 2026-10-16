@@ -67,7 +67,7 @@ function tableHtml() {
   if (!S.data.trace.length) return emptyState('route', 'Nessun traceroute nella sessione', 'Scrivi una destinazione e premi Avvia: i salti compaiono uno alla volta.');
   const rows = hopsOf(S.trace.current);
   if (!rows.length) return emptyState('search', 'Nessun salto per questa destinazione', 'Scegli un\'altra destinazione dall\'elenco.');
-  return table({ columns, rows, sort: null, cls: 'list-h' });
+  return table({ columns, rows, sort: null, cls: 'list-h', rowAttrs: (h) => (h.status === 'OK' ? `data-ctx="hop" data-ip="${esc(h.ipAddress)}"` : '') });
 }
 
 function tableCard() {
@@ -134,6 +134,7 @@ function hopMenu(anchor, ip) {
     { header: ip },
     { ic: 'globe', label: 'WHOIS', run: () => navigate('whois', { target: ip, start: true }) },
     { ic: 'plug', label: 'Scansiona le porte', disabled: !isRemoteAddress(ip), run: () => navigate('ports', { host: ip, start: true }) },
+    { ic: 'activity', label: 'Ping continuo (prompt)', run: () => call('launch', { kind: 'ping', host: ip, port: 0 }).catch(toastError) },
     { ic: 'copy', label: 'Copia l\'indirizzo IP', run: () => call('setClipboard', { text: ip }).then(() => toast('Indirizzo IP copiato.', { tone: 'success' }), toastError) },
   ]);
 }
@@ -185,4 +186,5 @@ definePage('trace', {
   },
   onChange: (el, field) => { if (field === 'current') { S.trace.current = el.value; renderTable(); } },
   onSubmit: () => start(),
+  onContext: (row, point) => hopMenu(point, row.dataset.ip),
 });

@@ -88,7 +88,7 @@ function tableHtml() {
   if (!rows.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
   return table({
     columns, rows, sort: S.net.sort, cls: 'scan-h',
-    rowAttrs: (h) => `data-action="host-details" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''}"`,
+    rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''}"`,
   }).replace('<table class="dt">', '<table class="dt clickable">');
 }
 
@@ -100,7 +100,7 @@ function tableCard() {
         <button class="btn btn-sm" data-action="clear-hosts" ${S.data.hosts.length ? '' : 'disabled'}>${icon('trash')} Svuota</button></div>
     </div>
     <div id="hosts-table">${tableHtml()}</div>
-    <div class="table-foot">${icon('info', { size: 14 })} Clic su una riga per i dettagli; dal menu ⋯ scansione delle porte, WHOIS e traceroute dell'host.</div>
+    <div class="table-foot">${icon('info', { size: 14 })} Clic su una riga per i dettagli; tasto destro (o ⋯) per porte, WHOIS, traceroute, browser, cartelle condivise, Desktop remoto, SSH e ping.</div>
   </section>`;
 }
 
@@ -159,17 +159,30 @@ async function stop() {
 
 function hostByIp(ip) { return S.data.hosts.find((h) => h.ipAddress === ip); }
 
+/** Strumenti di Windows su un host (browser, Esplora risorse, Desktop remoto, SSH, ping): voci comuni ai menu. */
+export function launchItems(host, ports = []) {
+  const open = (kind, port = 0) => () => call('launch', { kind, host, port }).catch((e) => toastError(e));
+  const has = (n) => ports.some((p) => p.portNumber === n && p.protocol === 'TCP');
+  return [
+    { ic: 'external', label: 'Apri nel browser (http)', run: open('http'), hint: has(80) ? '80' : '' },
+    { ic: 'external', label: 'Apri nel browser (https)', run: open('https'), hint: has(443) ? '443' : '' },
+    { ic: 'folderOpen', label: 'Cartelle condivise (Esplora risorse)', run: open('explorer'), hint: has(445) ? 'SMB' : '' },
+    { ic: 'monitor', label: 'Desktop remoto', run: open('rdp'), hint: has(3389) ? 'RDP' : '' },
+    { ic: 'terminal', label: 'Terminale SSH', run: open('ssh'), hint: has(22) ? 'SSH' : '' },
+    { ic: 'activity', label: 'Ping continuo (prompt)', run: open('ping') },
+  ];
+}
+
 function hostMenu(anchor, ip) {
   const h = hostByIp(ip);
   if (!h) return;
   openMenu(anchor, [
-    { header: h.ipAddress },
+    { header: `${h.ipAddress}${h.hostname ? ` · ${h.hostname}` : ''}` },
     { ic: 'plug', label: 'Scansiona le porte', run: () => navigate('ports', { host: ip, start: true }) },
     { ic: 'globe', label: 'WHOIS', run: () => navigate('whois', { target: ip, start: true }) },
     { ic: 'route', label: 'Traceroute', run: () => navigate('trace', { target: ip, start: true }) },
     { sep: true },
-    { ic: 'external', label: 'Apri nel browser (http)', run: () => call('openUrl', { url: `http://${ip}/` }) },
-    { ic: 'external', label: 'Apri nel browser (https)', run: () => call('openUrl', { url: `https://${ip}/` }) },
+    ...launchItems(ip, S.data.ports.filter((p) => p.host === ip)),
     { sep: true },
     { ic: 'copy', label: 'Copia l\'indirizzo IP', run: () => copy(h.ipAddress, 'Indirizzo IP copiato.') },
     { ic: 'copy', label: 'Copia il MAC', disabled: !h.macAddress, run: () => copy(h.macAddress, 'MAC copiato.') },
@@ -217,7 +230,8 @@ function details(ip) {
     foot: `<div class="left">
         <button class="btn btn-primary" data-action="host-ports" data-ip="${esc(ip)}">${icon('plug')} Scansiona le porte</button>
         <button class="btn" data-action="host-whois" data-ip="${esc(ip)}">${icon('globe')} WHOIS</button>
-        <button class="btn" data-action="host-trace" data-ip="${esc(ip)}">${icon('route')} Traceroute</button></div>
+        <button class="btn" data-action="host-trace" data-ip="${esc(ip)}">${icon('route')} Traceroute</button>
+        <button class="btn" data-action="host-tools" data-ip="${esc(ip)}">${icon('external')} Apri con… ${icon('chevronDown', { size: 13 })}</button></div>
       <button class="btn btn-ghost" data-action="close-overlay">Chiudi</button>`,
   });
 }
@@ -236,6 +250,7 @@ const actions = {
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),
   'host-whois': (el) => navigate('whois', { target: el.dataset.ip, start: true }),
   'host-trace': (el) => navigate('trace', { target: el.dataset.ip, start: true }),
+  'host-tools': (el) => openMenu(el, [{ header: el.dataset.ip }, ...launchItems(el.dataset.ip, S.data.ports.filter((p) => p.host === el.dataset.ip))], { above: true }),
 };
 
 on('network.progress', (d) => {
@@ -280,4 +295,5 @@ definePage('network', {
   onChange: (el, field) => { if (field === 'resolveDns') S.net.resolveDns = el.checked; },
   onSubmit: () => start(),
   onSort: (key) => { S.net.sort = nextSort(S.net.sort, key); renderTable(); },
+  onContext: (row, point) => hostMenu(point, row.dataset.ip),
 });

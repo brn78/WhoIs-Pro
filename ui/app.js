@@ -80,10 +80,10 @@ function shell() {
   </div>`;
 }
 
-/** Attività in corso nella barra superiore: cosa sta girando e a che punto è; vuoto quando non c'è niente. */
-function activityChip() {
+/** Attività in corso: cosa sta girando e a che punto è, oppure null. */
+function activityData() {
   const r = (S.st && S.st.running) || {};
-  if (!isRunning()) return '';
+  if (!isRunning()) return null;
   let title = 'Scansione in corso';
   let sub = '';
   let pct = null;
@@ -102,10 +102,33 @@ function activityChip() {
     title = 'Aggiornamento in corso';
     sub = 'Database dei produttori';
   }
+  return { title: `${title}${pct != null ? ` · ${pct}%` : ''}`, sub, pct };
+}
+
+/** Riquadro dell'attività nella barra superiore; vuoto quando non c'è niente in corso. */
+function activityChip() {
+  const d = activityData();
+  if (!d) return '';
   return `<button class="activity-chip" data-action="monitor" title="Vai alla pagina dell'attività in corso">
     <span class="pulse is-busy"></span>
-    <span class="activity-text"><b>${title}${pct != null ? ` · ${pct}%` : ''}</b><small>${esc(sub)}</small></span>
-    ${pct != null ? `<span class="meter"><span style="width:${pct}%"></span></span>` : ''}</button>`;
+    <span class="activity-text"><b>${esc(d.title)}</b><small>${esc(d.sub)}</small></span>
+    ${d.pct != null ? `<span class="meter"><span style="width:${d.pct}%"></span></span>` : ''}</button>`;
+}
+
+/** Aggiorna il riquadro sul posto (testo e barra), senza ricrearlo: niente sfarfallio a ogni avanzamento. */
+function updateActivity() {
+  const middle = $('#topbar-middle');
+  if (!middle) return;
+  const d = activityData();
+  const chip = $('.activity-chip', middle);
+  if (!d) { if (chip) chip.remove(); return; }
+  if (!chip || !!$('.meter', chip) !== (d.pct != null)) { middle.innerHTML = activityChip(); return; }
+  const title = $('b', chip);
+  const sub = $('small', chip);
+  if (title.textContent !== d.title) title.textContent = d.title;
+  if (sub.textContent !== d.sub) sub.textContent = d.sub;
+  const bar = $('.meter > span', chip);
+  if (bar) bar.style.width = `${d.pct}%`;
 }
 
 function internetPill() {
@@ -150,8 +173,7 @@ function updateChrome() {
   if (!S.st) return;
   const actions = $('#topbar-actions');
   if (actions) actions.innerHTML = topbarActions();
-  const middle = $('#topbar-middle');
-  if (middle) middle.innerHTML = activityChip();
+  updateActivity();
   for (const p of NAV) {
     const el = $(`[data-badge="${p.key}"]`);
     if (!el) continue;
@@ -403,6 +425,17 @@ document.addEventListener('click', (e) => {
   if (!fn) return;
   e.preventDefault();
   fn(el, e);
+});
+
+// Tasto destro su una riga con data-ctx: il menu delle operazioni della pagina, nel punto del clic
+document.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('[data-ctx]');
+  if (!row) return;
+  const page = PAGES[S.page];
+  if (!page || !page.onContext) return;
+  e.preventDefault();
+  closeMenu();
+  page.onContext(row, { x: e.clientX, y: e.clientY });
 });
 
 document.addEventListener('submit', (e) => {

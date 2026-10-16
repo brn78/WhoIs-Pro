@@ -110,9 +110,16 @@ export function promptDialog({ title, sub = '', label, value = '', placeholder =
   });
 }
 
-/** Menu a comparsa accanto a un elemento. items: { header } | { html } | { sep } | { ic, label, run, danger, disabled, hint }. */
+/**
+ * Menu a comparsa accanto a un elemento, oppure nel punto { x, y } (tasto destro).
+ * items: { header } | { html } | { sep } | { ic, label, run, danger, disabled, hint }.
+ */
 export function openMenu(anchor, items, { above = false } = {}) {
   closeMenu();
+  if (anchor && !anchor.getBoundingClientRect) {
+    const p = anchor;
+    anchor = { getBoundingClientRect: () => ({ left: p.x, right: p.x, top: p.y, bottom: p.y, width: 0, height: 0 }) };
+  }
   const menu = document.createElement('div');
   menu.className = 'menu';
   menu.setAttribute('role', 'menu');
@@ -127,7 +134,8 @@ export function openMenu(anchor, items, { above = false } = {}) {
   const h = menu.offsetHeight;
   const w = menu.offsetWidth;
   let top = above ? r.top - h - 6 : r.bottom + 6;
-  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  if (top + h > window.innerHeight - 8) top = Math.max(8, Math.min(r.top - h - 6, window.innerHeight - h - 8));
+  if (top < 8) top = Math.max(8, window.innerHeight - h - 8);
   let left = r.left;
   if (left + w > window.innerWidth - 8) left = Math.max(8, r.right - w);
   menu.style.left = `${Math.max(8, left)}px`;
