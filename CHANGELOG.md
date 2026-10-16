@@ -5,7 +5,7 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
-## 2.4.1 · in lavorazione
+## 2.4.1 · 16 ottobre 2026
 
 - **Riapre l'ultima sessione**: all'avvio il programma riapre l'ultima sessione salvata o aperta, se il file c'è
   ancora; altrimenti parte da una sessione nuova e lo dice. *Nuova sessione* fa ripartire da zero anche al prossimo
