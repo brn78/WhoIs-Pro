@@ -860,20 +860,23 @@ button.kpi:hover { border-color: var(--border-strong); box-shadow: var(--shadow)
 .session-chip .site-icon.is-dirty { background: var(--warning-soft); color: var(--warning-text); }
 .session-chip .site-icon.is-saved { background: var(--success-soft); color: var(--success-text); }
 
-/* moduli di avvio delle scansioni: campi affiancati, pulsante in fondo */
-.scan-form { display: grid; grid-template-columns: minmax(240px, 2.2fr) repeat(auto-fit, minmax(120px, 150px)); gap: 14px 16px; align-items: end; }
-.scan-form .field-wide { grid-column: 1 / -1; }
-.scan-form .field-switches { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; min-height: 36px; }
+/* moduli di avvio delle scansioni: campi affiancati sulla stessa riga. Regola generale: il primo campo prende lo
+   spazio che resta, i campi numerici hanno larghezza fissa, gli interruttori quella del loro testo e i pulsanti
+   (.field-end) stanno sempre ancorati al bordo destro, staccati dai campi. */
+.scan-form { display: flex; flex-wrap: wrap; gap: 14px 16px; align-items: flex-end; }
+.scan-form > .field { flex: 0 1 150px; min-width: 0; }
+.scan-form > .field:first-child, .scan-form > .field-grow { flex: 1 1 260px; }
+.scan-form > .field-2 { flex: 1 1 250px; }
+.scan-form > .field-select { flex: 0 1 190px; }
+.scan-form > .field-wide { flex: 1 1 100%; }
+.scan-form > .field-auto { flex: 0 0 auto; }
+.scan-form > .field-end { flex: 0 0 auto; margin-left: auto; padding-left: 16px; }
+.scan-form .field-switches { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; min-height: 36px; white-space: nowrap; }
 .scan-form .field-actions { display: flex; align-items: center; gap: 8px; }
 .scan-form .input-with-button { display: flex; gap: 8px; }
 .scan-form .input-with-button .input { flex: 1 1 auto; min-width: 0; }
-.field-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* modulo delle porte: quattro colonne fisse, interruttori su una riga e Avvia in fondo a destra */
-.scan-form.ports-form { grid-template-columns: minmax(240px, 2.2fr) repeat(3, minmax(130px, 180px)); }
-.scan-form.ports-form .field-switches-row { grid-column: 1 / 4; }
-.scan-form.ports-form .field-switches-row .field-switches { flex-wrap: nowrap; white-space: nowrap; }
-.scan-form.ports-form .field-actions-end { grid-column: 4; justify-self: end; }
 .scan-form .switch { white-space: nowrap; }
+.field-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .fields { display: flex; flex-direction: column; gap: 18px; }
 .field-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .field-label-row .hint { font-variant-numeric: tabular-nums; }

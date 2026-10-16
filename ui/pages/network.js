@@ -36,9 +36,9 @@ function formCard() {
         </div></div>
       <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="500" data-field="threads" value="${n.threads}"></div>
       <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}"></div>
-      <div class="field"><span class="field-label">Opzioni</span><div class="field-switches">
+      <div class="field field-auto"><span class="field-label">Opzioni</span><div class="field-switches">
         <label class="switch"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Risolvi i nomi (DNS)</span></label></div></div>
-      <div class="field"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${n.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
         <button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>
       </div></div>

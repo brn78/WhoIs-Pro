@@ -16,10 +16,10 @@ function formCard() {
   const dis = running() ? 'disabled' : '';
   return `<section class="card"><div class="card-body">
     <form data-form="trace" class="scan-form" autocomplete="off">
-      <div class="field" style="grid-column: span 2"><label for="f-target">Destinazione</label>
+      <div class="field"><label for="f-target">Destinazione</label>
         <input class="input input-mono" id="f-target" data-field="target" value="${esc(t.target)}" placeholder="esempio.it · 1.1.1.1" ${dis}></div>
       <div class="field"><label for="f-hops">Salti al massimo</label><input class="input" id="f-hops" type="number" min="1" max="64" data-field="maxHops" value="${t.maxHops}" ${dis}></div>
-      <div class="field"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${running()
           ? `<button type="button" class="btn btn-danger" data-action="trace-stop">${icon('stop')} Ferma</button>`
           : `<button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>`}
