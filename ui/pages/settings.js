@@ -4,7 +4,7 @@ import { $, esc, shortPath } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, emit } from '../core/store.js';
 import { table } from '../core/table.js';
-import { closeOverlays, confirmDialog, emptyState, note, openDrawer, pageHead, toast, toastError } from '../core/ui.js';
+import { closeOverlays, confirmDialog, emptyState, note, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.settings = { data: null, adapters: null, busy: false, loading: false };
 
@@ -44,8 +44,7 @@ function profilesCard(d) {
     { key: 'config', label: 'Configurazione', sortable: false, cell: profileText },
     { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (p) => `<div class="row-actions">
         <button class="btn btn-sm btn-primary" data-action="apply-profile" data-id="${esc(p.id)}">${icon('zap')} Applica</button>
-        <button class="row-menu-btn" data-action="edit-profile" data-id="${esc(p.id)}" title="Modifica">${icon('edit')}</button>
-        <button class="row-menu-btn" data-action="delete-profile" data-id="${esc(p.id)}" title="Elimina">${icon('trash')}</button></div>` },
+        <button class="row-menu-btn" data-action="profile-menu" data-id="${esc(p.id)}" title="Altre azioni">${icon('more')}</button></div>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('network')}<h2>Profili di rete</h2><span class="count">${d.profiles.length}</span></div>
       <button class="btn btn-sm btn-primary" data-action="new-profile">${icon('plus')} Nuovo profilo</button></div>
@@ -58,15 +57,13 @@ function adaptersCard() {
   const rows = S.settings.adapters;
   if (!rows) return `<section class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle schede di rete…</div></section>`;
   const columns = [
-    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon ${a.up ? 'primary' : ''}">${icon('network')}</span><div class="cell-text"><b>${esc(a.name)}</b><small>${esc(a.description)}</small></div></div>` },
+    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon ${a.up ? 'primary' : ''}">${icon('network')}</span><div class="cell-text"><b class="trunc" title="${esc(a.name)}">${esc(a.name)}</b><small class="trunc" title="${esc(a.description)}">${esc(a.description)}</small></div></div>` },
     { key: 'up', label: 'Stato', cell: (a) => (a.up ? '<span class="pill success pill-dot">Collegata</span>' : '<span class="pill pill-dot">Scollegata</span>') },
     { key: 'dhcp', label: 'Indirizzo', cell: (a) => (a.dhcp ? '<span class="pill info">DHCP</span>' : '<span class="pill primary">Statico</span>') },
     { key: 'ip', label: 'IP / maschera', cls: 'mono', cell: (a) => (a.ip ? `${esc(a.ip)} / ${esc(a.mask)}` : '<span class="faint">—</span>') },
     { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
-    { key: 'dns', label: 'DNS', cls: 'mono', cell: (a) => esc((a.dns || []).join(', ') || '—') },
-    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<div class="row-actions">
-        <button class="btn btn-sm" data-action="save-adapter" data-adapter="${esc(a.name)}">${icon('plus')} Salva come profilo</button>
-        <button class="btn btn-sm" data-action="adapter-dhcp" data-adapter="${esc(a.name)}" ${a.dhcp ? 'disabled' : ''}>${icon('rotate')} Torna a DHCP</button></div>` },
+    { key: 'dns', label: 'DNS', cls: 'mono', cell: (a) => `<span class="trunc w-name" title="${esc((a.dns || []).join(', '))}">${esc((a.dns || []).join(', ') || '—')}</span>` },
+    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<button class="row-menu-btn" data-action="adapter-menu" data-adapter="${esc(a.name)}" title="Azioni">${icon('more')}</button>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('hardDrive')}<h2>Schede di rete del PC</h2><span class="count">${rows.length}</span></div>
       <button class="btn btn-sm" data-action="reload-adapters">${icon('refresh')} Aggiorna</button></div>
@@ -84,7 +81,7 @@ function dataCard(d) {
 
 function render() {
   const d = S.settings.data;
-  const head = pageHead('settings', 'Impostazioni', 'Avvio con Windows, icona nell\'area di notifica, tema e profili di rete.');
+  const head = pageHead('Avvio con Windows, icona nell\'area di notifica, tema e profili di rete.');
   if (!d) return `${head}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle impostazioni…</div></div>`;
   return `${head}<div class="grid grid-2">${startupCard(d)}${themeCard(d)}</div>
     <div class="grid section-gap">${profilesCard(d)}${adaptersCard()}${dataCard(d)}</div>`;
@@ -242,13 +239,35 @@ const actions = {
     profileDrawer({ name: '', adapter: a.name, dhcp: a.dhcp, ip: a.ip, mask: a.mask || '255.255.255.0', gateway: a.gateway, dns1: (a.dns || [])[0] || '', dns2: (a.dns || [])[1] || '' }, { fromAdapter: true });
   },
   'adapter-dhcp': (el) => applyProfile(null, { id: '', name: 'DHCP', adapter: el.dataset.adapter, dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' }),
+  'adapter-menu': (el) => {
+    const a = (S.settings.adapters || []).find((x) => x.name === el.dataset.adapter);
+    if (!a) return;
+    const mine = ((S.settings.data || {}).profiles || []).filter((p) => p.adapter === a.name);
+    openMenu(el, [
+      { header: a.name },
+      { ic: 'plus', label: 'Salva come profilo…', run: () => actions['save-adapter'](el) },
+      { ic: 'rotate', label: 'Torna a DHCP', disabled: !!a.dhcp, run: () => actions['adapter-dhcp'](el) },
+      ...(mine.length ? [{ sep: true }, ...mine.map((p) => ({ ic: 'zap', label: `Applica «${p.name}»`, hint: p.dhcp ? 'DHCP' : p.ip, run: () => applyProfile(p.id) }))] : []),
+    ]);
+  },
+  'profile-menu': (el) => {
+    const p = (S.settings.data.profiles || []).find((x) => x.id === el.dataset.id);
+    if (!p) return;
+    openMenu(el, [
+      { header: `${p.name} · ${p.adapter}` },
+      { ic: 'zap', label: 'Applica', run: () => applyProfile(p.id) },
+      { ic: 'edit', label: 'Modifica…', run: () => profileDrawer(p) },
+      { sep: true },
+      { ic: 'trash', label: 'Elimina', danger: true, run: () => actions['delete-profile'](el) },
+    ]);
+  },
   'reload-adapters': async () => {
     try { S.settings.adapters = await call('adapterConfigs'); rerender(); } catch (err) { toastError(err); }
   },
 };
 
 definePage('settings', {
-  title: 'Impostazioni', icon: 'settings', section: 'system', order: 3,
+  title: 'Impostazioni', heading: 'Impostazioni', icon: 'settings', section: 'system', order: 3,
   render,
   after: () => { if (!S.settings.data || !S.settings.adapters) load(); },
   enter: (params) => { if (params.newProfile) setTimeout(() => actions['save-adapter']({ dataset: { adapter: params.newProfile } }), S.settings.adapters ? 0 : 1200); },

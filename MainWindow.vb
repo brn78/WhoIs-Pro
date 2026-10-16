@@ -108,9 +108,15 @@ Namespace UI
 
 #End Region
 
-        ''' <summary>%LOCALAPPDATA%\WhoIsPro: dati di WebView2, posizione della finestra e database OUI aggiornato.</summary>
+        ''' <summary>
+        ''' %LOCALAPPDATA%\WhoIsPro: dati di WebView2, impostazioni, posizione della finestra e database OUI aggiornato.
+        ''' La variabile d'ambiente WHOISPRO_DATA_FOLDER la sostituisce: serve per provare una copia di sviluppo accanto a
+        ''' quella installata senza condividerne i dati (WebView2 non accetta due istanze con argomenti diversi).
+        ''' </summary>
         Public Shared ReadOnly Property LocalFolder As String
             Get
+                Dim custom = Environment.GetEnvironmentVariable("WHOISPRO_DATA_FOLDER")
+                If Not String.IsNullOrWhiteSpace(custom) Then Return custom
                 Return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WhoIsPro")
             End Get
         End Property

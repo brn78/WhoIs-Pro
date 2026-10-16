@@ -3,6 +3,28 @@
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 
+## 2.2.0 · 16 ottobre 2026
+
+- **Barra superiore** con icona e titolo della pagina al posto del percorso «WhoIs Pro › Pagina»; nelle pagine resta
+  solo la riga del sottotitolo, con più spazio per i dati.
+- **Rete e Porte**: a scansione finita il modulo si ripiega in una riga di riepilogo (esito, intervallo o host, thread,
+  timeout, DNS o banner) con *Modifica* e *Riavvia*; durante la scansione la stessa riga mostra avanzamento, contatori
+  e *Ferma*. Il modulo completo resta aperto finché non c'è stata nessuna scansione.
+- **Tabella degli host**: produttore senza le forme giuridiche (GmbH, Co., Ltd., Inc., S.p.A.…) e troncato con i
+  puntini, nome completo nel tooltip; sistema stimato nella seconda riga del dispositivo; TTL accanto alla latenza, che
+  ha una barretta colorata (verde sotto i 10 ms, ambra sotto i 100, rossa oltre). Tutte le colonne stanno in una
+  finestra da 1366 px, senza scorrimento orizzontale.
+- **Panoramica**: le spiegazioni lunghe (database di Wireshark, controllo giornaliero su GitHub, salvataggio atomico)
+  sono un'icona «?» con il testo al passaggio del mouse; metadati della sessione in griglia; *Salva con nome…* ed
+  *Esporta* nel piede del riquadro; in *Aggiornamenti* versione in uso e ultima pubblicata su una riga, novità
+  ripiegate dietro un collegamento.
+- Le **notifiche** compaiono in basso a destra e non coprono più la sessione; *Salva* in alto compare solo quando ci
+  sono modifiche da salvare.
+- Nelle tabelle delle **schede di rete** (Panoramica, Computer, Impostazioni) le azioni stanno in un menu ⋯ in una
+  colonna fissa a destra: niente più scorrimento orizzontale.
+- Con la variabile d'ambiente `WHOISPRO_DATA_FOLDER` il programma usa un'altra cartella dei dati (per provare una
+  copia di sviluppo accanto a quella installata).
+
 ## 2.1.2 · 16 ottobre 2026
 
 - **Menu con il tasto destro** sulle righe di host, porte, connessioni e salti del traceroute: oltre a porte, WHOIS e

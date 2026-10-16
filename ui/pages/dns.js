@@ -64,7 +64,7 @@ function tableCard() {
 }
 
 function render() {
-  return `${pageHead('dns', 'DNS', 'Record di un nome di dominio o di un indirizzo: A, AAAA, PTR, MX, NS e TXT.')}
+  return `${pageHead('Record di un nome di dominio o di un indirizzo: A, AAAA, PTR, MX, NS e TXT.')}
     <div class="grid">${formCard()}${tableCard()}</div>`;
 }
 
@@ -127,7 +127,7 @@ const actions = {
 bus.addEventListener('session', () => { S.dns.type = ''; S.dns.fresh.clear(); if (S.page === 'dns') renderTable(); });
 
 definePage('dns', {
-  title: 'DNS', icon: 'dns', section: 'lookup', badge: () => S.data.dns.length,
+  title: 'DNS', heading: 'DNS', icon: 'dns', section: 'lookup', badge: () => S.data.dns.length,
   render, after: updateInfo, actions,
   enter: (params) => {
     if (params.target) { S.dns.target = params.target; const f = $('#f-target'); if (f) f.value = params.target; if (params.start) query(); }

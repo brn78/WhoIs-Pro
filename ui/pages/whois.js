@@ -67,7 +67,7 @@ function historyCard() {
 
 function render() {
   if (S.whois.current < 0 && S.data.whois.length) S.whois.current = S.data.whois.length - 1;
-  return `${pageHead('globe', 'WHOIS', 'Chi ha registrato un dominio o a chi è assegnato un indirizzo IP: registrar, organizzazione, date e name server.')}
+  return `${pageHead('Chi ha registrato un dominio o a chi è assegnato un indirizzo IP: registrar, organizzazione, date e name server.')}
     <div class="grid grid-side"><div class="grid">${formCard()}<div id="whois-result">${resultCard()}</div></div><div id="whois-history">${historyCard()}</div></div>`;
 }
 
@@ -123,7 +123,7 @@ const actions = {
 bus.addEventListener('session', () => { S.whois.current = S.data.whois.length ? S.data.whois.length - 1 : -1; rerender(); });
 
 definePage('whois', {
-  title: 'WHOIS', icon: 'globe', section: 'lookup', badge: () => S.data.whois.length,
+  title: 'WHOIS', heading: 'WHOIS', icon: 'globe', section: 'lookup', badge: () => S.data.whois.length,
   render, actions,
   enter: (params) => {
     if (params.target) {

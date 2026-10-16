@@ -67,7 +67,7 @@ function toolbar() {
 }
 
 function render() {
-  return `${pageHead('activity', 'Connessioni attive', 'Connessioni TCP e porte in ascolto di questo PC, con il processo che le ha aperte.')}
+  return `${pageHead('Connessioni TCP e porte in ascolto di questo PC, con il processo che le ha aperte.')}
     <div class="grid"><section class="card table-card">${toolbar()}<div id="netstat-table">${tableHtml()}</div>
       <div class="table-foot">${icon('info', { size: 14 })} Dal menu ⋯ scansione delle porte e WHOIS dell'indirizzo remoto, o chiusura del processo.</div></section></div>`;
 }
@@ -158,7 +158,7 @@ const actions = {
 };
 
 definePage('netstat', {
-  title: 'Connessioni', icon: 'activity', section: 'system', order: 1,
+  title: 'Connessioni', heading: 'Connessioni attive', icon: 'activity', section: 'system', order: 1,
   render, after: () => { updateInfo(); if (!S.netstat.list.length && !S.netstat.busy) refresh(); }, actions,
   leave: () => { /* il timer resta: refresh() non fa nulla fuori dalla pagina */ },
   onInput: (el, field) => { if (field === 'q') { S.netstat.q = el.value; renderTable(); } },

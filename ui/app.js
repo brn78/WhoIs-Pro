@@ -70,7 +70,7 @@ function shell() {
     </aside>
     <main class="main">
       <header class="topbar">
-        <div class="crumbs">WhoIs Pro ${icon('chevronRight')} <b id="crumb-page"></b></div>
+        <div class="topbar-title" id="topbar-title"></div>
         <div class="topbar-middle" id="topbar-middle">${activityChip()}</div>
         <div class="topbar-actions" id="topbar-actions">${topbarActions()}</div>
       </header>
@@ -146,7 +146,7 @@ function topbarActions() {
   return `${internetPill()}<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
       <span class="site-icon ${dirty ? 'is-dirty' : s.file ? 'is-saved' : ''}">${icon(dirty ? 'edit' : s.file ? 'check' : 'archive')}</span>
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
-    <button class="btn ${dirty ? 'btn-primary' : ''}" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>`;
+    ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}`;
 }
 
 function render() {
@@ -163,7 +163,7 @@ function renderPage(scrollTop = false) {
   void content.offsetWidth;
   content.classList.add('page-enter');
   $$('.nav-item[data-page]').forEach((a) => a.classList.toggle('is-active', a.dataset.page === S.page));
-  $('#crumb-page').textContent = page.title;
+  $('#topbar-title').innerHTML = `<span class="page-icon">${icon(page.icon)}</span><h1>${esc(page.heading || page.title)}</h1>`;
   if (scrollTop) window.scrollTo({ top: 0 });
   if (page.after) page.after();
 }

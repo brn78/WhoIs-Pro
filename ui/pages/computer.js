@@ -3,9 +3,10 @@ import { call } from '../core/bridge.js';
 import { $, esc, fmtBytes, fmtDateTime, fmtDuration, fmtNumber } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage } from '../core/store.js';
+import { navigate } from '../core/nav.js';
 import { donut, percent, usageClass } from '../core/chart.js';
 import { table } from '../core/table.js';
-import { emptyState, pageHead, toastError } from '../core/ui.js';
+import { emptyState, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.computer = { info: null, timer: 0, busy: false, error: '' };
 
@@ -70,14 +71,20 @@ function systemCard(o, gpu) {
     ])}</div></section>`;
 }
 
+/** «255.255.255.0» → 24 (lunghezza del prefisso); la maschera com'è se non è una maschera valida. */
+function prefixLength(mask) {
+  const parts = String(mask || '').split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return mask || '?';
+  const bits = parts.map((n) => n.toString(2).padStart(8, '0')).join('');
+  return /^1*0*$/.test(bits) ? bits.indexOf('0') < 0 ? 32 : bits.indexOf('0') : mask;
+}
+
 function adaptersCard() {
   const rows = S.st.adapters || [];
   const columns = [
-    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon primary">${icon('network')}</span><div class="cell-text"><b>${esc(a.name)}</b><small>${esc(a.description)}</small></div></div>` },
-    { key: 'ip', label: 'Indirizzo IP', cls: 'mono' },
-    { key: 'mask', label: 'Maschera', cls: 'mono' },
-    { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
-    { key: 'mac', label: 'MAC', cls: 'mono' },
+    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon primary">${icon('network')}</span><div class="cell-text"><b class="trunc" title="${esc(a.name)}">${esc(a.name)}</b><small class="trunc" title="${esc(a.description)}${a.gateway ? ` · gateway ${esc(a.gateway)}` : ''}">${esc(a.description)}${a.gateway ? ` · gw ${esc(a.gateway)}` : ''}</small></div></div>` },
+    { key: 'ip', label: 'Indirizzo', cell: (a) => `<div class="cell-text"><b class="mono" title="Maschera ${esc(a.mask)}">${esc(a.ip)} /${prefixLength(a.mask)}</b><small class="mono" title="MAC">${esc(a.mac)}</small></div>` },
+    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<button class="row-menu-btn" data-action="adapter-menu" data-adapter="${esc(a.name)}" title="Azioni">${icon('more')}</button>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('network')}<h2>Schede di rete attive</h2><span class="count">${rows.length}</span></div>
       <button class="btn btn-sm" data-action="go" data-page="settings">${icon('settings')} Profili di rete</button></div>
@@ -110,7 +117,7 @@ function body() {
 }
 
 function render() {
-  return `${pageHead('laptop', 'Computer', 'Processore, memoria, dischi e sistema di questo PC, aggiornati ogni due secondi.',
+  return `${pageHead('Processore, memoria, dischi e sistema di questo PC, aggiornati ogni due secondi.',
     `<button class="btn" data-action="refresh-computer">${icon('refresh')} Aggiorna</button>`)}
     <div id="computer-body">${body()}</div>`;
 }
@@ -139,10 +146,29 @@ function stopTimer() {
   S.computer.timer = 0;
 }
 
+/** Menu ⋯ di una scheda: scansione della sua rete, profili di rete, copia di indirizzo e MAC. */
+function adapterMenu(anchor, name) {
+  const a = (S.st.adapters || []).find((x) => x.name === name);
+  if (!a) return;
+  const copy = (text) => () => call('setClipboard', { text }).then(() => toast('Copiato negli appunti.', { tone: 'success' }), (e) => toastError(e));
+  openMenu(anchor, [
+    { header: a.name },
+    { ic: 'radar', label: `Scansiona ${a.cidr || 'la rete'}`, disabled: !a.cidr, run: () => navigate('network', { target: a.cidr }) },
+    { ic: 'plus', label: 'Salva come profilo di rete…', run: () => navigate('settings', { newProfile: a.name }) },
+    { ic: 'settings', label: 'Profili di rete (Impostazioni)', run: () => navigate('settings') },
+    { sep: true },
+    { ic: 'copy', label: 'Copia l\'indirizzo IP', disabled: !a.ip, run: copy(a.ip) },
+    { ic: 'copy', label: 'Copia il MAC', disabled: !a.mac, run: copy(a.mac) },
+  ]);
+}
+
 definePage('computer', {
-  title: 'Computer', icon: 'laptop', section: 'system', order: 2,
+  title: 'Computer', heading: 'Computer', icon: 'laptop', section: 'system', order: 2,
   render,
   after: () => { load(); startTimer(); },
   leave: stopTimer,
-  actions: { 'refresh-computer': () => load().catch(toastError) },
+  actions: {
+    'refresh-computer': () => load().catch(toastError),
+    'adapter-menu': (el) => adapterMenu(el, el.dataset.adapter),
+  },
 });

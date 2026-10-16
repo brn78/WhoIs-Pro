@@ -83,7 +83,7 @@ function tableCard() {
 }
 
 function render() {
-  return `${pageHead('route', 'Traceroute', 'Il percorso dei pacchetti verso una destinazione: router attraversati e tempi di risposta.')}
+  return `${pageHead('Il percorso dei pacchetti verso una destinazione: router attraversati e tempi di risposta.')}
     <div class="grid">${formCard()}${tableCard()}</div>`;
 }
 
@@ -171,7 +171,7 @@ on('trace.done', (d) => {
 bus.addEventListener('session', () => { S.trace.done = null; S.trace.current = ''; if (S.page === 'trace') renderTableCard(); });
 
 definePage('trace', {
-  title: 'Traceroute', icon: 'route', section: 'lookup', badge: () => targets().filter(Boolean).length,
+  title: 'Traceroute', heading: 'Traceroute', icon: 'route', section: 'lookup', badge: () => targets().filter(Boolean).length,
   render, after: updateInfo, actions,
   enter: (params) => {
     if (params.target) {

@@ -186,7 +186,12 @@ export function emptyState(ic, title, text, actions = '') {
   return `<div class="empty"><div class="empty-icon">${icon(ic)}</div><h3>${esc(title)}</h3><p>${text}</p>${actions}</div>`;
 }
 
-export function pageHead(ic, title, sub, actions = '') {
-  return `<div class="page-head"><div class="page-title"><h1><span class="page-icon">${icon(ic)}</span>${esc(title)}</h1>
-    <div class="page-sub">${sub}</div></div>${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>`;
+/** Riga in cima alla pagina: solo il sottotitolo (icona e titolo stanno nella barra superiore) e le azioni a destra. */
+export function pageHead(sub, actions = '') {
+  return `<div class="page-head"><div class="page-sub">${sub}</div>${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>`;
+}
+
+/** Icona «?» con la spiegazione nel tooltip, al posto dei riquadri di testo sempre visibili. */
+export function help(text) {
+  return `<span class="help" tabindex="0" title="${esc(text)}" aria-label="${esc(text)}">?</span>`;
 }

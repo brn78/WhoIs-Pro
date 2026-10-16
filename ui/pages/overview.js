@@ -1,17 +1,17 @@
-// Panoramica: conteggi della sessione, file e salvataggio, database dei produttori, schede di rete.
+// Panoramica: conteggi della sessione, file e salvataggio, database dei produttori, aggiornamenti, schede di rete.
 import { call, on } from '../core/bridge.js';
 import { $, esc, fmtDateTime, fmtNumber, plural, shortPath } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, counts, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { table } from '../core/table.js';
-import { note, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { help, note, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 import { applyProfile } from './settings.js';
 
-S.overview = { ouiMessage: '' };
+S.overview = { ouiMessage: '', notesOpen: false };
 
 function kpi(page, ic, tone, label, value, sub) {
-  return `<button class="kpi is-link" data-action="go" data-page="${page}">
+  return `<button class="kpi is-link" data-action="go" data-page="${page}" title="Apri la pagina">
     <div class="kpi-top"><span class="kpi-label">${label}</span><span class="kpi-icon ${tone}">${icon(ic, { size: 16 })}</span></div>
     <div class="kpi-value">${fmtNumber(value)}</div><div class="kpi-sub">${sub}</div></button>`;
 }
@@ -25,21 +25,20 @@ function sessionCard() {
     <div class="card-body"><div class="fields">
       <div class="field"><label for="f-title">Titolo</label>
         <input class="input title-input" id="f-title" data-field="title" value="${esc(s.title)}" maxlength="120" autocomplete="off" placeholder="Es. Rete ufficio, ottobre 2026"></div>
-      <dl class="kv compact">
-        <dt>File</dt><dd>${s.file ? `<span class="mono" title="${esc(s.file)}">${esc(shortPath(s.file))}</span>` : '<span class="muted">Non ancora salvata</span>'}</dd>
-        <dt>SHA-256</dt><dd>${s.checksum ? `<span class="mono" title="${esc(s.checksum)}">${esc(s.checksum.slice(0, 24))}…</span>` : '<span class="muted">—</span>'}</dd>
-        <dt>Creata</dt><dd>${fmtDateTime(s.createdAt)}</dd>
-        <dt>Modificata</dt><dd>${fmtDateTime(s.modifiedAt)}</dd>
-      </dl>
       <div class="field"><label for="f-notes">Note</label>
         <textarea class="input" id="f-notes" data-field="notes" rows="3" placeholder="Appunti sulla sessione (finiscono nel file)">${esc(s.notes || '')}</textarea></div>
-      <div class="card-actions">
-        <button class="btn ${s.dirty ? 'btn-primary' : ''}" data-action="save">${icon('save')} Salva</button>
-        <button class="btn" data-action="save-as">${icon('download')} Salva con nome…</button>
-        <button class="btn" data-action="export-menu">${icon('fileText')} Esporta ${icon('chevronDown', { size: 14 })}</button>
-      </div>
+      <dl class="meta">
+        <div><dt>File</dt><dd>${s.file ? `<span class="mono" title="${esc(s.file)}">${esc(shortPath(s.file))}</span>` : '<span class="muted">Non ancora salvata</span>'}</dd></div>
+        <div><dt>SHA-256</dt><dd>${s.checksum ? `<span class="mono" title="${esc(s.checksum)}">${esc(s.checksum.slice(0, 24))}…</span>` : '<span class="muted">—</span>'}</dd></div>
+        <div><dt>Creata</dt><dd>${fmtDateTime(s.createdAt) || '<span class="muted">—</span>'}</dd></div>
+        <div><dt>Modificata</dt><dd>${fmtDateTime(s.modifiedAt) || '<span class="muted">—</span>'}</dd></div>
+      </dl>
     </div></div>
-    <div class="card-foot">${icon('shield', { size: 15 })} Salvataggio atomico: file temporaneo, SHA-256 e sostituzione in un colpo solo, con copia .bak della versione precedente.</div>
+    <div class="card-foot">
+      <button class="btn btn-sm" data-action="save-as">${icon('download')} Salva con nome…</button>
+      <button class="btn btn-sm" data-action="export-menu">${icon('fileText')} Esporta ${icon('chevronDown', { size: 13 })}</button>
+      <span class="foot-note">Salvataggio atomico, copia .bak ${help('File temporaneo, SHA-256 e sostituzione in un colpo solo; la versione precedente resta in .bak.')}</span>
+    </div>
   </section>`;
 }
 
@@ -52,11 +51,10 @@ function ouiCard() {
     <div class="card-body"><div class="fields">
       <dl class="kv compact">
         <dt>Origine</dt><dd>${o.file ? `<span class="mono" title="${esc(o.file)}">${esc(shortPath(o.file))}</span>` : '<span class="muted">Solo i produttori incorporati nel programma</span>'}</dd>
-        <dt>Serve a</dt><dd>dare il nome del produttore (e il tipo di dispositivo) a ogni MAC trovato nella scansione</dd>
+        <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('L\'elenco ufficiale di Wireshark/IEEE (circa 3 MB) viene salvato in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati.')}</dd>
       </dl>
-      ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>`
-        : note('info', 'info', 'L\'elenco ufficiale di Wireshark/IEEE (circa 3 MB) viene salvato in <span class="mono">%LOCALAPPDATA%\\WhoIsPro</span> e gli host della sessione vengono riclassificati.')}
-      <div class="card-actions"><button class="btn" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna da Wireshark</button></div>
+      ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>` : ''}
+      <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna da Wireshark</button></div>
     </div></div></section>`;
 }
 
@@ -94,7 +92,7 @@ function notesHtml(notes) {
   return html;
 }
 
-/** Riquadro degli aggiornamenti: versione in uso, ultima pubblicata su GitHub, «Scarica e installa». */
+/** Riquadro degli aggiornamenti: versione in uso e ultima pubblicata su una riga, novità ripiegate, «Scarica e installa». */
 function updateCard() {
   const u = S.st.update || {};
   const d = u.download;
@@ -116,42 +114,47 @@ function updateCard() {
     progress = `<div class="stack" style="gap:8px"><div class="meter"><span style="width:${d.phase === 'download' ? pct : 100}%"></span></div>
       <div class="scan-stat"><span class="spinner"></span>${text}</div></div>`;
   }
-  const notes = u.available && u.notes ? `<div><div class="form-section-head"><div class="form-section-title">${icon('fileText')}${esc(u.title || `Novità della ${u.version}`)}</div></div>
-      <div class="notes">${notesHtml(u.notes)}</div></div>` : '';
+  const open = S.overview.notesOpen;
+  const notesLink = u.available && u.notes
+    ? `<a href="#" class="notes-toggle" data-action="toggle-notes" aria-expanded="${open}">${esc(u.title || `Novità della ${u.version}`)} ${icon('chevronDown')}</a>` : '';
+  const notes = u.available && u.notes && open ? `<div class="notes">${notesHtml(u.notes)}</div>` : '';
   const install = !u.available ? ''
     : (u.installed && u.hasSetup)
-      ? `<button class="btn btn-primary" data-action="install-update" ${busy ? 'disabled' : ''}>${icon('download')} Scarica e installa</button>`
-      : `<button class="btn btn-primary" data-action="open-url" data-url="${esc(u.pageUrl)}">${icon('external')} Apri la pagina dei download</button>`;
+      ? `<button class="btn btn-sm btn-primary" data-action="install-update" ${busy ? 'disabled' : ''}>${icon('download')} Scarica e installa</button>`
+      : `<button class="btn btn-sm btn-primary" data-action="open-url" data-url="${esc(u.pageUrl)}">${icon('external')} Apri la pagina dei download</button>`;
+  const latest = u.version
+    ? `<span class="muted">· ${esc(u.version)}${u.publishedAt ? `, ${fmtDateTime(u.publishedAt).slice(0, 10)}` : ''}</span>` : '<span class="muted">· —</span>';
+  const checkHelp = help('Una volta al giorno il programma chiede a GitHub qual è l\'ultima versione pubblicata. Niente si installa da solo: quando c\'è una versione nuova compare qui «Scarica e installa».');
   return `<section class="card"><div class="card-head"><div class="card-title">${icon('rotate')}<h2>Aggiornamenti</h2></div>${pill}</div>
     <div class="card-body"><div class="fields">
       <dl class="kv compact">
-        <dt>Versione in uso</dt><dd><b>${esc(u.current)}</b>${u.installed ? '' : ' <span class="tag">copia portabile</span>'}</dd>
-        <dt>Ultima pubblicata</dt><dd>${u.version ? `<b>${esc(u.version)}</b>${u.publishedAt ? ` · ${fmtDateTime(u.publishedAt)}` : ''}` : '<span class="muted">—</span>'}</dd>
-        <dt>Ultimo controllo</dt><dd>${u.checkedAt ? fmtDateTime(u.checkedAt) : '<span class="muted">mai</span>'}</dd>
+        <dt>In uso · ultima pubblicata</dt><dd><b>${esc(u.current)}</b>${u.installed ? '' : ' <span class="tag">copia portabile</span>'} ${latest}</dd>
+        <dt>Ultimo controllo</dt><dd>${u.checkedAt ? fmtDateTime(u.checkedAt) : '<span class="muted">mai</span>'} ${checkHelp}</dd>
       </dl>
       ${u.error ? note('danger', 'alert', esc(u.error)) : ''}
-      ${notes}${progress}
-      ${!u.available && !u.error ? note('info', 'info', 'Una volta al giorno il programma chiede a GitHub qual è l\'ultima versione pubblicata. Niente si installa da solo: quando c\'è una versione nuova compare qui «Scarica e installa».') : ''}
+      ${progress}
       ${u.available && !u.installed ? note('info', 'info', 'Questa copia non è stata installata con il setup: scarica il nuovo pacchetto dalla pagina delle release e sostituisci i file.') : ''}
-      <div class="card-actions">
+      <div class="card-actions" style="margin-top:0">
         ${install}
-        <button class="btn ${u.checking ? 'is-loading' : ''}" data-action="check-update" ${busy || u.checking ? 'disabled' : ''}>${icon('refresh')} Controlla ora</button>
-        <button class="btn btn-ghost" data-action="open-url" data-url="${esc(u.pageUrl || 'https://github.com/brn78/WhoIs-Pro/releases/latest')}">${icon('external')} Tutte le versioni</button>
+        <button class="btn btn-sm ${u.checking ? 'is-loading' : ''}" data-action="check-update" ${busy || u.checking ? 'disabled' : ''}>${icon('refresh')} Controlla ora</button>
+        <button class="btn btn-sm btn-ghost" data-action="open-url" data-url="${esc(u.pageUrl || 'https://github.com/brn78/WhoIs-Pro/releases/latest')}">${icon('external')} Tutte le versioni</button>
+        ${notesLink}
       </div>
+      ${notes}
     </div></div></section>`;
 }
 
 function adaptersCard() {
   const rows = S.st.adapters || [];
   const columns = [
-    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon primary">${icon('network')}</span><div class="cell-text"><b>${esc(a.name)}</b><small>${esc(a.description)}</small></div></div>` },
+    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon primary">${icon('network')}</span><div class="cell-text"><b class="trunc" title="${esc(a.name)}">${esc(a.name)}</b><small class="trunc" title="${esc(a.description)}">${esc(a.description)}</small></div></div>` },
     { key: 'ip', label: 'Indirizzo IP', cls: 'mono' },
     { key: 'cidr', label: 'Rete', cls: 'mono' },
     { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
     { key: 'mac', label: 'MAC', cls: 'mono' },
     { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<div class="row-actions">
         <button class="btn btn-sm" data-action="scan-adapter" data-cidr="${esc(a.cidr)}">${icon('radar')} Scansiona</button>
-        <button class="btn btn-sm" data-action="adapter-profiles" data-adapter="${esc(a.name)}" title="Profili di rete: cambia l'indirizzo IP della scheda">${icon('network')} Profilo ${icon('chevronDown', { size: 13 })}</button></div>` },
+        <button class="row-menu-btn" data-action="adapter-menu" data-adapter="${esc(a.name)}" data-cidr="${esc(a.cidr)}" title="Altre azioni">${icon('more')}</button></div>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('network')}<h2>Schede di rete</h2><span class="count">${rows.length}</span></div>
       <button class="btn btn-sm" data-action="detect-adapters">${icon('refresh')} Rileva di nuovo</button></div>
@@ -162,11 +165,11 @@ function adaptersCard() {
 function render() {
   const c = counts();
   const s = S.st.session;
-  const sub = s.file ? `File <b>${esc(s.fileName)}</b>${s.dirty ? ' · modifiche non salvate' : ''}` : 'Sessione non ancora salvata: i dati raccolti si salvano in un file .whoispro.';
-  return `${pageHead('dashboard', 'Panoramica', sub,
+  const total = `${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}, ${plural(c.whois, 'WHOIS', 'WHOIS')}, ${plural(c.dns, 'record DNS', 'record DNS')}, ${plural(c.trace, 'salto', 'salti')}`;
+  const sub = s.file ? `File <b>${esc(s.fileName)}</b>${s.dirty ? ' · modifiche non salvate' : ''} · ${total}` : `Sessione non ancora salvata (i dati raccolti si salvano in un file .whoispro) · ${total}`;
+  return `${pageHead(sub,
     `<button class="btn" data-action="new">${icon('filePlus')} Nuova</button>
-     <button class="btn" data-action="open">${icon('folderOpen')} Apri…</button>
-     <button class="btn ${s.dirty ? 'btn-primary' : ''}" data-action="save">${icon('save')} Salva</button>`)}
+     <button class="btn" data-action="open">${icon('folderOpen')} Apri…</button>`)}
     <div class="kpis kpis-5">
       ${kpi('network', 'radar', '', 'Host trovati', c.hosts, 'scansione della rete')}
       ${kpi('ports', 'plug', 'success', 'Porte aperte', c.ports, 'scansione delle porte')}
@@ -174,28 +177,38 @@ function render() {
       ${kpi('dns', 'dns', 'neutral', 'Record DNS', c.dns, 'A, AAAA, MX, NS, TXT, PTR')}
       ${kpi('trace', 'route', 'warning', 'Salti traceroute', c.trace, 'percorsi verso le destinazioni')}
     </div>
-    <div class="grid grid-2">${sessionCard()}<div class="grid">${ouiCard()}${updateCard()}</div></div>
+    <div class="grid grid-2">${sessionCard()}<div class="grid">${updateCard()}${ouiCard()}</div></div>
     <div class="grid section-gap">${adaptersCard()}</div>`;
 }
 
-/** Menu rapido dei profili di rete per una scheda: applica un profilo salvato, torna a DHCP o ne crea uno. */
-async function adapterProfiles(anchor, adapter) {
+/** Menu ⋯ di una scheda: profili di rete (applica, DHCP, nuovo) e copia dell'indirizzo. */
+async function adapterMenu(anchor, adapter, cidr) {
   let settings;
   try { settings = await call('settings'); } catch (err) { toastError(err); return; }
+  const a = (S.st.adapters || []).find((x) => x.name === adapter) || {};
   const mine = (settings.profiles || []).filter((p) => p.adapter === adapter);
   const items = [{ header: adapter }];
+  items.push({ ic: 'radar', label: `Scansiona ${cidr}`, run: () => navigate('network', { target: cidr }) });
+  items.push({ sep: true });
   for (const p of mine) items.push({ ic: 'zap', label: `Applica «${p.name}»`, hint: p.dhcp ? 'DHCP' : p.ip, run: () => applyProfile(p.id) });
   if (!mine.length) items.push({ html: '<div class="menu-path">Nessun profilo per questa scheda</div>' });
-  items.push({ sep: true });
   items.push({ ic: 'rotate', label: 'Torna a DHCP', run: () => applyProfile(null, { id: '', name: 'DHCP', adapter, dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' }) });
   items.push({ ic: 'plus', label: 'Nuovo profilo per questa scheda…', run: () => navigate('settings', { newProfile: adapter }) });
   items.push({ ic: 'settings', label: 'Tutti i profili (Impostazioni)', run: () => navigate('settings') });
+  items.push({ sep: true });
+  items.push({ ic: 'copy', label: 'Copia l\'indirizzo IP', disabled: !a.ip, run: () => copy(a.ip) });
+  items.push({ ic: 'copy', label: 'Copia il MAC', disabled: !a.mac, run: () => copy(a.mac) });
   openMenu(anchor, items);
+}
+
+async function copy(text) {
+  try { await call('setClipboard', { text }); toast('Copiato negli appunti.', { tone: 'success' }); } catch (err) { toastError(err); }
 }
 
 const actions = {
   'scan-adapter': (el) => navigate('network', { target: el.dataset.cidr }),
-  'adapter-profiles': (el) => adapterProfiles(el, el.dataset.adapter),
+  'adapter-menu': (el) => adapterMenu(el, el.dataset.adapter, el.dataset.cidr),
+  'toggle-notes': () => { S.overview.notesOpen = !S.overview.notesOpen; rerender(); },
   'detect-adapters': async () => {
     try {
       S.st.adapters = await call('adapters');
@@ -231,7 +244,7 @@ bus.addEventListener('state', () => { if (S.page === 'overview' && !$('#f-title:
 bus.addEventListener('session', rerender);
 
 definePage('overview', {
-  title: 'Panoramica', icon: 'dashboard', section: '',
+  title: 'Panoramica', heading: 'Panoramica', icon: 'dashboard', section: '',
   render,
   actions,
   onChange: (el, field) => { if (field === 'title' || field === 'notes') saveInfo(); },
