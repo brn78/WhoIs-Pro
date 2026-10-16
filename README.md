@@ -42,7 +42,8 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 
 **📡 Scansione della rete**<br>
 Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host attivi rispondono ad ARP e
-ping e compaiono man mano (un singolo host si **riscansiona** con un clic, anche durante la scansione), con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
+ping e compaiono man mano, in **Elenco** (tabella) o in **Schede** che descrivono ogni dispositivo per intero, con
+*Ordina per* accanto alla ricerca (un singolo host si **riscansiona** con un clic, anche durante la scansione), con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
 più preciso per ogni MAC, aggiornabili), nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS,
 Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere, centrali d'allarme, stampanti, moduli
 domotici e automazione. Con **Porte degli host trovati** ogni host passa subito alla scansione delle porte, cinque

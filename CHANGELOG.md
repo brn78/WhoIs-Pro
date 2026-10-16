@@ -18,6 +18,11 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
   file e dimensione; un avviso quando ha più di 30 giorni.
 - **L'elenco resta dov'è**: riscansionando un host (o quando arrivano porte e aggiornamenti) le tabelle di Rete,
   Porte, Connessioni, DNS e Traceroute non tornano più in cima; la riga riscansionata si illumina per un attimo.
+- **Rete: Visualizza Elenco o Schede**, come in Esplora risorse. *Schede* descrive ogni dispositivo per intero su una
+  riga senza colonne: nome e tipo, indirizzo, categoria e sistema, MAC e produttore, risposta e TTL, porte aperte con
+  il servizio, IPv6, prima rilevazione e ultima volta visto, con le etichette Nuovo, Non risponde e IPv6. *Elenco* è
+  la tabella di prima. Accanto alla ricerca *Ordina per* (indirizzo, nome, tipo, produttore, latenza, porte aperte,
+  prima rilevazione, ultima volta visto) e il verso; vista e ordinamento restano al prossimo avvio.
 - **Prestazioni della rete** (nuova pagina): un test di circa 20 secondi misura latenza, jitter e pacchetti persi verso
   il router e verso Internet, la risposta del DNS e la velocità di download e upload (server di prova di Cloudflare,
   gli stessi di speed.cloudflare.com, su più connessioni insieme). Ne esce un giudizio in parole semplici (ottima,

@@ -5,7 +5,7 @@ import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
+import { replaceKeepingScroll, sortRows, table, nextSort } from '../core/table.js';
 import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.net = {
@@ -249,27 +249,106 @@ function refreshDrawer(ip) {
   details(ip);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Vista a schede: un dispositivo per riga, senza colonne, descritto per intero; l'ordinamento è lo stesso della tabella
+// ---------------------------------------------------------------------------------------------------------------------
+const timeOf = (iso) => new Date(iso).getTime() || 0;
+/** Ordinamenti possibili (anche dalla tabella): [chiave, etichetta, valore, verso predefinito]. */
+const SORTS = [
+  ['ipAddress', 'Indirizzo IP', (h) => h.ipAddress, 1],
+  ['hostname', 'Nome', (h) => h.hostname || '￿', 1],
+  ['deviceType', 'Tipo di dispositivo', (h) => `${h.deviceCategory} ${h.deviceType}`, 1],
+  ['macVendor', 'Produttore', (h) => shortVendor(h.macVendor), 1],
+  ['responseTimeMs', 'Latenza', (h) => Number(h.responseTimeMs) || 0, 1],
+  ['ports', 'Porte aperte', (h) => openPorts(h.ipAddress), -1],
+  ['firstSeen', 'Prima rilevazione', (h) => timeOf(h.firstSeen), -1],
+  ['lastSeen', 'Ultima volta visto', (h) => timeOf(h.lastSeen), -1],
+];
+const SORT_COLUMNS = SORTS.map(([key, , value]) => ({ key, value }));
+
+// vista e ordinamento restano al prossimo avvio (solo comodità)
+try {
+  const v = JSON.parse(localStorage.getItem('net-view') || '{}');
+  if (v.view === 'cards' || v.view === 'table') S.net.view = v.view;
+  if (v.sort && SORTS.some((s) => s[0] === v.sort.key)) S.net.sort = v.sort;
+} catch { /* senza memoria locale */ }
+if (!S.net.view) S.net.view = 'cards';
+function saveView() {
+  try { localStorage.setItem('net-view', JSON.stringify({ view: S.net.view, sort: S.net.sort })); } catch { /* senza memoria locale */ }
+}
+
+/** Una voce della descrizione: etichetta piccola e valore. */
+const fact = (label, value, cls = '') => `<span class="hc-fact ${cls}"><i>${label}</i>${value}</span>`;
+
+function hostCard(h) {
+  const ports = S.data.ports.filter((p) => p.host === h.ipAddress).sort((a, b) => a.portNumber - b.portNumber);
+  const lat = Number(h.responseTimeMs) || 0;
+  const latTone = lat < 10 ? 'success' : lat < 100 ? 'warning' : 'danger';
+  const vendor = h.macVendor === PRIVATE_MAC ? `<span title="${esc(PRIVATE_MAC_TIP)}">MAC privato, produttore non noto</span>` : esc(h.macVendor);
+  const name = h.hostname || h.deviceType;
+  const v6 = h.ipv6 || [];
+  const tags = `${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${isOffline(h) ? '<span class="tag danger">Non risponde</span>' : ''}${v6.length ? '<span class="tag v6">IPv6</span>' : ''}`;
+  const portList = ports.slice(0, 10).map((p) => `<span class="hc-port" title="${esc(p.banner || p.serviceName)}">${p.portNumber}${p.protocol === 'UDP' ? '/udp' : ''} <em>${esc(p.serviceName)}</em></span>`).join('')
+    + (ports.length > 10 ? `<span class="hc-port more">+${ports.length - 10}</span>` : '');
+  return `<article class="host-card ${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}" data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}">
+    ${catIcon(h, true)}
+    <div class="hc-main">
+      <div class="hc-title"><b>${esc(name)}</b>${h.hostname ? `<span class="hc-type">${esc(h.deviceType)}</span>` : ''}${tags}</div>
+      <div class="hc-facts">
+        <span class="hc-ip mono">${esc(h.ipAddress)}</span>
+        ${fact('Tipo', `${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}`)}
+        ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile, host fuori dalla rete locale</span>')}
+        ${fact('Risposta', `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
+        ${ports.length ? fact('Porte', `<span class="hc-ports">${portList}</span>`, 'wide') : ''}
+        ${v6.length ? fact('IPv6', `<span class="mono">${esc(v6[0])}</span>${v6.length > 1 ? ` <span class="muted">+${v6.length - 1}</span>` : ''}`) : ''}
+        ${fact('Rilevato', `${esc(shortWhen(h.firstSeen))}${h.lastSeen && shortWhen(h.lastSeen) !== shortWhen(h.firstSeen) ? ` <span class="muted">· visto ${esc(shortWhen(h.lastSeen))}</span>` : ''}`)}
+      </div>
+    </div>
+    <div class="hc-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>
+  </article>`;
+}
+
 function tableHtml() {
-  const rows = filteredHosts();
+  const filtered = filteredHosts();
   if (!S.data.hosts.length) {
     return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host attivi compaiono qui man mano che rispondono.');
   }
-  if (!rows.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
+  if (!filtered.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
+  const rows = sortRows(filtered, SORT_COLUMNS, S.net.sort);
+  if (S.net.view === 'cards') return `<div class="table-wrap scan-h host-cards">${rows.map(hostCard).join('')}</div>`;
   return table({
     columns, rows, sort: S.net.sort, cls: 'scan-h',
     rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}"`,
   }).replace('<table class="dt">', '<table class="dt clickable">');
 }
 
+/** Ordina per, verso e Schede / Tabella, accanto alla ricerca. */
+function viewControls() {
+  const s = S.net.sort || { key: 'ipAddress', dir: 1 };
+  return `<div class="sort-box"><label for="f-sort">Ordina per</label>
+      <select class="select input-sm" id="f-sort" data-field="sortKey">${SORTS.map(([k, label]) => `<option value="${k}" ${k === s.key ? 'selected' : ''}>${label}</option>`).join('')}</select>
+      <button class="btn btn-sm btn-icon sort-dir ${s.dir < 0 ? 'is-desc' : ''}" data-action="sort-dir" title="${s.dir < 0 ? 'Decrescente: clic per crescente' : 'Crescente: clic per decrescente'}">${icon('chevronDown')}</button></div>
+    <div class="view-box"><span class="view-label">Visualizza</span>
+      <div class="segmented view-switch" role="group" aria-label="Visualizza">
+        <button type="button" class="${S.net.view === 'table' ? 'is-active' : ''}" data-action="net-view" data-view="table" title="Elenco: una riga per dispositivo, con le colonne ordinabili">${icon('list', { size: 14 })} Elenco</button>
+        <button type="button" class="${S.net.view === 'cards' ? 'is-active' : ''}" data-action="net-view" data-view="cards" title="Schede: ogni dispositivo descritto per intero">${icon('dashboard', { size: 14 })} Schede</button></div></div>`;
+}
+
+function refreshControls() {
+  const box = $('#view-controls');
+  if (box) box.innerHTML = viewControls();
+}
+
 function tableCard() {
   return `<section class="card table-card">
     <div class="toolbar">
-      <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.net.q)}" placeholder="Cerca per IP, nome, MAC, produttore o tipo (più parole = tutte)" autocomplete="off"></div>
+      <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.net.q)}" placeholder="Cerca IP, nome, MAC, produttore, tipo…" title="Più parole: devono comparire tutte. Cerca anche negli indirizzi IPv6." autocomplete="off"></div>
+      <div class="view-controls" id="view-controls">${viewControls()}</div>
       <div class="toolbar-actions"><span class="toolbar-info" id="hosts-info"></span>
         <button class="btn btn-sm" data-action="clear-hosts" ${S.data.hosts.length ? '' : 'disabled'}>${icon('trash')} Svuota</button></div>
     </div>
     <div id="hosts-table">${tableHtml()}</div>
-    <div class="table-foot">${icon('info', { size: 14 })} Clic su una riga per i dettagli; tasto destro (o ⋯) per porte, WHOIS, traceroute, browser, cartelle condivise, Desktop remoto, SSH e ping.</div>
+    <div class="table-foot">${icon('info', { size: 14 })} Clic su un dispositivo per i dettagli; tasto destro (o ⋯) per porte, WHOIS, traceroute, browser, cartelle condivise, Desktop remoto, SSH e ping.</div>
   </section>`;
 }
 
@@ -471,6 +550,8 @@ const actions = {
   },
   'host-menu': (el) => hostMenu(el, el.dataset.ip),
   'host-rescan': (el) => rescan(el.dataset.ip),
+  'sort-dir': () => { const s = S.net.sort || { key: 'ipAddress', dir: 1 }; S.net.sort = { key: s.key, dir: -s.dir }; saveView(); renderTable(); refreshControls(); },
+  'net-view': (el) => { S.net.view = el.dataset.view; saveView(); renderTable(); refreshControls(); },
   'host-details': (el) => details(el.dataset.ip),
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),
   'host-whois': (el) => navigate('whois', { target: el.dataset.ip, start: true }),
@@ -601,9 +682,17 @@ definePage('network', {
     }
     if (field === 'autoPreset') n.autoPreset = el.value;
     if (field === 'repeat') n.repeat = Number(el.value) || 0;
+    if (field === 'sortKey') {
+      const s = SORTS.find((x) => x[0] === el.value);
+      n.sort = { key: el.value, dir: s ? s[3] : 1 };
+      saveView();
+      renderTable();
+      refreshControls();
+      return;
+    }
     saveOptions();
   },
   onSubmit: () => start(),
-  onSort: (key) => { S.net.sort = nextSort(S.net.sort, key); renderTable(); },
+  onSort: (key) => { S.net.sort = nextSort(S.net.sort, key); saveView(); renderTable(); refreshControls(); },
   onContext: (row, point) => hostMenu(point, row.dataset.ip),
 });
