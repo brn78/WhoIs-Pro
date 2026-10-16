@@ -15,6 +15,7 @@ import './pages/trace.js';
 import './pages/netstat.js';
 import './pages/computer.js';
 import './pages/perf.js';
+import './pages/capture.js';
 import { openPcNetwork } from './pages/settings.js';
 import { openSessionDrawer } from './pages/session.js';
 
@@ -108,6 +109,11 @@ function activityData() {
     const p = S.net && S.net.progress;
     sub = p ? `Rete · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} indirizzi · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
     pct = p ? p.percent : 0;
+  } else if (r.capture) {
+    const p = S.capture && S.capture.progress;
+    title = 'Cattura dei pacchetti';
+    sub = !p || !p.started ? 'in attesa del consenso di Windows' : p.converting ? 'lettura dei pacchetti' : `${fmtNumber(Math.round(p.seconds || 0))} s · ${Math.round((p.bytes || 0) / 1024)} KB`;
+    pct = p && p.limit && p.started ? Math.min(100, Math.round(((p.seconds || 0) * 100) / p.limit)) : null;
   } else if (r.perf) {
     const L = S.perf && S.perf.live;
     title = 'Test delle prestazioni';
@@ -436,7 +442,7 @@ const ACTIONS = {
   },
   'monitor': () => {
     const r = S.st.running;
-    go(r.perf ? 'perf' : r.network || r.autoPorts ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
+    go(r.capture ? 'capture' : r.perf ? 'perf' : r.network || r.autoPorts ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
   },
   'check-internet': () => call('checkInternet').catch(() => {}),
   'session-menu': (el) => sessionMenu(el),
@@ -534,6 +540,8 @@ on('autoports.progress', updateChrome);
 on('autoports.host', updateChrome);
 on('perf.progress', updateChrome);
 on('perf.done', updateChrome);
+on('capture.progress', updateChrome);
+on('capture.done', updateChrome);
 // i messaggi di avanzamento passano da una coda: gli ultimi arrivano dopo la fine e non devono riaccendere l'attività
 on('oui.progress', () => { if (!ouiActive) return; S.st.running.oui = true; updateChrome(); });
 

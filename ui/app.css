@@ -1362,6 +1362,19 @@ table.dt tbody td { height: 48px; padding-top: 4px; padding-bottom: 4px; }
 table.dt .trunc.w-name, table.dt td > .cell-text b.w-vendor { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; overflow-wrap: normal; }
 table.dt td > .cell-text b.w-vendor { max-width: 190px; }
 
+/* Pacchetti (cattura con pktmon) */
+.cap-note { margin-top: 14px; }
+.cap-stats { margin-top: 18px; }
+.cap-proto-row { grid-template-columns: 74px minmax(110px, 200px) minmax(0, 1fr) 56px; }
+.cap-proto-row .tag { justify-content: center; }
+.cap-proto-row.is-active { background: var(--primary-soft); }
+.cap-talker { grid-template-columns: minmax(130px, 230px) minmax(0, 130px) minmax(70px, 1fr) 64px; }
+.cap-addr { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-row b.cap-bytes { font-size: 13px; }
+.tag.neutral { background: var(--neutral-soft); color: var(--text-2); }
+table.dt .cap-info { display: block; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-list table.dt tbody td { height: 34px; padding-top: 2px; padding-bottom: 2px; }
+
 /* Ping e nslookup nella Panoramica */
 .quick-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .quick-form .search { flex: 1 1 320px; max-width: 520px; }
