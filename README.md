@@ -73,6 +73,11 @@ destinazioni nella stessa sessione.
 Connessioni TCP e porte in ascolto del PC con il **processo** che le ha aperte, filtri per stato, aggiornamento a
 intervalli, scansione o WHOIS dell'indirizzo remoto e chiusura del processo.
 
+**⚡ Prestazioni della rete**<br>
+Un test di 20 secondi: latenza, jitter e pacchetti persi verso il router e verso Internet, risposta del DNS, velocità
+di download e upload. Il giudizio è in parole semplici, con cosa regge la linea: streaming 4K, videochiamate, gioco
+online, lavoro da remoto, telecamere viste da fuori.
+
 **💾 Sessioni e report**<br>
 Tutto quello che trovi finisce nella sessione: file `.whoispro` con **salvataggio atomico** (SHA-256 e copia `.bak`),
 esportazione in **HTML**, **CSV** per Excel o testo.
@@ -206,8 +211,10 @@ finestra accanto all'orologio; dal menu dell'icona si riapre, si chiude davvero 
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
 <code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il registro dei dispositivi
 conosciuti (<code>dispositivi.json</code>, si svuota da <i>Impostazioni → Dati del programma</i>), il database dei produttori
-aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
-l'IEEE (o Wireshark) per il database dei produttori e i server WHOIS, RDAP e DNS che interroghi.
+aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte la pagina
+di prova di Windows (msftconnecttest.com) per sapere se Internet c'è, GitHub per gli aggiornamenti e, a richiesta,
+l'IEEE (o Wireshark) per il database dei produttori, i server WHOIS, RDAP e DNS che interroghi e i server di prova di
+Cloudflare per il test delle prestazioni. Senza Internet questi servizi non vengono nemmeno chiamati.
 </details>
 
 <details>

@@ -112,6 +112,12 @@ Namespace UI
                     Return Adapters()
                 Case "scanNetwork" : Return StartNetworkScan(args)
                 Case "rescanHost" : Return Await RescanHostAsync(args)
+                Case "perfStart"
+                    RequireInternet("Test delle prestazioni")
+                    Return StartPerf()
+                Case "perfStop"
+                    _perfCts?.Cancel()
+                    Return Nothing
                 Case "quickPing" : Return Await QuickPingAsync(ArgText(args, "target"), Clamp(ArgNumber(args, "count", 4), 1, 10))
                 Case "quickLookup" : Return Await QuickLookupAsync(ArgText(args, "target"))
                 Case "stopNetwork"
@@ -129,7 +135,9 @@ Namespace UI
                 Case "stopPorts"
                     _portCts?.Cancel()
                     Return Nothing
-                Case "whois" : Return Await WhoisAsync(ArgText(args, "target"), ArgText(args, "server"))
+                Case "whois"
+                    RequireInternet("WHOIS")
+                    Return Await WhoisAsync(ArgText(args, "target"), ArgText(args, "server"))
                 Case "dns" : Return Await DnsAsync(ArgText(args, "target"))
                 Case "traceroute" : Return StartTraceroute(args)
                 Case "stopTrace"
@@ -144,13 +152,19 @@ Namespace UI
                 Case "clearList" : Return ClearList(ArgText(args, "list"))
                 Case "removeHost" : Return RemoveHost(ArgText(args, "ip"))
                 Case "export" : Return Export(ArgText(args, "format"))
-                Case "updateOui" : Return Await UpdateOuiAsync()
+                Case "updateOui"
+                    RequireInternet("Aggiornamento del database dei produttori")
+                    Return Await UpdateOuiAsync()
                 Case "openUrl"
                     MainWindow.OpenExternal(ArgText(args, "url"))
                     Return Nothing
                 Case "openFile" : Return OpenFile(ArgText(args, "path"))
-                Case "checkUpdate" : Return Await _updates.CheckAsync(manual:=True, CancellationToken.None)
-                Case "installUpdate" : Return Await InstallUpdateAsync()
+                Case "checkUpdate"
+                    RequireInternet("Controllo degli aggiornamenti")
+                    Return Await _updates.CheckAsync(manual:=True, CancellationToken.None)
+                Case "installUpdate"
+                    RequireInternet("Scaricamento dell'aggiornamento")
+                    Return Await InstallUpdateAsync()
                 Case "settings" : Return SettingsView()
                 Case "saveSettings" : Return SaveSettings(args)
                 Case "saveProfile" : Return SaveProfile(args)
@@ -232,6 +246,29 @@ Namespace UI
 
 #Region "Internet"
 
+        ''' <summary>
+        ''' Prima di contattare un servizio esterno (GitHub, IEEE, WHOIS/RDAP, Cloudflare): se il controllo periodico dice
+        ''' che Internet non c'è, il comando si ferma subito con un messaggio chiaro invece di aspettare un errore di rete.
+        ''' Finché il primo controllo non ha risposto (avvio) si prova lo stesso.
+        ''' </summary>
+        Private Sub RequireInternet(what As String)
+            If _online.HasValue AndAlso Not _online.Value Then
+                CheckInternet()
+                Throw New UserMessageException($"{what}: serve Internet, e adesso la connessione non c'è. Riprova quando in alto torna «Internet» in verde.")
+            End If
+        End Sub
+
+        ''' <summary>Vero se una scheda collegata ha un indirizzo IPv6 utilizzabile su Internet (globale o temporaneo).</summary>
+        Private Shared Function HasPublicIpv6() As Boolean
+            Try
+                Return Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().
+                    Where(Function(n) n.OperationalStatus = Net.NetworkInformation.OperationalStatus.Up AndAlso n.NetworkInterfaceType <> Net.NetworkInformation.NetworkInterfaceType.Loopback).
+                    Any(Function(n) Network.Ipv6.HasPublic(Network.Ipv6.AddressesOf(n.GetIPProperties())))
+            Catch
+                Return False
+            End Try
+        End Function
+
         ''' <summary>Connessione a Internet: una richiesta leggera alla pagina di prova di Windows (NCSI), ogni 30 secondi; l'esito va alla pagina solo se cambia.</summary>
         Private Async Sub CheckInternet()
             If _checkingInternet Then Return
@@ -255,9 +292,10 @@ Namespace UI
             End Try
             ' tempo di risposta della stessa pagina di prova: la Panoramica lo mostra come «risposta di Internet»
             _internetMs = elapsed
-            ' Internet anche in IPv6: la pagina di prova di Windows per IPv6 ha solo l'indirizzo IPv6
+            ' Internet anche in IPv6: la pagina di prova di Windows per IPv6 ha solo l'indirizzo IPv6. Si prova solo se una
+            ' scheda ha un IPv6 pubblico: senza, la risposta è già «no» e la richiesta sarebbe inutile.
             Dim online6 = False
-            If online Then
+            If online AndAlso HasPublicIpv6() Then
                 Try
                     Using request As New HttpRequestMessage(HttpMethod.Head, "http://ipv6.msftconnecttest.com/connecttest.txt")
                         Using response = Await InternetProbe.SendAsync(request)
@@ -273,6 +311,10 @@ Namespace UI
             If Not _online.HasValue OrElse _online.Value <> online Then
                 _online = online
                 _owner.PostEvent("internet", New With {.online = online})
+                ' controllo degli aggiornamenti rimandato perché mancava Internet: parte adesso
+                If online AndAlso _updatePending Then
+                    Dim unused = AutoCheckUpdateAsync(delay:=False)
+                End If
             End If
         End Sub
 
@@ -428,15 +470,25 @@ Namespace UI
 
 #End Region
 
-        ''' <summary>Controllo automatico delle nuove versioni (una volta al giorno), qualche secondo dopo l'avvio.</summary>
-        Private Async Function AutoCheckUpdateAsync() As Task
+        Private _updatePending As Boolean
+
+        ''' <summary>
+        ''' Controllo automatico delle nuove versioni (una volta al giorno), qualche secondo dopo l'avvio, solo con Internet:
+        ''' se la connessione non c'è il controllo aspetta e parte appena torna (CheckInternet).
+        ''' </summary>
+        Private Async Function AutoCheckUpdateAsync(Optional delay As Boolean = True) As Task
             If Not _updates.IsDue Then Return
             Try
-                Await Task.Delay(TimeSpan.FromSeconds(6))
+                If delay Then Await Task.Delay(TimeSpan.FromSeconds(6))
+                If Not (_online.HasValue AndAlso _online.Value) Then
+                    _updatePending = True
+                    Return
+                End If
+                _updatePending = False
                 Dim status = Await _updates.CheckAsync(manual:=False, CancellationToken.None)
                 _owner.PostEvent("update.status", status)
             Catch ex As Exception
-                ' senza Internet non succede nulla: si riprova al prossimo avvio
+                ' errore del servizio: si riprova al prossimo avvio
             End Try
         End Function
 
@@ -466,7 +518,7 @@ Namespace UI
                     .ports = PortDictionary.GetPresets().Select(Function(p) New With {.key = p.Key, .name = p.Name, .ports = p.Text}).ToList(),
                     .whoisServers = WhoisServers
                 },
-                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy, .autoPorts = _autoCts IsNot Nothing},
+                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy, .autoPorts = _autoCts IsNot Nothing, .perf = _perfCts IsNot Nothing},
                 .autoPorts = New With {.done = _autoDone, .total = _autoSeen.Count, .running = _autoRunning, .open = _autoOpen},
                 .devices = _devices.Count,
                 .update = _updates.Status(),
@@ -505,7 +557,8 @@ Namespace UI
                 .whois = _session.WhoisEntries,
                 .dns = _session.DnsRecords,
                 .trace = _session.TracerouteHops,
-                .scans = If(_session.Scans, New List(Of ScanRecord)())
+                .scans = If(_session.Scans, New List(Of ScanRecord)()),
+                .perf = If(_session.PerfTests, New List(Of PerfResult)())
             }
         End Function
 
@@ -976,6 +1029,56 @@ Namespace UI
             Return New With {.entry = result, .state = State()}
         End Function
 
+        Private _perfCts As CancellationTokenSource
+
+        ''' <summary>
+        ''' Test delle prestazioni (pagina Prestazioni): gateway della scheda con la rete vera, poi Internet, DNS, download e
+        ''' upload. L'avanzamento va alla pagina con «perf.progress», l'esito con «perf.done» e resta nella sessione.
+        ''' </summary>
+        Private Function StartPerf() As Object
+            If _perfCts IsNot Nothing Then Throw New UserMessageException("Un test delle prestazioni è già in corso.")
+            Dim nic = NetworkConfig.ReadAll().FirstOrDefault(Function(a) a.Up AndAlso a.Gateway <> "")
+            Dim gateway As Net.IPAddress = Nothing
+            If nic IsNot Nothing Then Net.IPAddress.TryParse(nic.Gateway, gateway)
+            Dim linkMbps As Long = 0
+            If nic IsNot Nothing Then
+                Try
+                    Dim ni = Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(Function(x) x.Name = nic.Name)
+                    If ni IsNot Nothing AndAlso ni.Speed > 0 Then linkMbps = ni.Speed \ 1000000L
+                Catch
+                End Try
+            End If
+            _perfCts = New CancellationTokenSource()
+            Dim progress As New Progress(Of PerfProgress)(Sub(p) _owner.PostEvent("perf.progress", p))
+            Dim unused = RunPerfAsync(gateway, If(nic Is Nothing, "", nic.Name), linkMbps, progress, _perfCts)
+            Return New With {.started = True, .adapter = If(nic Is Nothing, "", nic.Name), .gateway = If(gateway Is Nothing, "", gateway.ToString()), .state = State()}
+        End Function
+
+        Private Async Function RunPerfAsync(gateway As Net.IPAddress, adapter As String, linkMbps As Long, progress As IProgress(Of PerfProgress), cts As CancellationTokenSource) As Task
+            Dim watch = Stopwatch.StartNew()
+            Dim result As PerfResult
+            Try
+                result = Await New PerfTester().RunAsync(gateway, progress, cts.Token)
+            Catch ex As OperationCanceledException
+                result = New PerfResult With {.Cancelled = True}
+            Catch ex As Exception
+                result = New PerfResult With {.Error = ex.Message}
+            End Try
+            result.Adapter = adapter
+            result.LinkMbps = linkMbps
+            result.Seconds = Math.Round(watch.Elapsed.TotalSeconds, 1)
+            cts.Dispose()
+            If ReferenceEquals(_perfCts, cts) Then _perfCts = Nothing
+            Dim scan As ScanRecord = Nothing
+            If Not result.Cancelled AndAlso result.Error = "" Then
+                If _session.PerfTests Is Nothing Then _session.PerfTests = New List(Of PerfResult)()
+                _session.PerfTests.Add(result)
+                If _session.PerfTests.Count > 50 Then _session.PerfTests.RemoveRange(0, _session.PerfTests.Count - 50)
+                scan = AddScan("perf", If(result.Server = "", "Internet e rete locale", result.Server), result.Seconds, CInt(Math.Round(result.DownloadMbps)), False, Nothing)
+            End If
+            _owner.PostEvent("perf.done", New With {.result = result, .scan = scan, .state = State()})
+        End Function
+
         ''' <summary>
         ''' Ping veloce dalla Panoramica: risolve il nome (prima IPv4, poi IPv6) e manda count richieste, una ogni 300 ms.
         ''' Niente nella sessione: è un controllo al volo.
@@ -1229,6 +1332,7 @@ Namespace UI
                 Case "dns" : _session.DnsRecords.Clear()
                 Case "trace" : _session.TracerouteHops.Clear()
                 Case "scans" : _session.Scans?.Clear()
+                Case "perf" : _session.PerfTests?.Clear()
                 Case Else : Throw New UserMessageException($"Elenco sconosciuto: {list}")
             End Select
             Touch()
@@ -1277,6 +1381,7 @@ Namespace UI
         Private Sub StopAll()
             _netCts?.Cancel()
             _autoCts?.Cancel()
+            _perfCts?.Cancel()
             _portCts?.Cancel()
             _traceCts?.Cancel()
         End Sub

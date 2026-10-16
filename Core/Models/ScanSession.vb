@@ -13,5 +13,7 @@
         Public Property TracerouteHops As New List(Of TracerouteHop)()
         ''' <summary>Le scansioni fatte (le ultime 200), per la Panoramica; le sessioni salvate prima della 2.4 non le hanno.</summary>
         Public Property Scans As New List(Of ScanRecord)()
+        ''' <summary>Test delle prestazioni di rete (gli ultimi 50).</summary>
+        Public Property PerfTests As New List(Of PerfResult)()
     End Class
 End Namespace

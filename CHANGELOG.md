@@ -18,6 +18,15 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
   file e dimensione; un avviso quando ha più di 30 giorni.
 - **L'elenco resta dov'è**: riscansionando un host (o quando arrivano porte e aggiornamenti) le tabelle di Rete,
   Porte, Connessioni, DNS e Traceroute non tornano più in cima; la riga riscansionata si illumina per un attimo.
+- **Prestazioni della rete** (nuova pagina): un test di circa 20 secondi misura latenza, jitter e pacchetti persi verso
+  il router e verso Internet, la risposta del DNS e la velocità di download e upload (server di prova di Cloudflare,
+  gli stessi di speed.cloudflare.com, su più connessioni insieme). Ne esce un giudizio in parole semplici (ottima,
+  buona, discreta, scarsa, con il punto debole) e cosa la linea regge: navigazione, streaming 4K, videochiamate,
+  gioco online, lavoro da remoto e telecamere viste da fuori. I test restano nella sessione.
+- **Servizi esterni solo con Internet**: WHOIS, aggiornamento del database dei produttori, controllo e scaricamento
+  degli aggiornamenti e test delle prestazioni si fermano subito con un messaggio chiaro se Internet non c'è; il
+  controllo automatico degli aggiornamenti aspetta che la connessione torni. La prova IPv6 di Internet parte solo
+  se il PC ha un indirizzo IPv6 pubblico.
 - **IPv6**: indirizzi IPv6 delle schede del PC (globali, temporanei, locali e link-local), gateway e DNS IPv6 nella
   Panoramica, in *Rete del PC* e nelle Impostazioni; nel riquadro Internet si vede se funziona anche IPv6. Alla fine
   di ogni scansione gli host ricevono i loro indirizzi IPv6 dalla tabella dei vicini di Windows (per MAC): etichetta
