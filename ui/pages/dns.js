@@ -3,7 +3,7 @@ import { call } from '../core/bridge.js';
 import { $, esc, matchesAll, plural } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
-import { table, nextSort } from '../core/table.js';
+import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
 import { confirmDialog, emptyState, pageHead, toast, toastError } from '../core/ui.js';
 
 S.dns = { target: '', busy: false, q: '', type: '', sort: null, fresh: new Set() };
@@ -78,7 +78,7 @@ function updateInfo() {
 
 function renderTable() {
   const box = $('#dns-table');
-  if (box) box.innerHTML = tableHtml();
+  if (box) replaceKeepingScroll(box, tableHtml());
   const p = $('#dns-pills');
   if (p) p.innerHTML = pills();
   updateInfo();

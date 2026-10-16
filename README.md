@@ -195,7 +195,8 @@ diritti di amministratore, il programma no. <i>Torna a DHCP</i> rimette la sched
 <summary><b>Posso lasciarlo sempre aperto?</b></summary>
 <br>
 Sì: in <i>Impostazioni</i> attivi l'icona nell'area di notifica e, se vuoi, l'avvio con Windows. La X nasconde la
-finestra accanto all'orologio; dal menu dell'icona si riapre o si chiude davvero.
+finestra accanto all'orologio; dal menu dell'icona si riapre, si chiude davvero o si applica al volo un
+<b>profilo di rete</b> (con la spunta su quello attivo). All'avvio il programma riapre l'ultima sessione salvata.
 </details>
 
 <details>

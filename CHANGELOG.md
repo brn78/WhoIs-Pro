@@ -5,6 +5,22 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.4.1 · in lavorazione
+
+- **Riapre l'ultima sessione**: all'avvio il programma riapre l'ultima sessione salvata o aperta, se il file c'è
+  ancora; altrimenti parte da una sessione nuova e lo dice. *Nuova sessione* fa ripartire da zero anche al prossimo
+  avvio.
+- **Profili di rete nell'icona dell'area di notifica**: il menu dell'icona elenca i profili, con la spunta su quello
+  che la scheda ha adesso; un clic lo applica (Windows chiede il consenso) e l'esito arriva con l'avviso di Windows.
+  C'è anche *Torna a DHCP* per le schede con un indirizzo statico, e *Crea un profilo…* se non ce n'è ancora nessuno.
+- **Database dei produttori più chiaro** (*Impostazioni → Produttori*): origine (registri dell'IEEE o Wireshark,
+  scaricato o incluso nel programma), data dell'ultimo aggiornamento e da quanti giorni, blocchi MA-L, MA-M e MA-S,
+  file e dimensione; un avviso quando ha più di 30 giorni.
+- **L'elenco resta dov'è**: riscansionando un host (o quando arrivano porte e aggiornamenti) le tabelle di Rete,
+  Porte, Connessioni, DNS e Traceroute non tornano più in cima; la riga riscansionata si illumina per un attimo.
+- Dopo *Aggiorna dall'IEEE* il riquadro «Aggiornamento in corso» nella barra superiore restava acceso: ora si spegne
+  alla fine. La riclassificazione degli host dopo l'aggiornamento tiene conto delle porte aperte.
+
 ## 2.4.0 · 16 ottobre 2026
 
 - **Grafica nuova, solo di WhoIs Pro**: barra laterale grafite anche nel tema chiaro, accento verde acqua, LED quadrati

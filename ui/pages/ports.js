@@ -4,7 +4,7 @@ import { $, esc, fmtMs, fmtNumber, fmtSeconds, matchesAll, plural } from '../cor
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table, nextSort } from '../core/table.js';
+import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
 import { confirmDialog, emptyState, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.ports = {
@@ -179,7 +179,7 @@ function updateInfo() {
 function renderTable() {
   const box = $('#ports-table');
   if (!box) return;
-  box.innerHTML = tableHtml();
+  replaceKeepingScroll(box, tableHtml());
   updateInfo();
   const clear = $('[data-action="clear-ports"]');
   if (clear) clear.disabled = !S.data.ports.length;

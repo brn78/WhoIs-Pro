@@ -27,8 +27,9 @@ const SECTIONS = [
 // Avvio
 // ---------------------------------------------------------------------------------------------------------------------
 async function start() {
+  let res;
   try {
-    const res = await call('start');
+    res = await call('start');
     adopt(res);
   } catch (err) {
     $('#app').innerHTML = `<div class="boot"><div class="empty"><div class="empty-icon">${icon('alert')}</div><h3>Pagina non disponibile</h3><p>${esc(err.message)}</p></div></div>`;
@@ -37,7 +38,21 @@ async function start() {
   try { S.collapsed = localStorage.getItem('sidebar') === 'collapsed'; } catch { /* senza memoria locale */ }
   if (window.setTheme && S.st.theme && S.st.theme !== window.getTheme()) window.setTheme(S.st.theme);
   render();
+  announceReopen(res && res.reopened);
   announceUpdate(S.st.update);
+}
+
+/** Avvio: l'ultima sessione salvata è stata riaperta (o non c'è più, o non si legge). */
+function announceReopen(r) {
+  if (!r) return;
+  const name = fileName(r.file);
+  if (r.missing) toast(`Il file ${name} non c'è più (spostato o cancellato): si parte da una sessione nuova.`, { tone: 'warning', title: 'Ultima sessione non trovata', timeout: 9000 });
+  else if (r.error) toast(`${name}: ${r.error}. Si parte da una sessione nuova; prova ad aprirla con «Apri…».`, { tone: 'error', title: 'Ultima sessione non riaperta', timeout: 12000 });
+  else if (r.restoredFromBackup) toast('Il file principale era danneggiato: la sessione viene dalla copia .bak. Salvala per rigenerare il file.', { tone: 'warning', title: `Riaperta ${name} dalla copia di sicurezza`, timeout: 12000 });
+  else {
+    const c = counts();
+    toast(`${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}, ${plural(S.data.scans.length, 'scansione', 'scansioni')}.`, { tone: 'success', title: `Riaperta l'ultima sessione: ${name}` });
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -300,18 +315,25 @@ function exportMenu(anchor) {
   ]);
 }
 
+let ouiActive = false;
+
 async function updateOui() {
   if (S.st.running.oui) return;
+  ouiActive = true;
   S.st.running.oui = true;
   S.settings.ouiMessage = 'Connessione ai registri dell\'IEEE…';
   bus.dispatchEvent(new Event('state'));
   updateChrome();
   try {
-    const r = adopt(await call('updateOui'));
+    const res = await call('updateOui');
+    ouiActive = false;
+    const r = adopt(res);
+    S.st.running.oui = false;
     updateChrome();
     if (S.page === 'settings') renderPage();
     toast(`${plural(r.count, 'produttore', 'produttori')}${r.changedHosts ? ` · ${plural(r.changedHosts, 'host riclassificato', 'host riclassificati')}` : ''}.`, { tone: 'success', title: 'Database dei produttori aggiornato' });
   } catch (err) {
+    ouiActive = false;
     S.st.running.oui = false;
     updateChrome();
     if (S.page === 'settings') renderPage();
@@ -375,6 +397,9 @@ on('update.status', (u) => {
   bus.dispatchEvent(new Event('state'));
   announceUpdate(u);
 });
+// il programma chiede di aprire una pagina (per esempio «Crea un profilo…» dal menu dell'icona)
+on('navigate', (d) => { if (d && d.page && PAGES[d.page]) go(d.page, d.tab ? { tab: d.tab } : {}); });
+
 on('update.progress', (d) => {
   if (!S.st || !S.st.update) return;
   S.st.update.download = d;
@@ -501,6 +526,7 @@ on('network.progress', updateChrome);
 on('ports.progress', updateChrome);
 on('autoports.progress', updateChrome);
 on('autoports.host', updateChrome);
-on('oui.progress', () => { S.st.running.oui = true; updateChrome(); });
+// i messaggi di avanzamento passano da una coda: gli ultimi arrivano dopo la fine e non devono riaccendere l'attività
+on('oui.progress', () => { if (!ouiActive) return; S.st.running.oui = true; updateChrome(); });
 
 start();

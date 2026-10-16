@@ -5,7 +5,7 @@ import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table, nextSort } from '../core/table.js';
+import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
 import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.net = {
@@ -233,7 +233,10 @@ async function rescan(ip) {
     toastError(err, 'Riscansione non riuscita');
   }
   S.net.rescanning.delete(ip);
+  // la riga resta dov'era (lo scorrimento non torna in cima) e si illumina per un attimo
+  S.net.fresh.add(ip);
   renderTable();
+  setTimeout(() => { S.net.fresh.delete(ip); }, 2000);
   refreshDrawer(ip);
 }
 
@@ -287,7 +290,7 @@ function updateInfo() {
 function renderTable() {
   const box = $('#hosts-table');
   if (!box) return;
-  box.innerHTML = tableHtml();
+  replaceKeepingScroll(box, tableHtml());
   updateInfo();
   const clear = $('[data-action="clear-hosts"]');
   if (clear) clear.disabled = !S.data.hosts.length;

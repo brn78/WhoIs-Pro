@@ -1,7 +1,7 @@
 // Impostazioni (dalla barra superiore): avvio con Windows e area di notifica, tema, rete del PC con i profili di rete
 // (IP della scheda al volo), aggiornamenti del programma, database dei produttori e cartella dei dati.
 import { call, on } from '../core/bridge.js';
-import { $, esc, fmtDateTime, plural, shortPath } from '../core/dom.js';
+import { $, esc, fmtBytes, fmtDateTime, fmtNumber, plural, shortPath } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
@@ -187,15 +187,28 @@ function updateCard() {
 
 function ouiCard() {
   const o = S.st.oui;
+  const info = o.info || {};
   const busy = S.st.running.oui;
   const msg = S.settings.ouiMessage;
+  const days = info.updatedAt ? Math.floor((Date.now() - new Date(info.updatedAt).getTime()) / 86400000) : null;
+  const age = days == null ? '' : days <= 0 ? 'oggi' : days === 1 ? 'ieri' : `${fmtNumber(days)} giorni fa`;
+  const origin = !info.file ? '<span class="muted">Solo i produttori incorporati nel programma</span>'
+    : info.source === 'IEEE' ? '<b>Registri ufficiali dell\'IEEE</b> <span class="muted">MA-L, MA-M e MA-S, scaricati da WhoIs Pro</span>'
+      : info.downloaded ? '<b>Wireshark</b> <span class="muted">file manuf scaricato (l\'IEEE non aveva risposto)</span>'
+        : '<b>Wireshark</b> <span class="muted">file manuf incluso nel programma</span>';
+  const block = (label, n, bits) => `<span class="tag" title="Blocchi da ${bits} bit">${label} ${fmtNumber(n || 0)}</span>`;
+  const old = days != null && days > 30;
   return `<section class="card"><div class="card-head"><div class="card-title">${icon('database')}<h2>Database dei produttori</h2></div>
-      <span class="pill primary">${plural(o.count, 'produttore', 'produttori')}</span></div>
+      <span class="pill ${old ? 'warning' : 'primary'}">${plural(info.prefixes || o.count, 'prefisso', 'prefissi')}</span></div>
     <div class="card-body"><div class="fields">
       <dl class="kv compact">
-        <dt>Origine</dt><dd>${o.file ? `<span class="mono" title="${esc(o.file)}">${esc(shortPath(o.file))}</span>` : '<span class="muted">Solo i produttori incorporati nel programma</span>'}</dd>
+        <dt>Origine</dt><dd>${origin}</dd>
+        <dt>Aggiornato</dt><dd>${info.updatedAt ? `${esc(fmtDateTime(info.updatedAt))} <span class="muted">· ${esc(age)}</span>` : '<span class="muted">—</span>'}</dd>
+        <dt>Blocchi</dt><dd>${block('MA-L', info.maL, 24)} ${block('MA-M', info.maM, 28)} ${block('MA-S', info.maS, 36)} ${help('MA-L sono i blocchi grandi dati a un produttore (i primi 6 caratteri del MAC), MA-M e MA-S quelli medi e piccoli, più precisi: per ogni MAC si usa il blocco più preciso.')}</dd>
+        <dt>File</dt><dd>${info.file ? `<span class="mono" title="${esc(info.file)}">${esc(shortPath(info.file))}</span> <span class="muted">· ${esc(fmtBytes(info.sizeBytes))}</span>` : '<span class="muted">—</span>'}</dd>
         <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('I tre registri ufficiali dell\'IEEE (blocchi MA-L, MA-M e MA-S, aggiornati ogni giorno; se l\'IEEE non risponde, il database di Wireshark) vengono salvati in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati. Per ogni MAC si usa il blocco più preciso.')}</dd>
       </dl>
+      ${old && !busy ? note('warning', 'alert', `Il database ha ${fmtNumber(days)} giorni: i dispositivi usciti da poco potrebbero restare senza produttore. Aggiornalo dall'IEEE.`) : ''}
       ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>` : ''}
       <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna dall'IEEE</button></div>
     </div></div></section>`;
@@ -457,6 +470,16 @@ const actions = {
     try { S.settings.adapters = await call('adapterConfigs'); rerender(); } catch (err) { toastError(err); }
   },
 };
+
+// profilo applicato dal menu dell'icona nell'area di notifica: schede e stato aggiornati anche qui
+on('profile.applied', (d) => {
+  adopt({ state: d.state });
+  S.settings.adapters = d.adapters;
+  rerender();
+  emit('state');
+  const a = (d.adapters || []).find((x) => x.name === d.profile.adapter);
+  toast(a && a.ip ? `${d.profile.adapter}: ${a.dhcp ? 'DHCP' : 'statico'} · ${a.ip}` : `${d.profile.adapter} configurata.`, { tone: 'success', title: `Profilo «${d.profile.name}» applicato` });
+});
 
 on('oui.progress', (d) => {
   S.settings.ouiMessage = d.message;
