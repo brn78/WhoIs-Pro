@@ -18,6 +18,17 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
   file e dimensione; un avviso quando ha più di 30 giorni.
 - **L'elenco resta dov'è**: riscansionando un host (o quando arrivano porte e aggiornamenti) le tabelle di Rete,
   Porte, Connessioni, DNS e Traceroute non tornano più in cima; la riga riscansionata si illumina per un attimo.
+- **IPv6**: indirizzi IPv6 delle schede del PC (globali, temporanei, locali e link-local), gateway e DNS IPv6 nella
+  Panoramica, in *Rete del PC* e nelle Impostazioni; nel riquadro Internet si vede se funziona anche IPv6. Alla fine
+  di ogni scansione gli host ricevono i loro indirizzi IPv6 dalla tabella dei vicini di Windows (per MAC): etichetta
+  *v6* nella tabella, elenco nel dettaglio, e la ricerca li trova.
+- **Ping e nslookup nella Panoramica**: un campo con *Ping* (quattro richieste con tempo e TTL, minimo, media,
+  massimo e perse) e *nslookup* (record A, AAAA, PTR, MX, NS e TXT, con il server DNS che ha risposto); Invio li fa
+  insieme; scorciatoie per il gateway, 1.1.1.1 e google.com. Non finiscono nella sessione.
+- Tabella degli host su una riga sola e con caratteri un po' più piccoli: il tipo di dispositivo non va più a capo,
+  le porte aperte sono nella seconda riga del dispositivo, la latenza è il numero colorato.
+- DNS: i record TXT non erano letti (nslookup li scrive sulla riga dopo); per un indirizzo IP non si cercano più MX,
+  NS e TXT, che non esistono.
 - Dopo *Aggiorna dall'IEEE* il riquadro «Aggiornamento in corso» nella barra superiore restava acceso: ora si spegne
   alla fine. La riclassificazione degli host dopo l'aggiornamento tiene conto delle porte aperte.
 

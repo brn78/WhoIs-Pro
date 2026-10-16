@@ -14,7 +14,7 @@ import { openPcNetwork } from './settings.js';
 const SAMPLES = 90;          // 90 letture ogni 2 secondi: gli ultimi 3 minuti
 const DAY = 86400000;
 
-S.overview = { dash: null, error: '', timer: 0, busy: false, sel: '', hist: new Map() };
+S.overview = { dash: null, error: '', timer: 0, busy: false, sel: '', hist: new Map(), quick: { target: '', ping: null, dns: null, pinging: false, looking: false, pingError: '', dnsError: '' } };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Dati dal vivo
@@ -119,7 +119,18 @@ function factsHtml(a) {
     ${f('Gateway', a.gateway ? `<span class="mono">${esc(a.gateway)}</span>` : '<span class="faint">nessuno</span>')}
     ${f('DNS', (a.dns || []).length ? `<span class="mono">${esc(a.dns.join(', '))}</span>` : '<span class="faint">—</span>')}
     ${f('Configurazione', a.dhcp ? 'automatica (DHCP)' : 'statica')}
-    ${f('MAC', `<span class="mono">${esc(a.mac)}</span>`)}`;
+    ${f('MAC', `<span class="mono">${esc(a.mac)}</span>`)}
+    ${f('IPv6', v6Fact(a))}`;
+}
+
+/** IPv6 della scheda: il primo indirizzo utilizzabile su Internet, gli altri nel tooltip; il gateway IPv6. */
+function v6Fact(a) {
+  const list = a.ipv6 || [];
+  if (!list.length) return '<span class="faint">spento</span>';
+  const pub = list.find((x) => x.kind === 'globale' || x.kind === 'temporaneo');
+  const all = list.map((x) => `${x.address}/${x.prefixLength} (${x.kind})`).join('\n');
+  const main = pub ? `<span class="mono">${esc(pub.address)}</span>` : '<span class="muted">solo link-local</span>';
+  return `<span title="${esc(all)}${a.gateway6 ? `\nGateway ${esc(a.gateway6)}` : ''}">${main}${list.length > 1 ? ` <span class="tag">+${list.length - 1}</span>` : ''}</span>`;
 }
 
 function linkPanel() {
@@ -183,9 +194,103 @@ function statsHtml() {
   return `${stat('network', 'Host nella rete', fmtNumber(hosts.length), fresh ? `<b class="tone-new">${plural(fresh, 'nuovo', 'nuovi')}</b> nelle ultime 24 ore` : 'nessun nuovo nelle ultime 24 ore')}
     ${stat('ports', 'Porte aperte', fmtNumber(S.data.ports.length), portHosts ? `su ${plural(portHosts, 'host', 'host')}` : 'nessuna scansione delle porte')}
     ${stat('netstat', 'Internet', online === false ? 'Assente' : ms != null ? `${fmtNumber(ms)}<small>ms</small>` : '—',
-      online === false ? 'WHOIS, DNS pubblici e aggiornamenti non funzionano' : 'risposta della pagina di prova di Windows', online === false ? 'is-bad' : '')}
+      online === false ? 'WHOIS, DNS pubblici e aggiornamenti non funzionano'
+        : `risposta della pagina di prova di Windows${net && net.ipv6 != null ? ` · ${net.ipv6 ? '<b class="tone-new">IPv6 attivo</b>' : 'solo IPv4'}` : ''}`, online === false ? 'is-bad' : '')}
     ${stat(last ? (last.kind === 'ports' ? 'ports' : last.kind === 'trace' ? 'trace' : 'network') : 'network', 'Ultima scansione', last ? esc(fmtAgo(last.at)) : 'mai',
       last ? `${esc(k.label)} ${esc(last.target)}` : 'avvia la prima dalla pagina Rete')}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Ping e nslookup al volo (non finiscono nella sessione)
+// ---------------------------------------------------------------------------------------------------------------------
+const PING_STATUS = {
+  TimedOut: 'nessuna risposta', DestinationHostUnreachable: 'host irraggiungibile', DestinationNetworkUnreachable: 'rete irraggiungibile',
+  TtlExpired: 'TTL scaduto', DestinationUnreachable: 'irraggiungibile', Error: 'errore',
+};
+
+function pingInner() {
+  const q = S.overview.quick;
+  if (q.pinging) return '<div class="quick-wait"><span class="spinner"></span> Ping in corso…</div>';
+  if (q.pingError) return `<div class="quick-msg tone-bad">${esc(q.pingError)}</div>`;
+  const p = q.ping;
+  if (!p) return '<div class="quick-msg muted">Quattro richieste ICMP, con tempo e TTL di ciascuna.</div>';
+  const lost = p.sent - p.received;
+  const max = Math.max(1, ...p.replies.map((r) => r.ms));
+  const rows = p.replies.map((r) => (r.status === 'Success'
+    ? `<li><span class="q-seq">${r.seq}</span><span class="q-bar"><i style="width:${Math.max(4, (r.ms / max) * 100).toFixed(0)}%"></i></span><b>${r.ms ? `${fmtNumber(r.ms)} ms` : '< 1 ms'}</b><span class="muted">TTL ${r.ttl}</span></li>`
+    : `<li class="is-lost"><span class="q-seq">${r.seq}</span><span class="q-bar"></span><b>${esc(PING_STATUS[r.status] || r.status)}</b><span></span></li>`)).join('');
+  return `<div class="quick-head"><b>${esc(p.target)}</b>${p.address !== p.target ? ` <span class="mono muted">${esc(p.address)}</span>` : ''}</div>
+    <ul class="q-replies">${rows}</ul>
+    <div class="quick-sum ${lost ? (p.received ? 'tone-warn' : 'tone-bad') : ''}">${fmtNumber(p.received)} di ${fmtNumber(p.sent)} risposte${lost ? ` · ${Math.round((lost * 100) / p.sent)}% perse` : ''}${p.received ? ` · min ${fmtNumber(p.min)} · media ${fmtNumber(p.avg)} · max ${fmtNumber(p.max)} ms` : ''}</div>`;
+}
+
+function dnsInner() {
+  const q = S.overview.quick;
+  if (q.looking) return '<div class="quick-wait"><span class="spinner"></span> nslookup in corso…</div>';
+  if (q.dnsError) return `<div class="quick-msg tone-bad">${esc(q.dnsError)}</div>`;
+  const d = q.dns;
+  if (!d) return '<div class="quick-msg muted">Record A, AAAA, MX, NS e TXT di un nome, oppure il nome (PTR) di un indirizzo.</div>';
+  const server = d.server && !/^unknown$/i.test(d.server) ? d.server : 'senza nome';
+  const order = ['A', 'AAAA', 'PTR', 'MX', 'NS', 'TXT'];
+  const recs = [...d.records].sort((a, b) => order.indexOf(a.recordType) - order.indexOf(b.recordType));
+  return `<div class="quick-head"><b>${esc(d.target)}</b> <span class="muted">· server ${esc(server)}${d.serverAddress ? ` <span class="mono">${esc(d.serverAddress)}</span>` : ''} · ${fmtNumber(d.ms)} ms</span></div>
+    ${recs.length ? `<ul class="q-records">${recs.map((r) => `<li><span class="tag q-type">${esc(r.recordType)}</span><span class="mono">${esc(r.value)}</span></li>`).join('')}</ul>`
+    : '<div class="quick-msg tone-bad">Nessun record: il nome non esiste o il server non risponde.</div>'}`;
+}
+
+/** Scorciatoie: il gateway della scheda scelta, un DNS pubblico e un nome da risolvere. */
+function picksHtml() {
+  const a = selected();
+  const picks = [...new Set([a && a.gateway, '1.1.1.1', 'google.com'].filter(Boolean))];
+  return picks.map((t) => `<button type="button" class="chip quick-pick" data-action="quick-go" data-target="${esc(t)}" title="${t === (a && a.gateway) ? 'Gateway della scheda' : 'Prova con questo'}">${esc(t)}</button>`).join('');
+}
+
+function quickCard() {
+  const q = S.overview.quick;
+  return `<section class="card quick-card"><div class="card-head"><div class="card-title">${icon('activity')}<h2>Ping e nslookup</h2></div>
+      <span class="card-sub">controllo al volo, non finisce nella sessione</span></div>
+    <div class="card-body">
+      <form class="quick-form" data-form="quick" autocomplete="off">
+        <div class="search">${icon('search')}<input class="input input-mono" id="q-target" data-field="quickTarget" value="${esc(q.target)}" placeholder="Indirizzo IP o nome · Invio = ping e nslookup insieme" spellcheck="false"></div>
+        <button type="button" class="btn btn-primary" data-action="quick-ping" ${q.pinging ? 'disabled' : ''}>${icon('activity')} Ping</button>
+        <button type="button" class="btn" data-action="quick-lookup" ${q.looking ? 'disabled' : ''}>${icon('dns')} nslookup</button>
+        <span class="quick-picks" id="quick-picks">${picksHtml()}</span>
+      </form>
+      <div class="quick-results"><div class="quick-box" id="quick-ping">${pingInner()}</div><div class="quick-box" id="quick-dns">${dnsInner()}</div></div>
+    </div></section>`;
+}
+
+function paintQuick() {
+  const p = $('#quick-ping'); if (p) p.innerHTML = pingInner();
+  const d = $('#quick-dns'); if (d) d.innerHTML = dnsInner();
+  $$('[data-action="quick-ping"]').forEach((b) => { b.disabled = S.overview.quick.pinging; });
+  $$('[data-action="quick-lookup"]').forEach((b) => { b.disabled = S.overview.quick.looking; });
+}
+
+function quickTarget() {
+  const q = S.overview.quick;
+  const f = $('#q-target');
+  if (f) q.target = f.value.trim();
+  if (!q.target) { toastError(new Error('Scrivi un indirizzo IP o un nome.')); return ''; }
+  return q.target;
+}
+
+async function quickPing() {
+  const q = S.overview.quick;
+  const target = quickTarget();
+  if (!target || q.pinging) return;
+  q.pinging = true; q.pingError = ''; paintQuick();
+  try { q.ping = await call('quickPing', { target, count: 4 }); } catch (err) { q.ping = null; q.pingError = err.message; }
+  q.pinging = false; paintQuick();
+}
+
+async function quickLookup() {
+  const q = S.overview.quick;
+  const target = quickTarget();
+  if (!target || q.looking) return;
+  q.looking = true; q.dnsError = ''; paintQuick();
+  try { q.dns = await call('quickLookup', { target }); } catch (err) { q.dns = null; q.dnsError = err.message; }
+  q.looking = false; paintQuick();
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -281,6 +386,7 @@ function render() {
   return `${headHtml()}
     ${linkPanel()}
     <div class="stats" id="stats">${statsHtml()}</div>
+    <div class="grid section-gap">${quickCard()}</div>
     <div class="grid grid-dash section-gap"><div id="scans-card">${scansCard()}</div>${systemCard()}</div>
     <div class="grid grid-2 section-gap" id="lists">${categoriesCard()}${arrivalsCard()}</div>`;
 }
@@ -314,6 +420,8 @@ function refreshLive() {
   }
   const sys = $('#sys-body');
   if (sys) sys.innerHTML = systemInner();
+  const picks = $('#quick-picks');
+  if (picks) { const html = picksHtml(); if (picks.dataset.html !== html) { picks.innerHTML = html; picks.dataset.html = html; } }
   const stats = $('#stats');
   if (stats) stats.innerHTML = statsHtml();
 }
@@ -356,6 +464,15 @@ const actions = {
   'session-details': () => openSessionDrawer(),
   'scan-again': (el) => scanAgain(Number(el.dataset.index)),
   'filter-hosts': (el) => navigate('network', { q: el.dataset.q }),
+  'quick-ping': () => quickPing(),
+  'quick-lookup': () => quickLookup(),
+  'quick-go': (el) => {
+    S.overview.quick.target = el.dataset.target;
+    const f = $('#q-target');
+    if (f) f.value = el.dataset.target;
+    quickPing();
+    quickLookup();
+  },
 };
 
 for (const name of ['network.done', 'ports.done', 'trace.done']) {
@@ -380,4 +497,7 @@ definePage('overview', {
   after: () => { load().catch(toastError); startTimer(); },
   leave: stopTimer,
   actions,
+  onInput: (el, field) => { if (field === 'quickTarget') S.overview.quick.target = el.value.trim(); },
+  // Invio nel campo: ping e nslookup insieme
+  onSubmit: (form, name) => { if (name === 'quick') { quickPing(); quickLookup(); } },
 });

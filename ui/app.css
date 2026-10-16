@@ -1277,8 +1277,24 @@ table.dt tbody tr.is-offline td:not(.actions) { opacity: .55; }
 table.dt td > .cell-text.cell-num { align-items: flex-end; }
 /* testi lunghi (nomi DNS, tipi di dispositivo): interi, a capo invece che tagliati, così la tabella sta nella finestra */
 table.dt .trunc.w-name { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 110px; max-width: 210px; line-height: 1.3; }
-table.dt .cell-main .cell-text b.trunc { white-space: normal; max-width: 230px; line-height: 1.25; }
-table.dt tbody td { height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 6px; }
+table.dt tbody td { height: auto; min-height: 42px; padding: 5px 8px; }
+table.dt thead th { padding: 0 8px; }
+table.dt .trunc.w-name { max-width: 175px; }
+table.dt td > .cell-text b.w-vendor { white-space: normal; max-width: 190px; }
+table.dt .cell-text small b.ports-count { font-size: 11.5px; font-weight: 600; color: var(--primary-text); }
+/* latenza nella tabella degli host: il numero colorato basta, la barretta toglieva spazio */
+table.dt .cell-num .lat i { display: none; }
+table.dt .cell-num .lat .mono { font-weight: 600; color: var(--success-text); }
+table.dt .cell-num .lat.warning .mono { color: var(--warning-text); }
+table.dt .cell-num .lat.danger .mono { color: var(--danger-text); }
+/* tabelle più compatte: il tipo di dispositivo resta su una riga, con caratteri un po' più piccoli */
+table.dt { font-size: 12.5px; }
+table.dt td.mono { font-size: 12px; }
+table.dt .cell-main { gap: 9px; }
+table.dt .cell-main .cell-text b, table.dt td > .cell-text b { font-size: 12.5px; white-space: nowrap; }
+table.dt .cell-main .cell-text small, table.dt td > .cell-text small { font-size: 11.5px; }
+table.dt .cat-icon { width: 28px; height: 28px; }
+table.dt .cat-icon .icon { width: 15px; height: 15px; }
 table.dt td > .cell-text b.trunc { font-weight: 600; }
 table.dt td > .cell-text b.muted { color: var(--muted); font-weight: 500; }
 .seen { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
@@ -1287,6 +1303,34 @@ table.dt td > .cell-text b.muted { color: var(--muted); font-weight: 500; }
 .scan-form .auto-preset { width: auto; max-width: 210px; }
 .scan-form .auto-preset:disabled { opacity: .5; }
 .rescan-btn:disabled { cursor: default; }
+
+/* Ping e nslookup nella Panoramica */
+.quick-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quick-form .search { flex: 1 1 320px; max-width: 520px; }
+.quick-picks { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-left: 4px; }
+button.chip.quick-pick { border: 0; font-family: var(--font-mono); cursor: pointer; }
+button.chip.quick-pick:hover { background: var(--primary-soft); color: var(--primary-text); }
+.quick-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.quick-box { min-height: 128px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); min-width: 0; }
+.quick-head { margin-bottom: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.quick-head b { font-family: var(--font-display); font-weight: 600; font-size: 14px; color: var(--text); }
+.quick-msg { font-size: 12.5px; padding: 6px 0; }
+.quick-wait { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.quick-wait .spinner { width: 15px; height: 15px; border-width: 2px; }
+.q-replies, .q-records { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.q-replies li { display: grid; grid-template-columns: 18px minmax(60px, 1fr) 76px 60px; align-items: center; gap: 10px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.q-replies .q-seq { color: var(--faint); font-size: 11.5px; text-align: right; }
+.q-replies .q-bar { height: 7px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.q-replies .q-bar i { display: block; height: 100%; background: var(--primary); border-radius: 2px; }
+.q-replies b { font-family: var(--font-narrow); font-weight: 600; font-size: 14px; color: var(--text); text-align: right; }
+.q-replies li.is-lost b { color: var(--danger-text); font-family: var(--font-sans); font-size: 12.5px; text-align: left; grid-column: span 2; }
+.quick-sum { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.quick-sum.tone-warn { color: var(--warning-text); }
+.q-records { max-height: 190px; overflow-y: auto; }
+.q-records li { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; min-width: 0; }
+.q-records .mono { overflow-wrap: anywhere; color: var(--text); }
+.q-records .q-type { min-width: 44px; justify-content: center; flex: 0 0 auto; }
+@media (max-width: 1180px) { .quick-results { grid-template-columns: minmax(0, 1fr); } }
 
 /* Impostazioni e Rete del PC */
 .settings-narrow { max-width: 880px; }
@@ -1304,4 +1348,8 @@ table.dt td > .cell-text b.muted { color: var(--muted); font-weight: 500; }
 .nic-facts dt { font-size: 12px; color: var(--muted); }
 .nic-facts dd { margin: 2px 0 0; font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
 .nic-none { padding: 0 14px 12px; }
+.nic-facts .nic-wide { grid-column: 1 / -1; }
+.nic-facts .nic-wide dd { line-height: 1.7; }
+.tag.v6 { height: 17px; padding: 0 5px; font-size: 10.5px; background: var(--info-soft); color: var(--info-text); vertical-align: 1px; }
+.v6-list { line-height: 1.8; }
 .nic-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); }

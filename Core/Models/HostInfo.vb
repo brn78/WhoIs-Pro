@@ -15,6 +15,8 @@
         Public Property FirstSeen As DateTime = DateTime.Now
         Public Property LastSeen As DateTime = DateTime.Now
         Public Property Notes As String = ""
+        ''' <summary>Indirizzi IPv6 dello stesso dispositivo (stesso MAC), dalla tabella dei vicini di Windows.</summary>
+        Public Property Ipv6 As New List(Of String)()
 
         Public Overrides Function ToString() As String
             Return $"{IPAddress} ({If(String.IsNullOrEmpty(Hostname), "No Hostname", Hostname)}) - {DeviceType}"

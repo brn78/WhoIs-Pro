@@ -73,6 +73,12 @@ function adaptersCard() {
     { key: 'ip', label: 'IP / maschera', cls: 'mono', cell: (a) => (a.ip ? `${esc(a.ip)} / ${esc(a.mask)}` : '<span class="faint">—</span>') },
     { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
     { key: 'dns', label: 'DNS', cls: 'mono', cell: (a) => `<span class="trunc w-name" title="${esc((a.dns || []).join(', '))}">${esc((a.dns || []).join(', ') || '—')}</span>` },
+    { key: 'ipv6', label: 'IPv6', sortable: false, cell: (a) => {
+      const list = a.ipv6 || [];
+      const pub = list.find((x) => x.kind === 'globale' || x.kind === 'temporaneo') || list[0];
+      if (!pub) return '<span class="faint">—</span>';
+      return `<span class="mono" title="${esc(list.map((x) => `${x.address}/${x.prefixLength} (${x.kind})`).join('\n'))}">${esc(pub.address)}</span>${list.length > 1 ? ` <span class="tag">+${list.length - 1}</span>` : ''}`;
+    } },
     { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<button class="row-menu-btn" data-action="adapter-menu" data-adapter="${esc(a.name)}" title="Azioni">${icon('more')}</button>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('hardDrive')}<h2>Schede di rete del PC</h2><span class="count">${rows.length}</span></div>
@@ -251,13 +257,23 @@ function pcNetworkBody() {
       ${a.ip ? `<dl class="nic-facts">
         <div><dt>IP</dt><dd class="mono">${esc(a.ip)}</dd></div><div><dt>Maschera</dt><dd class="mono">${esc(a.mask)}</dd></div>
         <div><dt>Gateway</dt><dd class="mono">${esc(a.gateway || '—')}</dd></div><div><dt>DNS</dt><dd class="mono">${esc((a.dns || []).join(', ') || '—')}</dd></div>
-        <div><dt>MAC</dt><dd class="mono">${esc(a.mac)}</dd></div></dl>` : '<p class="card-text muted nic-none">Nessun indirizzo IPv4.</p>'}
+        <div><dt>MAC</dt><dd class="mono">${esc(a.mac)}</dd></div>
+        <div><dt>Gateway IPv6</dt><dd class="mono">${esc(a.gateway6 || '—')}</dd></div>
+        ${v6Rows(a)}</dl>` : `<p class="card-text muted nic-none">Nessun indirizzo IPv4.</p>${(a.ipv6 || []).length ? `<dl class="nic-facts">${v6Rows(a)}</dl>` : ''}`}
       <footer class="nic-actions">
         ${mine.map((p) => `<button class="btn btn-sm" data-pcn="apply" data-id="${esc(p.id)}" title="${esc(p.dhcp ? 'DHCP' : `${p.ip} / ${p.mask}`)}">${icon('zap')} ${esc(p.name)}</button>`).join('')}
         ${a.dhcp ? '' : `<button class="btn btn-sm" data-pcn="dhcp" data-adapter="${esc(a.name)}">${icon('rotate')} Torna a DHCP</button>`}
         <button class="btn btn-sm btn-ghost" data-pcn="save" data-adapter="${esc(a.name)}">${icon('plus')} Salva come profilo</button>
       </footer></article>`;
   }).join('')}</div>`;
+}
+
+/** Indirizzi IPv6 di una scheda (con il tipo) e DNS IPv6, su tutta la larghezza del pannello. */
+function v6Rows(a) {
+  const list = a.ipv6 || [];
+  const addrs = list.length ? list.map((x) => `<span class="mono">${esc(x.address)}/${x.prefixLength}</span> <span class="tag">${esc(x.kind)}</span>`).join('<br>') : '<span class="muted">spento</span>';
+  return `<div class="nic-wide"><dt>IPv6</dt><dd>${addrs}</dd></div>
+    ${(a.dns6 || []).length ? `<div class="nic-wide"><dt>DNS IPv6</dt><dd class="mono">${esc(a.dns6.join(', '))}</dd></div>` : ''}`;
 }
 
 /** «Rete del PC»: schede con IP, gateway e DNS, profili da applicare al volo e ritorno a DHCP. */

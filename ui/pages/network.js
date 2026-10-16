@@ -131,7 +131,7 @@ function summaryInner() {
 // ---------------------------------------------------------------------------------------------------------------------
 function filteredHosts() {
   const q = S.net.q.trim();
-  return S.data.hosts.filter((h) => matchesAll(q, [h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess]));
+  return S.data.hosts.filter((h) => matchesAll(q, [h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
 }
 
 // forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
@@ -172,17 +172,18 @@ function latency(ms) {
 const columns = [
   { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
       <b class="trunc" title="${esc(h.deviceType)}">${esc(h.deviceType)}</b>
-      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}</small></div></div>` },
-  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell' },
+      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}${openPorts(h.ipAddress) ? ` · <b class="ports-count">${plural(openPorts(h.ipAddress), 'porta', 'porte')}</b>` : ''}</small></div></div>` },
+  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
   { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore e MAC', cell: (h) => `<div class="cell-text">${vendorCell(h).replace('<span', '<b').replace(/<\/span>$/, '</b>')}<small class="mono">${h.macAddress ? esc(h.macAddress) : 'senza MAC'}</small></div>` },
   { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latency(h.responseTimeMs)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
-  { key: 'ports', label: 'Porte', cls: 'num', value: (h) => openPorts(h.ipAddress), cell: (h) => { const n = openPorts(h.ipAddress); return n ? `<span class="tag">${fmtNumber(n)}</span>` : '<span class="faint">—</span>'; } },
   { key: 'firstSeen', label: 'Rilevato', value: (h) => new Date(h.firstSeen).getTime() || 0, cell: seenCell },
   { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<div class="row-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>` },
 ];
 
 const isOffline = (h) => h.status === 'Offline';
+/** Tipo di un indirizzo IPv6 dal prefisso: link-local (fe80::), locale (fc00::/7) oppure globale. */
+const v6Kind = (a) => (/^fe[89ab]/i.test(a) ? 'link-local' : /^f[cd]/i.test(a) ? 'locale' : 'globale');
 const openPorts = (ip) => S.data.ports.filter((p) => p.host === ip).length;
 const isNewHost = (h) => h.firstSeen && Date.now() - new Date(h.firstSeen).getTime() < 86400000;
 
@@ -194,7 +195,7 @@ function shortWhen(iso) {
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((day(now) - day(d)) / 86400000);
   const p = (n) => String(n).padStart(2, '0');
-  if (diff === 0) return `oggi ${hhmm(d)}`;
+  if (diff === 0) return hhmm(d);
   if (diff === 1) return `ieri ${hhmm(d)}`;
   return d.getFullYear() === now.getFullYear() ? `${p(d.getDate())}/${p(d.getMonth() + 1)} ${hhmm(d)}` : `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
@@ -417,6 +418,7 @@ function details(ip) {
     <dl class="kv">
       <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
       <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
+      <dt>IPv6</dt><dd>${(h.ipv6 || []).length ? `<div class="v6-list">${h.ipv6.map((a) => `<span class="mono">${esc(a)}</span> <span class="tag">${esc(v6Kind(a))}</span>`).join('<br>')}</div>` : '<span class="muted">nessuno visto (il dispositivo non usa IPv6, o non ha ancora risposto)</span>'}</dd>
       <dt>Nome</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
       <dt>MAC</dt><dd class="mono">${h.macAddress ? esc(h.macAddress) : '<span class="muted">non disponibile (host fuori dalla rete locale)</span>'}</dd>
       <dt>Produttore</dt><dd>${esc(h.macVendor)}${h.macVendor === PRIVATE_MAC ? `<br><small class="muted">${esc(PRIVATE_MAC_TIP)}</small>` : ''}</dd>
@@ -501,6 +503,11 @@ on('network.done', (d) => {
   for (const ip of d.offline || []) {
     const h = S.data.hosts.find((x) => x.ipAddress === ip);
     if (h) h.status = 'Offline';
+  }
+  // IPv6 degli host, dalla tabella dei vicini letta alla fine della scansione
+  for (const [ip, list] of Object.entries(d.ipv6 || {})) {
+    const h = S.data.hosts.find((x) => x.ipAddress === ip);
+    if (h) h.ipv6 = list;
   }
   if (!d.cancelled && !d.error) scheduleRepeat(); else stopRepeat();
   if (S.page === 'network') { renderForm(); renderTable(); }
