@@ -89,7 +89,8 @@ utente, tempo di accensione, scheda video, schede di rete e **porte seriali (COM
 **📊 Panoramica dal vivo**<br>
 Il **traffico** di ogni scheda collegata (ricezione e invio, gli ultimi tre minuti, il LED che lampeggia quando
 passano dati), indirizzo, gateway e DNS; gli host trovati con i **nuovi** delle ultime 24 ore, le porte aperte, la
-risposta di Internet, le **ultime scansioni** da ripetere con un clic, processore, memoria e disco.
+risposta di Internet (anche IPv6), le **ultime scansioni** da ripetere con un clic, processore, memoria e disco; un
+campo per **ping e nslookup** al volo.
 
 **🎨 Un'interfaccia da tecnico**<br>
 Barra laterale grafite, LED quadrati come quelli delle porte di rete, numeri grandi e leggibili; tabelle ordinabili

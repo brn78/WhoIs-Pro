@@ -21,6 +21,10 @@ Namespace Machine
         Public Property Gateway As String = ""
         Public Property Dns As New List(Of String)()
         Public Property Mac As String = ""
+        ''' <summary>Indirizzi IPv6 della scheda (globali, temporanei, locali, link-local).</summary>
+        Public Property Ipv6 As New List(Of Network.Ipv6Address)()
+        Public Property Gateway6 As String = ""
+        Public Property Dns6 As New List(Of String)()
     End Class
 
     ''' <summary>
@@ -65,6 +69,12 @@ Namespace Machine
                 Dim gw = props.GatewayAddresses.FirstOrDefault(Function(g) g.Address.AddressFamily = AddressFamily.InterNetwork)
                 If gw IsNot Nothing Then cfg.Gateway = gw.Address.ToString()
                 cfg.Dns = props.DnsAddresses.Where(Function(d) d.AddressFamily = AddressFamily.InterNetwork).Select(Function(d) d.ToString()).ToList()
+                cfg.Ipv6 = Network.Ipv6.AddressesOf(props)
+                Dim gw6 = props.GatewayAddresses.FirstOrDefault(Function(g) g.Address.AddressFamily = AddressFamily.InterNetworkV6)
+                If gw6 IsNot Nothing Then cfg.Gateway6 = Network.Ipv6.Plain(gw6.Address)
+                ' i DNS IPv6 «fec0:0:0:ffff::1» sono i segnaposto di Windows quando non ce n'è nessuno vero
+                cfg.Dns6 = props.DnsAddresses.Where(Function(d) d.AddressFamily = AddressFamily.InterNetworkV6 AndAlso Not d.ToString().StartsWith("fec0:0:0:ffff::", StringComparison.OrdinalIgnoreCase)).
+                    Select(Function(d) Network.Ipv6.Plain(d)).ToList()
             Catch
             End Try
             Return cfg

@@ -51,6 +51,7 @@ Namespace UI
         Private Shared ReadOnly InternetProbe As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(5)}
         Private _online As Boolean?
         Private _internetMs As Integer?
+        Private _online6 As Boolean?
         Private _checkingInternet As Boolean
 
         ''' <summary>Impostazioni del programma (per la finestra: icona di notifica e tema).</summary>
@@ -111,6 +112,8 @@ Namespace UI
                     Return Adapters()
                 Case "scanNetwork" : Return StartNetworkScan(args)
                 Case "rescanHost" : Return Await RescanHostAsync(args)
+                Case "quickPing" : Return Await QuickPingAsync(ArgText(args, "target"), Clamp(ArgNumber(args, "count", 4), 1, 10))
+                Case "quickLookup" : Return Await QuickLookupAsync(ArgText(args, "target"))
                 Case "stopNetwork"
                     _netCts?.Cancel()
                     _autoCts?.Cancel()
@@ -252,6 +255,20 @@ Namespace UI
             End Try
             ' tempo di risposta della stessa pagina di prova: la Panoramica lo mostra come «risposta di Internet»
             _internetMs = elapsed
+            ' Internet anche in IPv6: la pagina di prova di Windows per IPv6 ha solo l'indirizzo IPv6
+            Dim online6 = False
+            If online Then
+                Try
+                    Using request As New HttpRequestMessage(HttpMethod.Head, "http://ipv6.msftconnecttest.com/connecttest.txt")
+                        Using response = Await InternetProbe.SendAsync(request)
+                            online6 = response.IsSuccessStatusCode
+                        End Using
+                    End Using
+                Catch
+                    online6 = False
+                End Try
+            End If
+            _online6 = online6
             _checkingInternet = False
             If Not _online.HasValue OrElse _online.Value <> online Then
                 _online = online
@@ -270,7 +287,7 @@ Namespace UI
                 .at = DateTime.Now,
                 .traffic = traffic,
                 .system = machine,
-                .internet = New With {.online = _online, .latencyMs = _internetMs}
+                .internet = New With {.online = _online, .latencyMs = _internetMs, .ipv6 = _online6}
             }
         End Function
 
@@ -516,7 +533,8 @@ Namespace UI
                 .mask = a.SubnetMask?.ToString(),
                 .gateway = a.Gateway?.ToString(),
                 .mac = a.MacAddress,
-                .cidr = a.SubnetCidr
+                .cidr = a.SubnetCidr,
+                .ipv6 = a.Ipv6
             }).ToList()
         End Function
 
@@ -613,6 +631,9 @@ Namespace UI
                 If offline.Count > 0 Then Touch()
             End If
 
+            ' IPv6 degli host trovati: un ping a tutti i nodi IPv6, poi la tabella dei vicini, per MAC
+            Dim ipv6 = Await FillIpv6Async(wake:=True)
+
             _devices.Save()
             Dim fresh = _netNew.ToList()
             Dim firstCensus = _netFirstCensus
@@ -622,9 +643,33 @@ Namespace UI
             Dim scan = AddScan("network", target, _netWatch.Elapsed.TotalSeconds, found, cancelled, failure)
             _owner.PostEvent("network.done", New With {
                 .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .scan = scan,
-                .offline = offline, .newDevices = fresh, .firstCensus = firstCensus, .state = State()
+                .offline = offline, .newDevices = fresh, .firstCensus = firstCensus, .ipv6 = ipv6, .state = State()
             })
             CheckAutoPortsDone()
+        End Function
+
+        ''' <summary>
+        ''' Indirizzi IPv6 degli host della sessione con un MAC, dalla tabella dei vicini di Windows (con wake, prima un ping
+        ''' a tutti i nodi IPv6 così i dispositivi rispondono). Restituisce IPv4 → IPv6 degli host cambiati, per la pagina.
+        ''' </summary>
+        Private Async Function FillIpv6Async(wake As Boolean) As Task(Of Dictionary(Of String, List(Of String)))
+            Dim changed As New Dictionary(Of String, List(Of String))()
+            Try
+                If wake Then Await Network.Ipv6.WakeNeighborsAsync()
+                Dim neighbors = Await Task.Run(Function() Network.Ipv6.Neighbors())
+                For Each h In _session.Hosts
+                    If String.IsNullOrEmpty(h.MacAddress) Then Continue For
+                    Dim list As List(Of String) = Nothing
+                    If Not neighbors.TryGetValue(h.MacAddress.Replace("-", ":"), list) Then Continue For
+                    If h.Ipv6 IsNot Nothing AndAlso h.Ipv6.SequenceEqual(list) Then Continue For
+                    h.Ipv6 = list
+                    changed(h.IPAddress) = list
+                Next
+                If changed.Count > 0 Then Touch()
+            Catch
+                ' senza IPv6 la scansione resta quella IPv4
+            End Try
+            Return changed
         End Function
 
         ''' <summary>Avviso di Windows per i dispositivi mai visti prima (se la finestra è nascosta); nella pagina lo dice un toast.</summary>
@@ -656,6 +701,7 @@ Namespace UI
             Dim isNew = False
             If host IsNot Nothing Then
                 isNew = AddHost(host)
+                Await FillIpv6Async(wake:=False)
                 _devices.Save()
                 If isNew Then NotifyNewDevices(New List(Of HostInfo) From {host})
             Else
@@ -696,6 +742,7 @@ Namespace UI
             If idx >= 0 Then
                 h.FirstSeen = _session.Hosts(idx).FirstSeen
                 h.Notes = _session.Hosts(idx).Notes
+                If (h.Ipv6 Is Nothing OrElse h.Ipv6.Count = 0) AndAlso _session.Hosts(idx).Ipv6 IsNot Nothing Then h.Ipv6 = _session.Hosts(idx).Ipv6
                 _session.Hosts(idx) = h
             Else
                 _session.Hosts.Add(h)
@@ -927,6 +974,94 @@ Namespace UI
                 Touch()
             End If
             Return New With {.entry = result, .state = State()}
+        End Function
+
+        ''' <summary>
+        ''' Ping veloce dalla Panoramica: risolve il nome (prima IPv4, poi IPv6) e manda count richieste, una ogni 300 ms.
+        ''' Niente nella sessione: è un controllo al volo.
+        ''' </summary>
+        Private Async Function QuickPingAsync(target As String, count As Integer) As Task(Of Object)
+            target = target.Trim()
+            If target = "" Then Throw New UserMessageException("Scrivi un indirizzo IP o un nome da pingare.")
+            Dim address As Net.IPAddress = Nothing
+            If Not Net.IPAddress.TryParse(target, address) Then
+                Try
+                    Dim all = Await Net.Dns.GetHostAddressesAsync(target)
+                    address = If(all.FirstOrDefault(Function(a) a.AddressFamily = Net.Sockets.AddressFamily.InterNetwork), all.FirstOrDefault())
+                Catch ex As Exception
+                    Throw New UserMessageException($"Il nome «{target}» non si risolve: {ex.Message}")
+                End Try
+                If address Is Nothing Then Throw New UserMessageException($"Il nome «{target}» non ha indirizzi.")
+            End If
+            Dim replies As New List(Of Object)()
+            Dim times As New List(Of Long)()
+            Using pinger As New Net.NetworkInformation.Ping()
+                For i = 1 To count
+                    Dim status = "Error"
+                    Dim ms As Long = 0
+                    Dim ttl = 0
+                    Try
+                        Dim reply = Await pinger.SendPingAsync(address, 1500)
+                        status = reply.Status.ToString()
+                        If reply.Status = Net.NetworkInformation.IPStatus.Success Then
+                            ms = reply.RoundtripTime
+                            ttl = If(reply.Options Is Nothing, 0, reply.Options.Ttl)
+                            times.Add(ms)
+                        End If
+                    Catch ex As Exception
+                        status = "Error"
+                    End Try
+                    replies.Add(New With {.seq = i, .status = status, .ms = ms, .ttl = ttl})
+                    If i < count Then Await Task.Delay(300)
+                Next
+            End Using
+            Return New With {
+                .target = target, .address = Network.Ipv6.Plain(address), .sent = count, .received = times.Count, .replies = replies,
+                .min = If(times.Count > 0, times.Min(), 0L), .avg = If(times.Count > 0, CLng(Math.Round(times.Average())), 0L), .max = If(times.Count > 0, times.Max(), 0L)
+            }
+        End Function
+
+        ''' <summary>
+        ''' nslookup veloce dalla Panoramica: record A, AAAA, PTR (per un indirizzo), MX, NS e TXT, con il server DNS che ha
+        ''' risposto. Niente nella sessione: per tenere i record c'è la pagina DNS.
+        ''' </summary>
+        Private Async Function QuickLookupAsync(target As String) As Task(Of Object)
+            target = target.Trim()
+            If target = "" Then Throw New UserMessageException("Scrivi un nome di dominio o un indirizzo IP.")
+            Dim watch = Stopwatch.StartNew()
+            Dim lookup = New DnsEngine().QueryAllRecordsAsync(target)
+            Dim server = Task.Run(Function() DnsServerInfo(target))
+            Dim records = Await lookup
+            Dim info = Await server
+            Return New With {.target = target, .records = records, .server = info.Name, .serverAddress = info.Address, .ms = watch.ElapsedMilliseconds}
+        End Function
+
+        ''' <summary>Il server DNS che risponde (le prime righe «Server:» e «Address:» di nslookup).</summary>
+        Private Shared Function DnsServerInfo(target As String) As (Name As String, Address As String)
+            Try
+                Dim psi As New ProcessStartInfo With {
+                    .FileName = "nslookup", .Arguments = $"""{target.Replace("""", "")}""",
+                    .RedirectStandardOutput = True, .RedirectStandardError = True, .UseShellExecute = False, .CreateNoWindow = True
+                }
+                Using p = Process.Start(psi)
+                    If p Is Nothing Then Return ("", "")
+                    Dim output = p.StandardOutput.ReadToEnd()
+                    p.WaitForExit(5000)
+                    Dim name = ""
+                    Dim address = ""
+                    For Each line In output.Split({vbCrLf, vbLf}, StringSplitOptions.RemoveEmptyEntries).Take(4)
+                        Dim colon = line.IndexOf(":"c)
+                        If colon < 0 Then Continue For
+                        Dim key = line.Substring(0, colon).Trim()
+                        Dim value = line.Substring(colon + 1).Trim()
+                        If key.Equals("Server", StringComparison.OrdinalIgnoreCase) AndAlso name = "" Then name = value
+                        If (key.StartsWith("Address", StringComparison.OrdinalIgnoreCase) OrElse key.StartsWith("Indirizz", StringComparison.OrdinalIgnoreCase)) AndAlso address = "" Then address = value
+                    Next
+                    Return (name, address)
+                End Using
+            Catch
+                Return ("", "")
+            End Try
         End Function
 
         Private Async Function DnsAsync(target As String) As Task(Of Object)

@@ -12,6 +12,8 @@ Namespace Utils
         Public Property SubnetMask As IPAddress
         Public Property Gateway As IPAddress
         Public Property MacAddress As String
+        ''' <summary>Indirizzi IPv6 della stessa scheda.</summary>
+        Public Property Ipv6 As New List(Of Network.Ipv6Address)()
 
         Public ReadOnly Property SubnetCidr As String
             Get
@@ -75,7 +77,8 @@ Namespace Utils
                                     .IPAddress = uni.Address,
                                     .SubnetMask = uni.IPv4Mask,
                                     .Gateway = If(gw IsNot Nothing, gw.Address, Nothing),
-                                    .MacAddress = MacVendorLookup.FormatMac(nic.GetPhysicalAddress().GetAddressBytes())
+                                    .MacAddress = MacVendorLookup.FormatMac(nic.GetPhysicalAddress().GetAddressBytes()),
+                                    .Ipv6 = Network.Ipv6.AddressesOf(ipProps)
                                 }
                                 list.Add(info)
                             End If

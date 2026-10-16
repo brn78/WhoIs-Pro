@@ -38,7 +38,8 @@ Namespace Network
                 End Try
             End If
 
-            ' 3. Query avanzate tramite nslookup integrato (MX, NS, TXT)
+            ' 3. Query avanzate tramite nslookup integrato (MX, NS, TXT): solo per i nomi, un indirizzo IP non le ha
+            If parsedIp IsNot Nothing Then Return records
             Try
                 Dim nsRecords = Await RunNslookupAsync(clean, "MX")
                 records.AddRange(nsRecords)
@@ -59,6 +60,7 @@ Namespace Network
                     .FileName = "nslookup",
                     .Arguments = $"-type={qtype} {domain}",
                     .RedirectStandardOutput = True,
+                    .RedirectStandardError = True,
                     .UseShellExecute = False,
                     .CreateNoWindow = True
                 }
@@ -69,8 +71,21 @@ Namespace Network
                         Await proc.WaitForExitAsync()
 
                         Dim lines = output.Split(New String() {vbCrLf, vbLf}, StringSplitOptions.RemoveEmptyEntries)
-                        For Each line In lines
-                            Dim l = line.Trim()
+                        For index = 0 To lines.Length - 1
+                            Dim l = lines(index).Trim()
+                            ' nslookup scrive spesso il testo dei TXT sulla riga dopo «text =»: le righe tra virgolette che seguono
+                            If qtype = "TXT" AndAlso l.EndsWith("text =") Then
+                                Dim parts As New List(Of String)()
+                                Dim n = index + 1
+                                While n < lines.Length AndAlso lines(n).Trim().StartsWith("""")
+                                    parts.Add(lines(n).Trim().Trim(""""c))
+                                    n += 1
+                                End While
+                                If parts.Count > 0 Then
+                                    list.Add(New DnsRecordInfo With {.Host = domain, .RecordType = "TXT", .Value = String.Join("", parts)})
+                                End If
+                                Continue For
+                            End If
                             If qtype = "MX" AndAlso l.Contains("mail exchanger =") Then
                                 Dim parts = l.Split(New String() {"mail exchanger ="}, StringSplitOptions.None)
                                 If parts.Length = 2 Then

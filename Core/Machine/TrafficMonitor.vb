@@ -61,7 +61,8 @@ Namespace Machine
                 End SyncLock
 
                 Dim cfg = NetworkConfig.ReadConfig(nic)
-                If cfg.Ip = "" Then Continue For
+                ' anche una scheda solo IPv6 è una rete: basta un indirizzo utilizzabile
+                If cfg.Ip = "" AndAlso Not Network.Ipv6.HasPublic(cfg.Ipv6) Then Continue For
                 Dim speed As Long = 0
                 Try
                     speed = nic.Speed
@@ -79,6 +80,9 @@ Namespace Machine
                     .gateway = cfg.Gateway,
                     .dns = cfg.Dns,
                     .mac = cfg.Mac,
+                    .ipv6 = cfg.Ipv6,
+                    .gateway6 = cfg.Gateway6,
+                    .dns6 = cfg.Dns6,
                     .speedMbps = If(speed > 0, speed \ 1000000L, 0L),
                     .rxBps = Math.Round(current.RxBps),
                     .txBps = Math.Round(current.TxBps),
