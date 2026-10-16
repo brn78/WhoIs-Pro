@@ -112,6 +112,20 @@ Namespace UI
                     Return Adapters()
                 Case "scanNetwork" : Return StartNetworkScan(args)
                 Case "rescanHost" : Return Await RescanHostAsync(args)
+                Case "captureStart" : Return Await StartCaptureAsync(args)
+                Case "captureStop"
+                    _capture.RequestStop()
+                    Return Nothing
+                Case "captureResult" : Return _captureSummary
+                Case "captureSave" : Return SaveCapture()
+                Case "captureOpen"
+                    If Not File.Exists(_capture.PcapFile) Then Throw New UserMessageException("Non c'è ancora nessuna cattura da aprire.")
+                    Try
+                        Process.Start(New ProcessStartInfo(_capture.PcapFile) With {.UseShellExecute = True})
+                    Catch ex As Exception
+                        Throw New UserMessageException("Nessun programma apre i file .pcapng: installa Wireshark (wireshark.org) oppure salva la cattura e aprila altrove.")
+                    End Try
+                    Return Nothing
                 Case "perfStart"
                     RequireInternet("Test delle prestazioni")
                     Return StartPerf()
@@ -518,7 +532,7 @@ Namespace UI
                     .ports = PortDictionary.GetPresets().Select(Function(p) New With {.key = p.Key, .name = p.Name, .ports = p.Text}).ToList(),
                     .whoisServers = WhoisServers
                 },
-                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy, .autoPorts = _autoCts IsNot Nothing, .perf = _perfCts IsNot Nothing},
+                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy, .autoPorts = _autoCts IsNot Nothing, .perf = _perfCts IsNot Nothing, .capture = _captureActive},
                 .autoPorts = New With {.done = _autoDone, .total = _autoSeen.Count, .running = _autoRunning, .open = _autoOpen},
                 .devices = _devices.Count,
                 .update = _updates.Status(),
@@ -1030,6 +1044,116 @@ Namespace UI
         End Function
 
         Private _perfCts As CancellationTokenSource
+
+#Region "Cattura dei pacchetti"
+
+        Private ReadOnly _capture As New PacketCapture(MainWindow.LocalFolder)
+        Private ReadOnly _captureTimer As New System.Windows.Forms.Timer With {.Interval = 500}
+        Private _captureActive As Boolean
+        Private _captureWatch As Stopwatch
+        Private _captureAsked As DateTime
+        Private _captureSummary As CaptureSummary
+        Private _captureOptions As CaptureOptions
+
+        ''' <summary>
+        ''' Cattura con pktmon (pagina Pacchetti): Windows chiede il consenso una volta; poi un timer guarda la cartella della
+        ''' cattura e manda l'avanzamento («capture.progress»), alla fine legge il .pcapng («capture.done»).
+        ''' </summary>
+        Private Async Function StartCaptureAsync(args As JsonElement) As Task(Of Object)
+            If _captureActive Then Throw New UserMessageException("Una cattura è già in corso.")
+            Dim o As New CaptureOptions With {
+                .Seconds = Clamp(ArgNumber(args, "seconds", 30), 0, PacketCapture.MaxSeconds),
+                .Ip = ArgText(args, "ip").Trim(),
+                .Port = Clamp(ArgNumber(args, "port", 0), 0, 65535),
+                .Protocol = ArgText(args, "protocol").Trim()
+            }
+            Try
+                PacketCapture.Validate(o)
+            Catch ex As ArgumentException
+                Throw New UserMessageException(ex.Message)
+            End Try
+            If _captureTimer.Tag Is Nothing Then
+                AddHandler _captureTimer.Tick, AddressOf CaptureTick
+                _captureTimer.Tag = True
+            End If
+            _captureActive = True
+            _captureWatch = Nothing
+            _captureAsked = DateTime.Now
+            _captureOptions = o
+            Try
+                ' la richiesta di consenso di Windows blocca chi la fa: fuori dal thread della finestra
+                Await Task.Run(Sub() _capture.Start(o))
+            Catch ex As OperationCanceledException
+                _captureActive = False
+                Throw New UserMessageException(ex.Message)
+            Catch ex As Exception
+                _captureActive = False
+                Throw New UserMessageException($"Cattura non avviata: {ex.Message}")
+            End Try
+            _captureTimer.Start()
+            Return New With {.started = True, .state = State()}
+        End Function
+
+        Private Async Sub CaptureTick(sender As Object, e As EventArgs)
+            If Not _captureActive Then
+                _captureTimer.Stop()
+                Return
+            End If
+            Dim st = _capture.Status()
+            If st.Started AndAlso _captureWatch Is Nothing Then _captureWatch = Stopwatch.StartNew()
+            If Not st.Started AndAlso Not st.Done AndAlso (DateTime.Now - _captureAsked).TotalSeconds > 60 Then
+                ' lo script non è mai partito (pktmon assente o bloccato): si smette di aspettare
+                _captureTimer.Stop()
+                _captureActive = False
+                _owner.PostEvent("capture.done", New With {.error = "La cattura non è partita: pktmon non ha risposto entro un minuto.", .state = State()})
+                Return
+            End If
+            If Not st.Done Then
+                _owner.PostEvent("capture.progress", New With {
+                    .started = st.Started, .seconds = If(_captureWatch Is Nothing, 0, _captureWatch.Elapsed.TotalSeconds), .bytes = st.Bytes,
+                    .limit = _captureOptions.Seconds
+                })
+                Return
+            End If
+            _captureTimer.Stop()
+            If st.Error <> "" Then
+                _captureActive = False
+                _owner.PostEvent("capture.done", New With {.error = $"pktmon: {st.Error}", .state = State()})
+                Return
+            End If
+            _owner.PostEvent("capture.progress", New With {.started = True, .converting = True, .seconds = If(_captureWatch Is Nothing, 0, _captureWatch.Elapsed.TotalSeconds), .bytes = st.Bytes, .limit = _captureOptions.Seconds})
+            Try
+                Dim file = _capture.PcapFile
+                _captureSummary = Await Task.Run(Function() PacketCapture.Read(file))
+            Catch ex As Exception
+                _captureActive = False
+                _owner.PostEvent("capture.done", New With {.error = $"Cattura non letta: {ex.Message}", .state = State()})
+                Return
+            End Try
+            _captureActive = False
+            Dim o = _captureOptions
+            Dim what = String.Join(" · ", {If(o.Ip <> "", o.Ip, ""), If(o.Port > 0, $"porta {o.Port}", ""), o.Protocol}.Where(Function(x) x <> ""))
+            Dim scan = AddScan("capture", If(what = "", "tutta la rete", what), _captureSummary.Seconds, _captureSummary.Total, False, Nothing)
+            _owner.PostEvent("capture.done", New With {.summary = _captureSummary, .scan = scan, .state = State()})
+        End Sub
+
+        ''' <summary>Copia la cattura (.pcapng) dove si vuole, per Wireshark o per mandarla a qualcuno.</summary>
+        Private Function SaveCapture() As Object
+            If Not File.Exists(_capture.PcapFile) Then Throw New UserMessageException("Non c'è ancora nessuna cattura da salvare.")
+            Using save As New SaveFileDialog With {
+                .Title = "Salva la cattura dei pacchetti",
+                .Filter = "Cattura pcapng (Wireshark) (*.pcapng)|*.pcapng",
+                .FileName = $"Cattura {DateTime.Now:yyyy-MM-dd HHmm}.pcapng",
+                .InitialDirectory = If(_file = "", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), IO.Path.GetDirectoryName(_file))
+            }
+                If save.ShowDialog(_owner) <> DialogResult.OK Then Return Nothing
+                File.Copy(_capture.PcapFile, save.FileName, overwrite:=True)
+                _allowedFiles.Add(save.FileName)
+                Return New With {.file = save.FileName}
+            End Using
+        End Function
+
+#End Region
 
         ''' <summary>
         ''' Test delle prestazioni (pagina Prestazioni): gateway della scheda con la rete vera, poi Internet, DNS, download e

@@ -18,6 +18,12 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
   file e dimensione; un avviso quando ha più di 30 giorni.
 - **L'elenco resta dov'è**: riscansionando un host (o quando arrivano porte e aggiornamenti) le tabelle di Rete,
   Porte, Connessioni, DNS e Traceroute non tornano più in cima; la riga riscansionata si illumina per un attimo.
+- **Pacchetti** (nuova pagina, sniffer): cattura con *pktmon*, lo strumento di Windows 10 e 11, senza driver da
+  installare; Windows chiede il consenso una volta per cattura e il programma resta senza diritti di amministratore.
+  Durata a scelta (fino a 10 minuti o «Ferma»), filtro facoltativo per indirizzo o rete, porta e protocollo. I
+  pacchetti sono spiegati riga per riga: ARP, IPv4 e IPv6, TCP con i flag, UDP, ICMP e ICMPv6, domande e risposte DNS
+  (anche mDNS e LLMNR), richieste HTTP e il nome del sito delle connessioni HTTPS (TLS), QUIC, DHCP, SSDP, LLDP. Con
+  statistiche, protocolli, chi parla di più, ricerca e filtro; la cattura si salva in .pcapng e si apre in Wireshark.
 - **Rete: Visualizza Elenco o Schede**, come in Esplora risorse. *Schede* descrive ogni dispositivo per intero su una
   riga senza colonne: nome e tipo, indirizzo, categoria e sistema, MAC e produttore, risposta e TTL, porte aperte con
   il servizio, IPv6, prima rilevazione e ultima volta visto, con le etichette Nuovo, Non risponde e IPv6. *Elenco* è

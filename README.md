@@ -74,6 +74,11 @@ destinazioni nella stessa sessione.
 Connessioni TCP e porte in ascolto del PC con il **processo** che le ha aperte, filtri per stato, aggiornamento a
 intervalli, scansione o WHOIS dell'indirizzo remoto e chiusura del processo.
 
+**🔬 Pacchetti**<br>
+Cattura dei pacchetti con *pktmon* di Windows (niente driver, un consenso per cattura): ogni pacchetto spiegato in
+italiano (DNS, HTTP, nome del sito HTTPS, ARP, ping…), protocolli, chi parla di più, ricerca; salvataggio in
+.pcapng per Wireshark.
+
 **⚡ Prestazioni della rete**<br>
 Un test di 20 secondi: latenza, jitter e pacchetti persi verso il router e verso Internet, risposta del DNS, velocità
 di download e upload. Il giudizio è in parole semplici, con cosa regge la linea: streaming 4K, videochiamate, gioco

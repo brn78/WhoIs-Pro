@@ -176,6 +176,7 @@ const KIND = {
   host: { ic: 'refresh', label: 'Host', unit: ['risponde', 'risponde'] },
   autoports: { ic: 'plug', label: 'Porte di', unit: ['porta aperta', 'porte aperte'] },
   perf: { ic: 'zap', label: 'Prestazioni', unit: ['Mbit/s', 'Mbit/s'] },
+  capture: { ic: 'list', label: 'Cattura', unit: ['pacchetto', 'pacchetti'] },
 };
 
 function stat(page, label, value, sub, tone = '') {
@@ -453,6 +454,7 @@ function scanAgain(index) {
   else if (s.kind === 'host') navigate('network', { q: s.target });
   else if (s.kind === 'autoports') navigate('ports');
   else if (s.kind === 'perf') navigate('perf');
+  else if (s.kind === 'capture') navigate('capture');
   else navigate('network', { target: s.target });
 }
 
