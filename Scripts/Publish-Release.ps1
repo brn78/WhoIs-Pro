@@ -54,7 +54,12 @@ foreach ($f in $setup, $zip) { if (-not (Test-Path $f)) { throw "Manca $f" } }
 Write-Host "Impronte SHA-256:" -ForegroundColor Cyan
 foreach ($f in $setup, $zip) { Write-Host ("  {0}  {1}" -f (Get-FileHash $f -Algorithm SHA256).Hash.ToLower(), (Split-Path $f -Leaf)) }
 
-git push origin HEAD
+# git scrive su stderr anche quando va tutto bene ("Everything up-to-date"): non è un errore
+$previous = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+git push origin HEAD 2>&1 | ForEach-Object { Write-Host "  $_" }
+$ErrorActionPreference = $previous
+if ($LASTEXITCODE -ne 0) { throw "git push non riuscito." }
 $args = @("release", "create", $tag, $setup, $zip, "--repo", $Repository, "--title", "WhoIs Pro $version", "--notes-file", $notesFile)
 if ($Bozza) { $args += "--draft" }
 gh @args
