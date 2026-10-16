@@ -84,6 +84,20 @@ function adaptersCard() {
     ${table({ columns, rows, sort: null, empty: '<div class="empty"><h3>Nessuna scheda di rete attiva</h3></div>' })}</section>`;
 }
 
+function serialCard(ports) {
+  const list = ports || [];
+  const columns = [
+    { key: 'port', label: 'Porta', cell: (p) => `<span class="tag mono">${esc(p.port)}</span>` },
+    { key: 'device', label: 'Dispositivo', cls: 'strong-cell', cell: (p) => esc(p.device || 'Porta seriale') },
+    { key: 'bus', label: 'Collegamento', cell: (p) => (p.bus ? `<span class="pill ${p.bus === 'USB' ? 'primary' : p.bus === 'Bluetooth' ? 'info' : ''}">${esc(p.bus)}</span>` : '<span class="faint">—</span>') },
+    { key: 'driver', label: 'Produttore', cell: (p) => esc(p.driver || '—') },
+    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (p) => `<button class="row-menu-btn" data-action="copy-text" data-text="${esc(p.port)}" title="Copia il nome della porta">${icon('copy')}</button>` },
+  ];
+  return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('plug')}<h2>Porte seriali (COM)</h2><span class="count">${list.length}</span></div>
+      <span class="card-sub">presenti ora, con il dispositivo che le fornisce</span></div>
+    ${table({ columns, rows: list, sort: null, empty: emptyState('plug', 'Nessuna porta COM', 'Collega un adattatore USB-seriale o un dispositivo con porta COM: compare qui con il suo nome.') })}</section>`;
+}
+
 function body() {
   const c = S.computer;
   if (c.error) return emptyState('alert', 'Informazioni non lette', esc(c.error));
@@ -91,7 +105,8 @@ function body() {
   const i = c.info;
   return `<div class="grid grid-2">${cpuCard(i.cpu)}${memoryCard(i.memory)}</div>
     <div class="grid section-gap">${disksCard(i.disks)}</div>
-    <div class="grid grid-2 section-gap">${systemCard(i.os, i.gpu)}${adaptersCard()}</div>`;
+    <div class="grid grid-2 section-gap">${systemCard(i.os, i.gpu)}${adaptersCard()}</div>
+    <div class="grid section-gap">${serialCard(i.serialPorts)}</div>`;
 }
 
 function render() {

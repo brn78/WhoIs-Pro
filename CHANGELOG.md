@@ -3,6 +3,13 @@
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 
+## 2.1.1 · 16 ottobre 2026
+
+- **Porte seriali (COM)** nella pagina *Computer*: quelle presenti ora, con il dispositivo e il collegamento (USB,
+  Bluetooth, scheda madre).
+- «Controlla ora» non resta più in attesa dopo il controllo.
+- Le novità della versione nel riquadro *Aggiornamenti* sono un elenco leggibile, non più testo grezzo.
+
 ## 2.1.0 · 16 ottobre 2026
 
 - **Impostazioni** (menu *Sistema*): avvio con Windows, **icona nell'area di notifica** (la X può nascondere la

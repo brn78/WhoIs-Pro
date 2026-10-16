@@ -76,7 +76,7 @@ amministratore.
 
 **💻 Computer**<br>
 Processore, memoria e dischi con i **grafici a ciambella** aggiornati ogni due secondi; Windows, nome del PC,
-utente, tempo di accensione, scheda video, schede di rete.
+utente, tempo di accensione, scheda video, schede di rete e **porte seriali (COM)** con il dispositivo collegato.
 
 **🎨 Un'interfaccia pulita**<br>
 Barra laterale, tabelle ordinabili, pannelli di dettaglio, menu e notifiche; **tema** automatico, chiaro o scuro;

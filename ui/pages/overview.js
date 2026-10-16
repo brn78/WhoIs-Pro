@@ -60,6 +60,40 @@ function ouiCard() {
     </div></div></section>`;
 }
 
+/**
+ * Note della release (Markdown semplice del CHANGELOG) come HTML: elenco puntato con le righe spezzate riunite,
+ * grassetto, corsivo e codice; tutto il resto come testo.
+ */
+function notesHtml(notes) {
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
+  const blocks = [];
+  let current = null;
+  for (const raw of String(notes || '').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) { current = null; continue; }
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) { current = { type: 'li', text: bullet[1] }; blocks.push(current); continue; }
+    const head = /^#+\s+(.*)$/.exec(line);
+    if (head) { current = null; blocks.push({ type: 'h', text: head[1] }); continue; }
+    if (current && /^\s/.test(raw)) { current.text += ` ${line.trim()}`; continue; }
+    if (current && current.type === 'p') { current.text += ` ${line.trim()}`; continue; }
+    current = { type: 'p', text: line.trim() };
+    blocks.push(current);
+  }
+  let html = '';
+  let inList = false;
+  for (const b of blocks) {
+    if (b.type === 'li') { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(b.text)}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    html += b.type === 'h' ? `<h4>${inline(b.text)}</h4>` : `<p>${inline(b.text)}</p>`;
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+
 /** Riquadro degli aggiornamenti: versione in uso, ultima pubblicata su GitHub, «Scarica e installa». */
 function updateCard() {
   const u = S.st.update || {};
@@ -83,7 +117,7 @@ function updateCard() {
       <div class="scan-stat"><span class="spinner"></span>${text}</div></div>`;
   }
   const notes = u.available && u.notes ? `<div><div class="form-section-head"><div class="form-section-title">${icon('fileText')}${esc(u.title || `Novità della ${u.version}`)}</div></div>
-      <pre class="raw" style="max-height:260px">${esc(u.notes.replace(/\*\*/g, ''))}</pre></div>` : '';
+      <div class="notes">${notesHtml(u.notes)}</div></div>` : '';
   const install = !u.available ? ''
     : (u.installed && u.hasSetup)
       ? `<button class="btn btn-primary" data-action="install-update" ${busy ? 'disabled' : ''}>${icon('download')} Scarica e installa</button>`

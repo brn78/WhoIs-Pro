@@ -163,6 +163,8 @@ Namespace Update
                 updated.AttemptedAt = DateTime.Now
                 Volatile.Write(_record, updated)
                 Save(updated)
+                ' Lo stato restituito deve già dire che il controllo è finito
+                _checking = False
                 Return Status()
             Finally
                 _checking = False

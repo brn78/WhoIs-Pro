@@ -998,4 +998,13 @@ table.dt tbody tr.is-new td { animation: flashRow 1.6s var(--ease); }
 .theme-option.is-active { border-color: var(--primary); background: var(--primary-soft); }
 .theme-option > .icon { color: var(--primary-text); align-self: flex-end; margin-top: -26px; }
 .profile-config { font-family: var(--font-mono); font-size: 12px; }
+
+/* note della versione (Aggiornamenti) */
+.notes { max-height: 280px; overflow: auto; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.notes ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.notes li::marker { color: var(--primary-text); }
+.notes p { margin: 0 0 8px; }
+.notes h4 { margin: 8px 0 6px; font-size: 13px; color: var(--text); }
+.notes b { color: var(--text); }
+.notes code { padding: 1px 5px; border-radius: 4px; background: var(--surface-3); font-size: .92em; }
 @media (max-width: 1180px) { .theme-options { grid-template-columns: minmax(0, 1fr); } }

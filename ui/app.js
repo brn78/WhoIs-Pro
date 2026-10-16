@@ -303,6 +303,7 @@ async function checkUpdate() {
   bus.dispatchEvent(new Event('state'));
   try {
     const u = await call('checkUpdate');
+    u.checking = false;
     S.st.update = u;
     bus.dispatchEvent(new Event('state'));
     if (u.error) toast(u.error, { tone: 'error', title: 'Controllo non riuscito' });
@@ -337,6 +338,7 @@ async function installUpdate() {
 
 on('update.status', (u) => {
   if (!S.st) return;
+  u.checking = false;
   S.st.update = u;
   bus.dispatchEvent(new Event('state'));
   announceUpdate(u);
