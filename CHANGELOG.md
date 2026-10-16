@@ -3,6 +3,15 @@
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 
+## 2.1.2 · 16 ottobre 2026
+
+- **Menu con il tasto destro** sulle righe di host, porte, connessioni e salti del traceroute: oltre a porte, WHOIS e
+  traceroute, *Apri nel browser*, *Cartelle condivise* (Esplora risorse), *Desktop remoto*, *Terminale SSH*, *Ping
+  continuo*; sulle porte 21, 22, 23, 139/445 e 3389 la voce giusta (FTP, SSH, Telnet, cartelle, RDP). Anche dal
+  pulsante «Apri con…» nel dettaglio dell'host.
+- Il riquadro della scansione nella barra superiore non sfarfalla più: si aggiorna sul posto.
+- Modulo Porte: interruttori su una riga e pulsante Avvia allineato a destra.
+
 ## 2.1.1 · 16 ottobre 2026
 
 - **Porte seriali (COM)** nella pagina *Computer*: quelle presenti ora, con il dispositivo e il collegamento (USB,

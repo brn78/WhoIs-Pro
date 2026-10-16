@@ -31,7 +31,7 @@ function formCard() {
     + `<option value="CUSTOM" ${p.preset === 'CUSTOM' ? 'selected' : ''}>Personalizzato</option>`;
   const count = fmtNumber(countPorts(p.ports));
   return `<section class="card"><div class="card-body">
-    <form data-form="scan" class="scan-form" autocomplete="off">
+    <form data-form="scan" class="scan-form ports-form" autocomplete="off">
       <div class="field"><label for="f-host">Host</label>
         <input class="input input-mono" id="f-host" data-field="host" value="${esc(p.host)}" placeholder="192.168.1.10 oppure nome.dominio" ${dis}></div>
       <div class="field"><label for="f-preset">Gruppo di porte</label>
@@ -40,11 +40,11 @@ function formCard() {
       <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${p.timeout}" ${dis}></div>
       <div class="field field-wide"><div class="field-label-row"><label for="f-ports">Porte</label><span class="hint" id="ports-count">${count} porte</span></div>
         <textarea class="input ports" id="f-ports" data-field="ports" rows="2" placeholder="22, 80, 443, 8000-8100" ${dis}>${esc(p.ports)}</textarea></div>
-      <div class="field"><span class="field-label">Protocolli e opzioni</span><div class="field-switches">
+      <div class="field field-switches-row"><span class="field-label">Protocolli e opzioni</span><div class="field-switches">
         <label class="switch"><input type="checkbox" data-field="tcp" ${p.tcp ? 'checked' : ''} ${dis}><span class="track"></span><span>TCP</span></label>
         <label class="switch"><input type="checkbox" data-field="udp" ${p.udp ? 'checked' : ''} ${dis}><span class="track"></span><span>UDP</span></label>
         <label class="switch"><input type="checkbox" data-field="banner" ${p.banner ? 'checked' : ''} ${dis}><span class="track"></span><span>Leggi il banner</span></label></div></div>
-      <div class="field"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-actions-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${running()
           ? `<button type="button" class="btn btn-danger" data-action="scan-stop">${icon('stop')} Ferma</button>`
           : `<button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>`}
@@ -121,7 +121,7 @@ function tableHtml() {
   if (!S.data.ports.length) return emptyState('plug', 'Nessuna porta aperta nella sessione', 'Scegli un host e un gruppo di porte, poi avvia la scansione. Le porte aperte compaiono qui man mano.');
   const rows = filteredPorts();
   if (!rows.length) return emptyState('search', 'Nessuna porta corrisponde', 'Cambia la ricerca o il filtro per host.');
-  return table({ columns, rows, sort: S.ports.sort, cls: 'scan-h', rowAttrs: (p) => `class="${S.ports.fresh.has(key(p)) ? 'is-new' : ''}"` });
+  return table({ columns, rows, sort: S.ports.sort, cls: 'scan-h', rowAttrs: (p) => `data-ctx="port" data-key="${esc(key(p))}" class="${S.ports.fresh.has(key(p)) ? 'is-new' : ''}"` });
 }
 
 function tableCard() {
@@ -194,11 +194,19 @@ async function start() {
 function portMenu(anchor, k) {
   const p = S.data.ports.find((x) => key(x) === k);
   if (!p) return;
-  const web = p.protocol === 'TCP';
+  const tcp = p.protocol === 'TCP';
+  const open = (kind) => () => call('launch', { kind, host: p.host, port: p.portNumber }).catch((e) => toastError(e));
+  const special = [];
+  if (tcp && p.portNumber === 22) special.push({ ic: 'terminal', label: 'Terminale SSH su questa porta', run: open('ssh') });
+  if (tcp && p.portNumber === 3389) special.push({ ic: 'monitor', label: 'Desktop remoto', run: open('rdp') });
+  if (tcp && (p.portNumber === 445 || p.portNumber === 139)) special.push({ ic: 'folderOpen', label: 'Cartelle condivise (Esplora risorse)', run: open('explorer') });
+  if (tcp && p.portNumber === 21) special.push({ ic: 'folderOpen', label: 'Apri FTP in Esplora risorse', run: open('ftp') });
+  if (tcp && p.portNumber === 23) special.push({ ic: 'terminal', label: 'Telnet (prompt)', run: open('telnet') });
   openMenu(anchor, [
-    { header: `${p.host}:${p.portNumber}/${p.protocol}` },
-    { ic: 'external', label: 'Apri nel browser (http)', disabled: !web, run: () => call('openUrl', { url: `http://${p.host}:${p.portNumber}/` }) },
-    { ic: 'external', label: 'Apri nel browser (https)', disabled: !web, run: () => call('openUrl', { url: `https://${p.host}:${p.portNumber}/` }) },
+    { header: `${p.host}:${p.portNumber}/${p.protocol} · ${p.serviceName}` },
+    { ic: 'external', label: 'Apri nel browser (http)', disabled: !tcp, run: open('http') },
+    { ic: 'external', label: 'Apri nel browser (https)', disabled: !tcp, run: open('https') },
+    ...special,
     { sep: true },
     { ic: 'copy', label: 'Copia il banner', disabled: !p.banner, run: () => copy(p.banner, 'Banner copiato.') },
     { ic: 'copy', label: 'Copia host:porta', run: () => copy(`${p.host}:${p.portNumber}`, 'Copiato.') },
@@ -284,4 +292,5 @@ definePage('ports', {
   },
   onSubmit: () => start(),
   onSort: (k) => { S.ports.sort = nextSort(S.ports.sort, k); renderTable(); },
+  onContext: (row, point) => portMenu(point, row.dataset.key),
 });

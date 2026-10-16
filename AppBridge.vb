@@ -143,6 +143,15 @@ Namespace UI
                 Case "checkInternet"
                     CheckInternet()
                     Return Nothing
+                Case "launch"
+                    Try
+                        Launcher.Run(ArgText(args, "kind"), ArgText(args, "host"), ArgNumber(args, "port", 0))
+                    Catch ex As ArgumentException
+                        Throw New UserMessageException(ex.Message)
+                    Catch ex As Exception
+                        Throw New UserMessageException($"Apertura non riuscita: {ex.Message}")
+                    End Try
+                    Return Nothing
                 Case "getClipboard" : Return If(Clipboard.ContainsText(), Clipboard.GetText(), "")
                 Case "setClipboard"
                     Dim value = ArgText(args, "text")

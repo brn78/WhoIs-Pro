@@ -861,6 +861,12 @@ button.kpi:hover { border-color: var(--border-strong); box-shadow: var(--shadow)
 .scan-form .input-with-button { display: flex; gap: 8px; }
 .scan-form .input-with-button .input { flex: 1 1 auto; min-width: 0; }
 .field-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* modulo delle porte: quattro colonne fisse, interruttori su una riga e Avvia in fondo a destra */
+.scan-form.ports-form { grid-template-columns: minmax(240px, 2.2fr) repeat(3, minmax(130px, 180px)); }
+.scan-form.ports-form .field-switches-row { grid-column: 1 / 4; }
+.scan-form.ports-form .field-switches-row .field-switches { flex-wrap: nowrap; white-space: nowrap; }
+.scan-form.ports-form .field-actions-end { grid-column: 4; justify-self: end; }
+.scan-form .switch { white-space: nowrap; }
 .fields { display: flex; flex-direction: column; gap: 18px; }
 .field-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .field-label-row .hint { font-variant-numeric: tabular-nums; }
