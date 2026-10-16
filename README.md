@@ -69,8 +69,18 @@ intervalli, scansione o WHOIS dell'indirizzo remoto e chiusura del processo.
 Tutto quello che trovi finisce nella sessione: file `.whoispro` con **salvataggio atomico** (SHA-256 e copia `.bak`),
 esportazione in **HTML**, **CSV** per Excel o testo.
 
+**🔀 Profili di rete**<br>
+L'indirizzo IP di una scheda salvato con un nome (il sito, il cliente): DHCP oppure IP, maschera, gateway e DNS.
+**Applica** lo scrive nella scheda in un clic; Windows chiede il consenso, il programma non ha bisogno di diritti di
+amministratore.
+
+**💻 Computer**<br>
+Processore, memoria e dischi con i **grafici a ciambella** aggiornati ogni due secondi; Windows, nome del PC,
+utente, tempo di accensione, scheda video, schede di rete.
+
 **🎨 Un'interfaccia pulita**<br>
-Barra laterale, tabelle ordinabili, pannelli di dettaglio, menu e notifiche; **tema chiaro o scuro** come Windows;
+Barra laterale, tabelle ordinabili, pannelli di dettaglio, menu e notifiche; **tema** automatico, chiaro o scuro;
+scansione in corso e stato di **Internet** sempre in vista; **icona nell'area di notifica** e avvio con Windows;
 scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 
 </td>
@@ -93,8 +103,12 @@ scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 <td align="center"><img src="docs/immagini/connessioni.png" alt="Connessioni attive"><br><b>Connessioni</b>: chi parla con chi, e con quale processo</td>
 </tr>
 <tr>
+<td align="center"><img src="docs/immagini/computer.png" alt="Computer: processore, memoria e dischi"><br><b>Computer</b>: processore, memoria e dischi a colpo d'occhio</td>
+<td align="center"><img src="docs/immagini/impostazioni.png" alt="Impostazioni: avvio, tema e profili di rete"><br><b>Impostazioni</b>: avvio con Windows, tema e profili di rete</td>
+</tr>
+<tr>
 <td align="center"><img src="docs/immagini/dns.png" alt="DNS"><br><b>DNS</b>: record filtrati per tipo</td>
-<td align="center"><img src="docs/immagini/panoramica-chiaro.png" alt="Panoramica con il tema chiaro"><br><b>Tema chiaro o scuro</b>, come Windows</td>
+<td align="center"><img src="docs/immagini/panoramica-chiaro.png" alt="Panoramica con il tema chiaro"><br><b>Tema</b> automatico, chiaro o scuro</td>
 </tr>
 </table>
 
@@ -153,11 +167,27 @@ cosa deriva.
 </details>
 
 <details>
+<summary><b>Come cambio l'indirizzo IP della scheda per un sito?</b></summary>
+<br>
+In <i>Impostazioni → Profili di rete</i> crei un profilo (o lo salvi dalla configurazione attuale della scheda):
+nome, scheda, DHCP oppure IP, maschera, gateway e DNS. Poi <b>Applica</b>, anche dal menu <i>Profilo</i> accanto alla
+scheda nella <i>Panoramica</i>: Windows chiede il consenso (UAC) perché l'indirizzo lo scrive <code>netsh</code> con i
+diritti di amministratore, il programma no. <i>Torna a DHCP</i> rimette la scheda in automatico.
+</details>
+
+<details>
+<summary><b>Posso lasciarlo sempre aperto?</b></summary>
+<br>
+Sì: in <i>Impostazioni</i> attivi l'icona nell'area di notifica e, se vuoi, l'avvio con Windows. La X nasconde la
+finestra accanto all'orologio; dal menu dell'icona si riapre o si chiude davvero.
+</details>
+
+<details>
 <summary><b>Dove finiscono i dati?</b></summary>
 <br>
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
-<code>%LOCALAPPDATA%\WhoIsPro</code> restano solo il database dei produttori aggiornato, la posizione della finestra e
-i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
+<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il database dei produttori
+aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
 Wireshark per il database e i server WHOIS, RDAP e DNS che interroghi.
 </details>
 
@@ -183,7 +213,9 @@ Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, Tra
 Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo)
 Core\Utils              NetworkUtils, MacVendorLookup (manuf di Wireshark), DeviceClassifier, PortDictionary
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup
-ui\                     index.html, app.css, app.js, core\ (bridge, store, ui, table…), pages\ (una per pagina)
+Core\Config             AppSettings: impostazioni (impostazioni.json), avvio automatico, profili di rete
+Core\Machine            NetworkConfig (IP delle schede, netsh elevato), ComputerInfo (CPU, memoria, dischi, sistema)
+ui\                     index.html, app.css, app.js, core\ (bridge, store, ui, table, chart…), pages\ (una per pagina)
 Scripts\                Publish.ps1 (zip portabile), Build-Setup.ps1 (Inno Setup), Publish-Release.ps1 (release su GitHub)
 Setup\WhoIsPro.iss      programma di installazione
 Tests\                  prove NUnit dei motori in Core\

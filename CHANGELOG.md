@@ -3,6 +3,21 @@
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 
+## 2.1.0 · 16 ottobre 2026
+
+- **Impostazioni** (menu *Sistema*): avvio con Windows, **icona nell'area di notifica** (la X può nascondere la
+  finestra invece di chiudere; all'avvio automatico resta solo l'icona), **tema** automatico, chiaro o scuro.
+- **Profili di rete**: l'indirizzo IP di una scheda salvato con un nome (il sito, il cliente): DHCP oppure IP,
+  maschera, gateway e DNS. «Applica» lo scrive nella scheda con netsh e Windows chiede il consenso (UAC), così il
+  programma resta senza diritti di amministratore. «Salva come profilo» dalla configurazione attuale, «Torna a DHCP»,
+  e il menu *Profilo* accanto a ogni scheda nella Panoramica.
+- **Computer** (menu *Sistema*): processore, memoria e dischi con i **grafici a ciambella**, aggiornati ogni due
+  secondi; Windows, nome del PC, utente, tempo di accensione, scheda video, schede di rete attive.
+- **Barra superiore**: la scansione in corso si vede in alto, con l'avanzamento (clic per andare alla pagina), e
+  accanto alla sessione c'è lo stato della **connessione a Internet** (controllo ogni 30 secondi, avviso quando cade
+  o torna). In fondo alla finestra versione e diritti d'autore.
+- Router Keenetic, Zyxel, Technicolor, Sagemcom e altri riconosciuti come apparati di rete.
+
 ## 2.0.1 · 16 ottobre 2026
 
 - Prima versione distribuita con **Scarica e installa**: chi ha la 2.0.0 installata la riceve dalla *Panoramica*.

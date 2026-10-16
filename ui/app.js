@@ -13,6 +13,8 @@ import './pages/whois.js';
 import './pages/dns.js';
 import './pages/trace.js';
 import './pages/netstat.js';
+import './pages/computer.js';
+import './pages/settings.js';
 
 const SECTIONS = [
   { key: 'scan', title: 'Scansione' },
@@ -32,6 +34,7 @@ async function start() {
     return;
   }
   try { S.collapsed = localStorage.getItem('sidebar') === 'collapsed'; } catch { /* senza memoria locale */ }
+  if (window.setTheme && S.st.theme && S.st.theme !== window.getTheme()) window.setTheme(S.st.theme);
   render();
   announceUpdate(S.st.update);
 }
@@ -49,7 +52,7 @@ function shell() {
   const st = S.st;
   const top = NAV.filter((p) => !p.section).map(navItem).join('');
   const sections = SECTIONS.map((s) => {
-    const items = NAV.filter((p) => p.section === s.key);
+    const items = NAV.filter((p) => p.section === s.key).sort((a, b) => (a.order || 0) - (b.order || 0));
     if (!items.length) return '';
     return `<div class="nav-section"><div class="nav-title"><span>${esc(s.title)}</span></div><div class="nav-items">${items.map(navItem).join('')}</div></div>`;
   }).join('');
@@ -62,37 +65,62 @@ function shell() {
         ${sections}
       </nav>
       <div class="side-foot">
-        <button class="monitor-card" data-action="monitor" id="monitor-card">${monitorCard()}</button>
         <button class="collapse-btn" data-action="collapse" title="Riduci o allarga il menu">${icon('panelLeft')}<span>Riduci il menu</span></button>
       </div>
     </aside>
     <main class="main">
       <header class="topbar">
         <div class="crumbs">WhoIs Pro ${icon('chevronRight')} <b id="crumb-page"></b></div>
+        <div class="topbar-middle" id="topbar-middle">${activityChip()}</div>
         <div class="topbar-actions" id="topbar-actions">${topbarActions()}</div>
       </header>
       <div class="content" id="content"></div>
+      <footer class="app-foot">WhoIs Pro ${esc(st.version)} · ${esc(st.copyright || '© 2026 Bruno Leonardi. Tutti i diritti riservati.')}</footer>
     </main>
   </div>`;
 }
 
-function monitorCard() {
+/** Attività in corso nella barra superiore: cosa sta girando e a che punto è; vuoto quando non c'è niente. */
+function activityChip() {
   const r = (S.st && S.st.running) || {};
-  const busy = isRunning();
-  let sub = `OUI: ${plural(S.st.oui.count, 'produttore', 'produttori')}`;
-  if (r.network) sub = `Rete${S.net && S.net.progress ? ` · ${S.net.progress.percent}%` : ''}`;
-  else if (r.ports) sub = `Porte${S.ports && S.ports.progress ? ` · ${S.ports.progress.percent}%` : ''}`;
-  else if (r.trace) sub = 'Traceroute';
-  else if (r.oui) sub = 'Database dei produttori';
-  return `<span class="pulse ${busy ? 'is-busy' : 'is-off'}"></span>
-    <span class="monitor-text"><span class="monitor-title">${busy ? 'Scansione in corso' : 'In attesa'}</span><span class="monitor-sub">${esc(sub)}</span></span>`;
+  if (!isRunning()) return '';
+  let title = 'Scansione in corso';
+  let sub = '';
+  let pct = null;
+  if (r.network) {
+    const p = S.net && S.net.progress;
+    sub = p ? `Rete · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} indirizzi · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
+    pct = p ? p.percent : 0;
+  } else if (r.ports) {
+    const p = S.ports && S.ports.progress;
+    sub = p ? `Porte di ${S.ports.host} · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)}` : 'Porte · avvio…';
+    pct = p ? p.percent : 0;
+  } else if (r.trace) {
+    title = 'Traceroute in corso';
+    sub = `Verso ${S.trace ? S.trace.current || S.trace.target : ''}`;
+  } else if (r.oui) {
+    title = 'Aggiornamento in corso';
+    sub = 'Database dei produttori';
+  }
+  return `<button class="activity-chip" data-action="monitor" title="Vai alla pagina dell'attività in corso">
+    <span class="pulse is-busy"></span>
+    <span class="activity-text"><b>${title}${pct != null ? ` · ${pct}%` : ''}</b><small>${esc(sub)}</small></span>
+    ${pct != null ? `<span class="meter"><span style="width:${pct}%"></span></span>` : ''}</button>`;
+}
+
+function internetPill() {
+  const online = S.st ? S.st.online : null;
+  if (online == null) return `<span class="net-pill" title="Controllo della connessione a Internet in corso">${icon('wifi')}<span>Internet</span></span>`;
+  return online
+    ? `<span class="net-pill is-on" title="Connesso a Internet (controllo ogni 30 secondi)">${icon('wifi')}<span>Internet</span></span>`
+    : `<span class="net-pill is-off" title="Senza connessione a Internet: WHOIS, DNS pubblici e aggiornamenti non funzionano">${icon('wifiOff')}<span>Senza Internet</span></span>`;
 }
 
 function topbarActions() {
   const s = S.st.session;
   const dirty = s.dirty;
   const label = s.file ? fileName(s.file) : 'Sessione non salvata';
-  return `<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
+  return `${internetPill()}<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
       <span class="site-icon ${dirty ? 'is-dirty' : s.file ? 'is-saved' : ''}">${icon(dirty ? 'edit' : s.file ? 'check' : 'archive')}</span>
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
     <button class="btn ${dirty ? 'btn-primary' : ''}" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>`;
@@ -122,8 +150,8 @@ function updateChrome() {
   if (!S.st) return;
   const actions = $('#topbar-actions');
   if (actions) actions.innerHTML = topbarActions();
-  const monitor = $('#monitor-card');
-  if (monitor) monitor.innerHTML = monitorCard();
+  const middle = $('#topbar-middle');
+  if (middle) middle.innerHTML = activityChip();
   for (const p of NAV) {
     const el = $(`[data-badge="${p.key}"]`);
     if (!el) continue;
@@ -318,6 +346,16 @@ on('update.progress', (d) => {
   S.st.update.download = d;
   bus.dispatchEvent(new Event('state'));
 });
+on('internet', (d) => {
+  if (!S.st) return;
+  const before = S.st.online;
+  S.st.online = d.online;
+  updateChrome();
+  if (before != null && before !== d.online) {
+    toast(d.online ? 'La connessione a Internet è tornata.' : 'WHOIS, DNS pubblici e aggiornamenti non funzionano finché la connessione non torna.',
+      { tone: d.online ? 'success' : 'warning', title: d.online ? 'Connesso a Internet' : 'Senza Internet' });
+  }
+});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Eventi
@@ -335,6 +373,7 @@ const ACTIONS = {
     const r = S.st.running;
     go(r.network ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
   },
+  'check-internet': () => call('checkInternet').catch(() => {}),
   'session-menu': (el) => sessionMenu(el),
   'export-menu': (el) => exportMenu(el),
   'new': () => newSession(),
