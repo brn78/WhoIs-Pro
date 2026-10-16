@@ -3,6 +3,11 @@
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 
+## 2.0.1 · 16 ottobre 2026
+
+- Prima versione distribuita con **Scarica e installa**: chi ha la 2.0.0 installata la riceve dalla *Panoramica*.
+- Versione del programma senza l'hash del commit nelle proprietà del file.
+
 ## 2.0.0 · 16 ottobre 2026
 
 Prima versione pubblica, con l'interfaccia rifatta da capo.
