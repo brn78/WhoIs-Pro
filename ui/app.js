@@ -92,6 +92,11 @@ function activityData() {
     const p = S.net && S.net.progress;
     sub = p ? `Rete · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} indirizzi · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
     pct = p ? p.percent : 0;
+  } else if (r.autoPorts) {
+    const a = (S.net && S.net.auto) || S.st.autoPorts || { done: 0, total: 0 };
+    title = 'Porte degli host trovati';
+    sub = `${fmtNumber(a.done)} di ${fmtNumber(a.total)} host · cinque alla volta`;
+    pct = a.total ? Math.round((a.done * 100) / a.total) : 0;
   } else if (r.ports) {
     const p = S.ports && S.ports.progress;
     sub = p ? `Porte di ${S.ports.host} · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)}` : 'Porte · avvio…';
@@ -400,7 +405,7 @@ const ACTIONS = {
   },
   'monitor': () => {
     const r = S.st.running;
-    go(r.network ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
+    go(r.network || r.autoPorts ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
   },
   'check-internet': () => call('checkInternet').catch(() => {}),
   'session-menu': (el) => sessionMenu(el),
@@ -494,6 +499,8 @@ bus.addEventListener('session', updateChrome);
 bus.addEventListener('data', updateChrome);
 on('network.progress', updateChrome);
 on('ports.progress', updateChrome);
+on('autoports.progress', updateChrome);
+on('autoports.host', updateChrome);
 on('oui.progress', () => { S.st.running.oui = true; updateChrome(); });
 
 start();

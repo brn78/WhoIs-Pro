@@ -45,7 +45,14 @@ Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gl
 ping e compaiono man mano (un singolo host si **riscansiona** con un clic, anche durante la scansione), con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
 più preciso per ogni MAC, aggiornabili), nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS,
 Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere, centrali d'allarme, stampanti, moduli
-domotici e automazione.
+domotici e automazione. Con **Porte degli host trovati** ogni host passa subito alla scansione delle porte, cinque
+alla volta, mentre la rete continua; con **Ripeti** la scansione riparte da sola ogni 1, 5, 15, 30 o 60 minuti.
+
+**🆕 Chi si è collegato**<br>
+Ogni dispositivo trovato resta in un registro di questo PC, per MAC: la colonna **Rilevato** dice quando è comparso
+la prima volta, anche in una sessione di un mese fa, e chi è nuovo nelle ultime 24 ore. Quando compare un
+dispositivo mai visto WhoIs Pro lo segnala, anche con l'avviso di Windows se la finestra è nascosta; chi non
+risponde più resta in elenco, segnato *non risponde*.
 
 **🔌 Porte TCP e UDP**<br>
 Gruppi di porte pronti (le 20 o le 100 più comuni, web, database, posta, accesso remoto, domotica) o elenco libero
@@ -195,7 +202,8 @@ finestra accanto all'orologio; dal menu dell'icona si riapre o si chiude davvero
 <summary><b>Dove finiscono i dati?</b></summary>
 <br>
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
-<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il database dei produttori
+<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il registro dei dispositivi
+conosciuti (<code>dispositivi.json</code>, si svuota da <i>Impostazioni → Dati del programma</i>), il database dei produttori
 aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
 l'IEEE (o Wireshark) per il database dei produttori e i server WHOIS, RDAP e DNS che interroghi.
 </details>
@@ -219,7 +227,8 @@ MainWindow.vb           finestra: WebView2, pagina servita da https://whoispro.i
 AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, aggiornamenti
 Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanRecord, ScanSession
 Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
-Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo)
+Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo),
+                        DeviceRegistry (dispositivi conosciuti, prima rilevazione)
 Core\Utils              NetworkUtils, MacVendorLookup (registri IEEE / manuf di Wireshark), DeviceClassifier, PortDictionary
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup
 Core\Config             AppSettings: impostazioni (impostazioni.json), avvio automatico, profili di rete

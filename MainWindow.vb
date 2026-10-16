@@ -69,6 +69,7 @@ Namespace UI
             _tray.Text = "WhoIs Pro"
             _tray.ContextMenuStrip = _trayMenu
             AddHandler _tray.DoubleClick, Sub() ShowFromTray()
+            AddHandler _tray.BalloonTipClicked, Sub() ShowFromTray()
             AddHandler _tray.MouseClick, Sub(s, e) If e.Button = MouseButtons.Left Then ShowFromTray()
             Dim settings = _bridge.Settings
             ApplyTraySettings(settings)
@@ -91,6 +92,19 @@ Namespace UI
                 value = False
             End If
             MyBase.SetVisibleCore(value)
+        End Sub
+
+        ''' <summary>
+        ''' Avviso di Windows dall'icona nell'area di notifica (per esempio un dispositivo nuovo nella rete), solo se la
+        ''' finestra non si vede: quando è aperta lo dice la pagina. Un clic sull'avviso riapre la finestra.
+        ''' </summary>
+        Public Sub ShowNotice(title As String, text As String)
+            If Not _tray.Visible Then Return
+            If Visible AndAlso WindowState <> FormWindowState.Minimized Then Return
+            _tray.BalloonTipTitle = title
+            _tray.BalloonTipText = text
+            _tray.BalloonTipIcon = ToolTipIcon.Info
+            _tray.ShowBalloonTip(10000)
         End Sub
 
         Public Sub ShowFromTray()
