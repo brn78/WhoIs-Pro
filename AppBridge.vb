@@ -184,8 +184,48 @@ Namespace UI
             Dim unused = AutoCheckUpdateAsync()
             CheckInternet()
             _internetTimer.Start()
-            Return New With {.state = State(), .session = SessionData()}
+            Dim reopened = ReopenLastSession()
+            Return New With {.state = State(), .session = SessionData(), .reopened = reopened}
         End Function
+
+        Private _reopenTried As Boolean
+
+        ''' <summary>
+        ''' Una volta sola, all'avvio: riapre l'ultima sessione salvata o aperta, se il file c'è ancora; altrimenti resta la
+        ''' sessione nuova. Il risultato va alla pagina per l'avviso (file riaperto, copia .bak o file sparito).
+        ''' </summary>
+        Private Function ReopenLastSession() As Object
+            If _reopenTried Then Return Nothing
+            _reopenTried = True
+            Dim last = If(_settings.LastSession, "")
+            If last = "" OrElse _file <> "" Then Return Nothing
+            If Not File.Exists(last) Then
+                RememberSession("")
+                Return New With {.file = last, .missing = True, .error = ""}
+            End If
+            Try
+                Dim restored = False
+                Dim loaded = AtomicFileManager.LoadSessionSafe(last, restored)
+                If loaded Is Nothing Then Throw New InvalidDataException("il file non contiene una sessione di WhoIs Pro")
+                _session = loaded
+                _file = last
+                _dirty = restored
+                Return New With {.file = last, .missing = False, .restoredFromBackup = restored, .error = ""}
+            Catch ex As Exception
+                Return New With {.file = last, .missing = False, .restoredFromBackup = False, .error = ex.Message}
+            End Try
+        End Function
+
+        ''' <summary>L'ultima sessione da riaprire al prossimo avvio ("" = nessuna).</summary>
+        Private Sub RememberSession(path As String)
+            If String.Equals(If(_settings.LastSession, ""), path, StringComparison.OrdinalIgnoreCase) Then Return
+            _settings.LastSession = path
+            Try
+                SettingsStore.Save(MainWindow.LocalFolder, _settings)
+            Catch
+                ' le impostazioni non si scrivono: al prossimo avvio si parte da una sessione nuova
+            End Try
+        End Sub
 
 #Region "Internet"
 
@@ -317,6 +357,12 @@ Namespace UI
             Dim id = ArgText(args, "id")
             Dim p = If(id <> "", _settings.Profiles.FirstOrDefault(Function(x) x.Id = id), Nothing)
             If p Is Nothing Then p = ReadProfile(args)
+            Dim configs = Await ApplyCoreAsync(p)
+            Return New With {.state = State(), .adapters = configs, .profile = p}
+        End Function
+
+        ''' <summary>Scrive il profilo nella scheda con netsh (consenso UAC) e rilegge le schede; errori già in italiano.</summary>
+        Private Async Function ApplyCoreAsync(p As NetworkProfile) As Task(Of List(Of AdapterConfig))
             Try
                 NetworkConfig.Validate(p)
             Catch ex As ArgumentException
@@ -333,7 +379,34 @@ Namespace UI
             If code <> 0 Then Throw New UserMessageException($"netsh ha risposto con il codice {code}: controlla il nome della scheda e gli indirizzi.")
             _adapters = Nothing
             Await Task.Delay(1500)
-            Return New With {.state = State(), .adapters = NetworkConfig.ReadAll(), .profile = p}
+            Return NetworkConfig.ReadAll()
+        End Function
+
+        ''' <summary>
+        ''' Profilo scelto dal menu dell'icona nell'area di notifica (o «Torna a DHCP» di una scheda): lo applica, lo dice con
+        ''' l'avviso di Windows e aggiorna la pagina, se è aperta.
+        ''' </summary>
+        Public Async Function ApplyFromTrayAsync(p As NetworkProfile) As Task
+            Try
+                Dim configs = Await ApplyCoreAsync(p)
+                Dim a = configs.FirstOrDefault(Function(x) String.Equals(x.Name, p.Adapter, StringComparison.OrdinalIgnoreCase))
+                Dim detail = If(a Is Nothing OrElse a.Ip = "", p.Adapter, $"{p.Adapter}: {If(a.Dhcp, "DHCP", "statico")} · {a.Ip}")
+                _owner.ShowTrayMessage($"Profilo «{p.Name}» applicato", detail, ToolTipIcon.Info)
+                _owner.PostEvent("profile.applied", New With {.profile = p, .adapters = configs, .state = State()})
+            Catch ex As Exception
+                _owner.ShowTrayMessage($"Profilo «{p.Name}» non applicato", Describe(ex), ToolTipIcon.Warning)
+            End Try
+        End Function
+
+        ''' <summary>Profili salvati e configurazione attuale delle schede, per il menu dell'icona.</summary>
+        Public Function TrayProfiles() As (Profiles As List(Of NetworkProfile), Adapters As List(Of AdapterConfig))
+            Dim configs As List(Of AdapterConfig)
+            Try
+                configs = NetworkConfig.ReadAll()
+            Catch
+                configs = New List(Of AdapterConfig)()
+            End Try
+            Return (_settings.Profiles.ToList(), configs)
         End Function
 
 #End Region
@@ -370,7 +443,7 @@ Namespace UI
             Return New With {
                 .version = Version,
                 .session = SessionMeta(),
-                .oui = New With {.count = MacVendorLookup.TotalVendorsLoaded, .file = MacVendorLookup.SourceFile, .updating = _ouiBusy},
+                .oui = New With {.count = MacVendorLookup.TotalVendorsLoaded, .file = MacVendorLookup.SourceFile, .updating = _ouiBusy, .info = MacVendorLookup.DatabaseInfo()},
                 .adapters = Adapters(),
                 .presets = New With {
                     .ports = PortDictionary.GetPresets().Select(Function(p) New With {.key = p.Key, .name = p.Name, .ports = p.Text}).ToList(),
@@ -943,6 +1016,7 @@ Namespace UI
             _session = New ScanSession()
             _file = ""
             _dirty = False
+            RememberSession("")
             Return WrapSession()
         End Function
 
@@ -964,6 +1038,7 @@ Namespace UI
                 _session = loaded
                 _file = open.FileName
                 _dirty = restored
+                RememberSession(_file)
                 Return WrapSession(New With {.restoredFromBackup = restored, .file = _file})
             End Using
         End Function
@@ -986,6 +1061,7 @@ Namespace UI
             If Not res.IsSuccess Then Throw New UserMessageException(res.ErrorMessage)
             _file = path
             _dirty = False
+            RememberSession(path)
             Return Wrap(New With {.file = res.FilePath, .checksum = res.ChecksumSHA256, .backup = If(File.Exists(res.BackupPath), res.BackupPath, Nothing)})
         End Function
 
@@ -1094,12 +1170,15 @@ Namespace UI
             For Each h In _session.Hosts
                 If String.IsNullOrEmpty(h.MacAddress) Then Continue For
                 Dim vendor = MacVendorLookup.GetVendor(h.MacAddress)
+                Dim before = h.MacVendor & "|" & h.DeviceType
                 Dim c = DeviceClassifier.Classify(vendor, h.Hostname, Nothing, h.TTL, h.MacAddress)
-                If vendor <> h.MacVendor OrElse c.DeviceType <> h.DeviceType Then changed += 1
                 h.MacVendor = vendor
                 h.DeviceType = c.DeviceType
                 h.DeviceCategory = c.Category
                 h.DeviceIcon = c.Icon
+                ' con le porte aperte della sessione il tipo si riconosce meglio: non va perso
+                ApplyOpenPorts(h)
+                If before <> h.MacVendor & "|" & h.DeviceType Then changed += 1
             Next
             If changed > 0 Then Touch()
             Return WrapSession(New With {.count = count, .changedHosts = changed})

@@ -61,10 +61,10 @@ Namespace UI
             ResumeLayout(False)
             AddHandler SystemEvents.UserPreferenceChanged, AddressOf OnUserPreferenceChanged
 
-            ' Icona nell'area di notifica: menu con Apri ed Esci, doppio clic per aprire
-            _trayMenu.Items.Add("Apri WhoIs Pro", Nothing, Sub() ShowFromTray())
-            _trayMenu.Items.Add(New ToolStripSeparator())
-            _trayMenu.Items.Add("Esci", Nothing, Sub() ExitFromTray())
+            ' Icona nell'area di notifica: Apri, i profili di rete da applicare al volo ed Esci; doppio clic per aprire.
+            ' Il menu si ricostruisce a ogni apertura, così mostra i profili e la configurazione delle schede di adesso.
+            BuildTrayMenu()
+            AddHandler _trayMenu.Opening, Sub() BuildTrayMenu()
             _tray.Icon = Icon
             _tray.Text = "WhoIs Pro"
             _tray.ContextMenuStrip = _trayMenu
@@ -83,6 +83,61 @@ Namespace UI
         Public Sub ApplyTraySettings(settings As Config.AppSettings)
             _tray.Visible = settings.TrayIcon
             _closeToTray = settings.TrayIcon AndAlso settings.CloseToTray
+        End Sub
+
+        ''' <summary>
+        ''' Menu dell'icona: Apri, i profili di rete (con la spunta su quello che la scheda ha adesso), Torna a DHCP per le
+        ''' schede dei profili che hanno un indirizzo statico, Esci. Applicare chiede il consenso di Windows (UAC).
+        ''' </summary>
+        Private Sub BuildTrayMenu()
+            _trayMenu.Items.Clear()
+            Dim openItem = New ToolStripMenuItem("Apri WhoIs Pro", Nothing, Sub() ShowFromTray())
+            openItem.Font = New Font(openItem.Font, FontStyle.Bold)
+            _trayMenu.Items.Add(openItem)
+            _trayMenu.Items.Add(New ToolStripSeparator())
+
+            Dim data = _bridge.TrayProfiles()
+            Dim title = New ToolStripMenuItem("Profili di rete") With {.Enabled = False}
+            _trayMenu.Items.Add(title)
+            If data.Profiles.Count = 0 Then
+                _trayMenu.Items.Add(New ToolStripMenuItem("Crea un profilo…", Nothing, Sub()
+                                                                                   ShowFromTray()
+                                                                                   PostEvent("navigate", New With {.page = "settings", .tab = "network"})
+                                                                               End Sub))
+            End If
+            For Each p In data.Profiles.OrderBy(Function(x) x.Adapter).ThenBy(Function(x) x.Name)
+                Dim profile = p
+                Dim nic = data.Adapters.FirstOrDefault(Function(a) String.Equals(a.Name, profile.Adapter, StringComparison.OrdinalIgnoreCase))
+                Dim active = nic IsNot Nothing AndAlso If(profile.Dhcp, nic.Dhcp, Not nic.Dhcp AndAlso nic.Ip = profile.Ip)
+                Dim detail = If(profile.Dhcp, "DHCP", profile.Ip)
+                Dim item = New ToolStripMenuItem($"{profile.Name}   ({profile.Adapter} · {detail})", Nothing,
+                                                 Async Sub() Await _bridge.ApplyFromTrayAsync(profile)) With {.Checked = active}
+                If nic Is Nothing Then
+                    item.Enabled = False
+                    item.Text &= " · scheda assente"
+                End If
+                _trayMenu.Items.Add(item)
+            Next
+            ' Torna a DHCP: per le schede dei profili che adesso hanno un indirizzo statico
+            Dim statics = data.Adapters.Where(Function(a) a.Up AndAlso Not a.Dhcp AndAlso
+                                                  data.Profiles.Any(Function(p) String.Equals(p.Adapter, a.Name, StringComparison.OrdinalIgnoreCase))).ToList()
+            For Each a In statics
+                Dim adapter = a.Name
+                _trayMenu.Items.Add(New ToolStripMenuItem($"Torna a DHCP   ({adapter})", Nothing,
+                    Async Sub() Await _bridge.ApplyFromTrayAsync(New Config.NetworkProfile With {.Name = "DHCP", .Adapter = adapter, .Dhcp = True})))
+            Next
+
+            _trayMenu.Items.Add(New ToolStripSeparator())
+            _trayMenu.Items.Add("Esci", Nothing, Sub() ExitFromTray())
+        End Sub
+
+        ''' <summary>Avviso dall'icona anche con la finestra aperta: l'esito di un'azione scelta dal menu dell'icona.</summary>
+        Public Sub ShowTrayMessage(title As String, text As String, icon As ToolTipIcon)
+            If Not _tray.Visible Then Return
+            _tray.BalloonTipTitle = title
+            _tray.BalloonTipText = If(text = "", " ", text)
+            _tray.BalloonTipIcon = icon
+            _tray.ShowBalloonTip(8000)
         End Sub
 
         ''' <summary>Con /tray la finestra non compare finché non la si apre dall'icona (SetVisibleCore).</summary>

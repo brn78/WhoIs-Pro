@@ -33,6 +33,8 @@ Namespace Config
         ''' <summary>Tema della finestra: "auto" (come Windows), "light" o "dark".</summary>
         Public Property Theme As String = "auto"
         Public Property Profiles As New List(Of NetworkProfile)()
+        ''' <summary>Ultima sessione salvata o aperta: all'avvio si riapre se il file c'è ancora (vuoto dopo «Nuova sessione»).</summary>
+        Public Property LastSession As String = ""
     End Class
 
     ''' <summary>Lettura e salvataggio delle impostazioni, e voce di avvio automatico nel registro.</summary>

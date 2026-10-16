@@ -4,7 +4,7 @@ import { $, esc, plural, isRemoteAddress } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { S, definePage, adopt, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table } from '../core/table.js';
+import { replaceKeepingScroll, table } from '../core/table.js';
 import { confirmDialog, emptyState, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.trace = { target: '', maxHops: 30, current: '', done: null };
@@ -94,7 +94,7 @@ function updateInfo() {
 
 function renderTable() {
   const box = $('#trace-table');
-  if (box) box.innerHTML = tableHtml();
+  if (box) replaceKeepingScroll(box, tableHtml());
   updateInfo();
 }
 

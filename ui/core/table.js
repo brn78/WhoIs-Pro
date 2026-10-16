@@ -23,6 +23,19 @@ export function sortRows(rows, columns, sort) {
   return rows.map((r, i) => ({ r, i })).sort((x, y) => compareValues(value(x.r), value(y.r)) * dir || x.i - y.i).map((x) => x.r);
 }
 
+/**
+ * Ridisegna una tabella dentro box (innerHTML) tenendo la posizione di scorrimento: senza, ogni aggiornamento
+ * (riscansione di un host, porte che arrivano) riporterebbe l'elenco all'inizio.
+ */
+export function replaceKeepingScroll(box, html) {
+  const old = box.querySelector('.table-wrap');
+  const top = old ? old.scrollTop : 0;
+  const left = old ? old.scrollLeft : 0;
+  box.innerHTML = html;
+  const wrap = box.querySelector('.table-wrap');
+  if (wrap) { wrap.scrollTop = top; wrap.scrollLeft = left; }
+}
+
 /** Prossimo ordinamento dopo un clic sull'intestazione. */
 export function nextSort(sort, key) {
   if (sort && sort.key === key) return { key, dir: -sort.dir };

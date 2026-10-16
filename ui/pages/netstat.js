@@ -4,7 +4,7 @@ import { $, esc, fmtTime, matchesAll, plural, isRemoteAddress } from '../core/do
 import { icon } from '../core/icons.js';
 import { S, definePage } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table, nextSort } from '../core/table.js';
+import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
 import { confirmDialog, emptyState, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.netstat = { list: [], q: '', state: 'all', auto: 0, busy: false, loadedAt: null, sort: { key: 'processName', dir: 1 }, timer: 0, error: '' };
@@ -82,7 +82,7 @@ function updateInfo() {
 
 function renderTable() {
   const box = $('#netstat-table');
-  if (box) box.innerHTML = tableHtml();
+  if (box) replaceKeepingScroll(box, tableHtml());
   const p = $('#netstat-pills');
   if (p) p.innerHTML = pills();
   updateInfo();

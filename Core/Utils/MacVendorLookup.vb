@@ -5,6 +5,23 @@ Imports System.Text.RegularExpressions
 Imports System.Threading
 
 Namespace Utils
+    ''' <summary>Com'è fatto il database dei produttori in uso: da dove viene, quando è stato fatto, quanti blocchi per registro.</summary>
+    Public Class VendorDbInfo
+        Public Property File As String = ""
+        Public Property SizeBytes As Long
+        ''' <summary>"IEEE" (registri ufficiali scaricati da WhoIs Pro), "Wireshark" (file manuf) oppure "" (solo i produttori incorporati).</summary>
+        Public Property Source As String = ""
+        ''' <summary>Vero se è il file scaricato con «Aggiorna» (in %LOCALAPPDATA%), falso se è quello distribuito con il programma.</summary>
+        Public Property Downloaded As Boolean
+        ''' <summary>Data in cui il file è stato generato (intestazione) o, se non c'è, modificato.</summary>
+        Public Property UpdatedAt As DateTime?
+        Public Property Prefixes As Integer
+        ''' <summary>Blocchi grandi (24 bit), medi (28 bit) e piccoli (36 bit).</summary>
+        Public Property MaL As Integer
+        Public Property MaM As Integer
+        Public Property MaS As Integer
+    End Class
+
     Public Module MacVendorLookup
         Private ReadOnly VendorDb As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
         Private ReadOnly LockObj As New Object()
@@ -43,6 +60,68 @@ Namespace Utils
         End Property
 
         Private _sourceFile As String = ""
+        Private _info As VendorDbInfo
+        Private _infoKey As String = ""
+
+        ''' <summary>
+        ''' Le informazioni sul database in uso (per Impostazioni → Produttori). Il file si rilegge solo quando cambia:
+        ''' lo stato della pagina le chiede spesso.
+        ''' </summary>
+        Public Function DatabaseInfo() As VendorDbInfo
+            Dim file = SourceFile
+            If file = "" OrElse Not IO.File.Exists(file) Then
+                Return New VendorDbInfo With {.Prefixes = TotalVendorsLoaded}
+            End If
+            Dim fi As New FileInfo(file)
+            Dim key = file & "|" & fi.LastWriteTimeUtc.Ticks.ToString()
+            SyncLock LockObj
+                If key = _infoKey AndAlso _info IsNot Nothing Then
+                    _info.Prefixes = VendorDb.Count
+                    Return _info
+                End If
+            End SyncLock
+
+            Dim info As New VendorDbInfo With {
+                .File = file, .SizeBytes = fi.Length, .UpdatedAt = fi.LastWriteTime, .Prefixes = TotalVendorsLoaded,
+                .Downloaded = file.StartsWith(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WhoIsPro"), StringComparison.OrdinalIgnoreCase)
+            }
+            Dim generated = New Regex("(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})")
+            Try
+                For Each line In IO.File.ReadLines(file)
+                    If line.StartsWith("#") Then
+                        If info.Source = "" Then
+                            If line.Contains("WhoIs Pro") AndAlso line.Contains("IEEE") Then
+                                info.Source = "IEEE"
+                                Dim m = generated.Match(line)
+                                Dim d As DateTime
+                                If m.Success AndAlso DateTime.TryParse($"{m.Groups(1).Value} {m.Groups(2).Value}", Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal, d) Then info.UpdatedAt = d
+                            ElseIf line.IndexOf("tshark", StringComparison.OrdinalIgnoreCase) >= 0 OrElse line.IndexOf("wireshark", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                info.Source = "Wireshark"
+                            End If
+                        End If
+                        Continue For
+                    End If
+                    Dim tab = line.IndexOf(ControlChars.Tab)
+                    If tab <= 0 Then Continue For
+                    Dim prefix = line.Substring(0, tab)
+                    If prefix.EndsWith("/28") Then
+                        info.MaM += 1
+                    ElseIf prefix.EndsWith("/36") Then
+                        info.MaS += 1
+                    ElseIf prefix.IndexOf("/"c) < 0 Then
+                        info.MaL += 1
+                    End If
+                Next
+            Catch
+                ' file occupato o illeggibile: restano i dati del file system
+            End Try
+            If info.Source = "" Then info.Source = "Wireshark"
+            SyncLock LockObj
+                _info = info
+                _infoKey = key
+            End SyncLock
+            Return info
+        End Function
 
         Sub New()
             LoadInitialDatabase()
