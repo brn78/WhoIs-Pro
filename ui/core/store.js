@@ -66,5 +66,5 @@ export const counts = () => ({
 
 export const isRunning = () => {
   const r = (S.st && S.st.running) || {};
-  return !!(r.network || r.ports || r.trace || r.oui);
+  return !!(r.network || r.ports || r.trace || r.oui || r.autoPorts);
 };

@@ -1274,6 +1274,18 @@ table.dt .trunc, table.dt .cell-text .trunc, table.dt .trunc.w-name, table.dt .t
 table.dt tbody tr.is-offline td:not(.actions) { opacity: .55; }
 .offline-tag { color: var(--danger-text); font-weight: 600; }
 .rescan-btn .spinner { width: 14px; height: 14px; border-width: 2px; }
+table.dt td > .cell-text.cell-num { align-items: flex-end; }
+/* testi lunghi (nomi DNS, tipi di dispositivo): interi, a capo invece che tagliati, così la tabella sta nella finestra */
+table.dt .trunc.w-name { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 110px; max-width: 210px; line-height: 1.3; }
+table.dt .cell-main .cell-text b.trunc { white-space: normal; max-width: 230px; line-height: 1.25; }
+table.dt tbody td { height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 6px; }
+table.dt td > .cell-text b.trunc { font-weight: 600; }
+table.dt td > .cell-text b.muted { color: var(--muted); font-weight: 500; }
+.seen { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.chip-busy { color: var(--primary-text); background: var(--primary-soft); }
+.chip-busy .spinner { width: 12px; height: 12px; border-width: 2px; }
+.scan-form .auto-preset { width: auto; max-width: 210px; }
+.scan-form .auto-preset:disabled { opacity: .5; }
 .rescan-btn:disabled { cursor: default; }
 
 /* Impostazioni e Rete del PC */

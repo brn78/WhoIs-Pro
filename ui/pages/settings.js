@@ -86,7 +86,14 @@ function dataCard(d) {
       <dt>Cartella dei dati</dt><dd><span class="mono" title="${esc(d.dataFolder)}">${esc(d.dataFolder)}</span></dd>
       <dt>Contenuto</dt><dd>impostazioni, database dei produttori aggiornato, esito del controllo versioni, posizione della finestra, dati di WebView2</dd>
       <dt>Programma</dt><dd><span class="mono" title="${esc(d.exePath)}">${esc(shortPath(d.exePath))}</span></dd>
-    </dl></div></section>`;
+    </dl></div></section>
+    <section class="card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Dispositivi conosciuti</h2></div>
+      <span class="pill primary">${plural(d.devices || 0, 'dispositivo', 'dispositivi')}</span></div>
+    <div class="card-body"><div class="fields">
+      <p class="card-text">Ogni dispositivo trovato resta in un registro di questo PC, per MAC, con la data in cui è comparso la prima volta. Serve a segnalare chi si collega per la prima volta, anche tra una sessione e l'altra: con <b>Ripeti</b> nella pagina Rete diventa un controllo continuo.</p>
+      <dl class="kv compact"><dt>File</dt><dd><span class="mono" title="${esc(d.devicesFile || '')}">${esc(shortPath(d.devicesFile || ''))}</span></dd></dl>
+      <div class="card-actions" style="margin-top:0"><button class="btn btn-sm" data-action="clear-devices" ${d.devices ? '' : 'disabled'}>${icon('trash')} Svuota il registro</button></div>
+    </div></div></section>`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -392,6 +399,11 @@ export async function applyProfile(id, values = null) {
 
 const actions = {
   'settings-tab': (el) => { S.settings.tab = el.dataset.tab; rerender(); },
+  'clear-devices': async () => {
+    const n = (S.settings.data || {}).devices || 0;
+    if (!(await confirmDialog({ title: 'Svuotare il registro dei dispositivi?', message: `${plural(n, 'dispositivo conosciuto', 'dispositivi conosciuti')} vengono dimenticati: alla prossima scansione tutti torneranno «nuovi». Le sessioni salvate non cambiano.`, confirmText: 'Svuota', tone: 'danger' }))) return;
+    try { S.settings.data = await call('clearDevices'); rerender(); toast('Registro dei dispositivi svuotato.', { tone: 'success' }); } catch (err) { toastError(err); }
+  },
   'toggle-notes': () => { S.settings.notesOpen = !S.settings.notesOpen; rerender(); },
   'theme': (el) => {
     const theme = el.dataset.theme;

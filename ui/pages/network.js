@@ -10,14 +10,34 @@ import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHea
 
 S.net = {
   target: '', threads: 80, timeout: 900, resolveDns: true,
+  repeat: 0,           // minuti tra una scansione e la successiva (0 = una volta sola)
+  autoPorts: false,    // porte degli host trovati, man mano, cinque host alla volta
+  autoPreset: 'TOP20', // gruppo di porte per autoPorts
   q: '', sort: { key: 'ipAddress', dir: 1 },
   progress: null, done: null, fresh: new Set(),
   rescanning: new Set(), // indirizzi riscansionati uno per uno, in corso
+  auto: null,          // avanzamento delle porte degli host trovati { done, total, running, open }
+  nextAt: 0, repeatTimer: 0,
   editing: false,      // modulo riaperto con «Modifica» dopo una scansione
   last: null,          // parametri dell'ultima scansione avviata (per la riga di riepilogo)
 };
 
+// le opzioni della scansione restano al prossimo avvio (solo comodità: senza memoria locale si riparte dai predefiniti)
+const OPTIONS = ['threads', 'timeout', 'resolveDns', 'repeat', 'autoPorts', 'autoPreset'];
+try { Object.assign(S.net, JSON.parse(localStorage.getItem('net-options') || '{}')); } catch { /* senza memoria locale */ }
+function saveOptions() {
+  try { localStorage.setItem('net-options', JSON.stringify(Object.fromEntries(OPTIONS.map((k) => [k, S.net[k]])))); } catch { /* senza memoria locale */ }
+}
+
+const REPEATS = [[0, 'Una volta'], [1, 'Ogni minuto'], [5, 'Ogni 5 minuti'], [15, 'Ogni 15 minuti'], [30, 'Ogni 30 minuti'], [60, 'Ogni ora']];
+const repeatLabel = (m) => (REPEATS.find((r) => r[0] === m) || [0, `Ogni ${m} minuti`])[1].toLowerCase();
+// tutte le 65535 porte su ogni host della rete sarebbero troppe: per gli host trovati solo i gruppi
+const portPresets = () => ((S.st && S.st.presets && S.st.presets.ports) || []).filter((p) => p.key !== 'ALL');
+const autoPreset = () => portPresets().find((p) => p.key === S.net.autoPreset) || portPresets()[0] || { key: '', name: '', ports: '' };
+
 const running = () => !!(S.st && S.st.running.network);
+const autoRunning = () => !!(S.st && S.st.running.autoPorts);
+const hhmm = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Modulo di avvio: completo finché non c'è stata nessuna scansione, poi ripiegato in una riga di riepilogo
@@ -37,8 +57,12 @@ function formCard() {
         </div></div>
       <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="500" data-field="threads" value="${n.threads}"></div>
       <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}"></div>
+      <div class="field field-select"><label for="f-repeat">Ripeti</label>
+        <select class="select" id="f-repeat" data-field="repeat">${REPEATS.map(([m, label]) => `<option value="${m}" ${n.repeat === m ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
       <div class="field field-auto"><span class="field-label">Opzioni</span><div class="field-switches">
-        <label class="switch"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Risolvi i nomi (DNS)</span></label></div></div>
+        <label class="switch"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Risolvi i nomi (DNS)</span></label>
+        <label class="switch" title="Ogni host trovato passa subito alla scansione delle porte, cinque host alla volta, mentre la rete continua"><input type="checkbox" data-field="autoPorts" ${n.autoPorts ? 'checked' : ''}><span class="track"></span><span>Porte degli host trovati</span></label>
+        <select class="select input-sm auto-preset" data-field="autoPreset" ${n.autoPorts ? '' : 'disabled'} title="Porte da controllare su ogni host trovato">${portPresets().map((p) => `<option value="${esc(p.key)}" ${p.key === autoPreset().key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div></div>
       <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${n.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
         <button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>
@@ -53,6 +77,22 @@ function runningStats() {
   return `${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ${plural(S.data.hosts.length, 'host', 'host')} · ${fmtSeconds(p.seconds)}${p.currentIp ? ` · ${esc(p.currentIp)}` : ''}`;
 }
 
+/** Porte degli host trovati: quanti host fatti su quanti, porte aperte finora. */
+function autoChip() {
+  const a = S.net.auto || (S.st && S.st.autoPorts);
+  if (!autoRunning() || !a) return '';
+  const text = a.total ? `Porte: ${fmtNumber(a.done)} di ${fmtNumber(a.total)} host · ${plural(a.open, 'aperta', 'aperte')}` : 'Porte: in attesa degli host';
+  return `<span class="chip chip-busy" data-auto title="Porte degli host trovati, cinque alla volta"><span class="spinner"></span>${text}</span>`;
+}
+
+/** Ripetizione: ogni quanto e quando parte la prossima. */
+function repeatChip() {
+  const n = S.net;
+  if (!n.repeat) return '';
+  const next = n.nextAt && !running() ? ` · prossima alle ${hhmm(n.nextAt)}` : '';
+  return `<span class="chip" title="Scansione ripetuta da sola: i dispositivi mai visti prima vengono segnalati">${icon('rotate')} ${esc(repeatLabel(n.repeat))}${next}</span>`;
+}
+
 /** Contenuto della riga di riepilogo: avanzamento e «Ferma» durante la scansione, esito e parametri dopo. */
 function summaryInner() {
   const n = S.net;
@@ -61,6 +101,7 @@ function summaryInner() {
     return `<span class="scan-state is-busy"><span class="spinner"></span>In corso · <span data-pct>${pct}%</span></span><span class="vsep"></span>
       <span class="meter"><span data-meter style="width:${pct}%"></span></span>
       <span class="scan-stat mono" data-stats>${runningStats()}</span>
+      <span class="chips" data-auto-box>${autoChip()}</span>
       <span class="scan-actions"><button type="button" class="btn btn-danger" data-action="scan-stop">${icon('stop')} Ferma</button></span>`;
   }
   const d = n.done;
@@ -74,8 +115,12 @@ function summaryInner() {
       <span class="chip" title="Rete o intervallo"><b>${esc(p.target)}</b></span>
       <span class="chip" title="Thread in parallelo e timeout del ping">${fmtNumber(p.threads)} thread · ${fmtNumber(p.timeout)} ms</span>
       ${p.resolveDns ? `<span class="chip" title="Nomi risolti con il DNS">${icon('check')} Nomi DNS</span>` : '<span class="chip muted">Senza DNS</span>'}
+      ${repeatChip()}
+      <span data-auto-box>${autoChip()}</span>
     </span>
     <span class="scan-actions">
+      ${autoRunning() ? `<button type="button" class="btn" data-action="auto-stop">${icon('stop')} Ferma le porte</button>` : ''}
+      ${n.repeat && n.nextAt ? `<button type="button" class="btn" data-action="repeat-stop" title="La scansione non si ripete più da sola">${icon('close')} Non ripetere</button>` : ''}
       <button type="button" class="btn" data-action="scan-edit">${icon('edit')} Modifica</button>
       <button type="button" class="btn btn-primary" data-action="scan-restart">${icon('play')} Riavvia</button>
     </span>`;
@@ -130,14 +175,34 @@ const columns = [
       <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}</small></div></div>` },
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell' },
   { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
-  { key: 'macAddress', label: 'MAC', cls: 'mono', cell: (h) => h.macAddress ? esc(h.macAddress) : '<span class="faint">—</span>' },
-  { key: 'macVendor', label: 'Produttore', cell: vendorCell },
-  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => latency(h.responseTimeMs) },
-  { key: 'ttl', label: 'TTL', cls: 'num muted', cell: (h) => h.ttl || '<span class="faint">—</span>' },
+  { key: 'macVendor', label: 'Produttore e MAC', cell: (h) => `<div class="cell-text">${vendorCell(h).replace('<span', '<b').replace(/<\/span>$/, '</b>')}<small class="mono">${h.macAddress ? esc(h.macAddress) : 'senza MAC'}</small></div>` },
+  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latency(h.responseTimeMs)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
+  { key: 'ports', label: 'Porte', cls: 'num', value: (h) => openPorts(h.ipAddress), cell: (h) => { const n = openPorts(h.ipAddress); return n ? `<span class="tag">${fmtNumber(n)}</span>` : '<span class="faint">—</span>'; } },
+  { key: 'firstSeen', label: 'Rilevato', value: (h) => new Date(h.firstSeen).getTime() || 0, cell: seenCell },
   { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<div class="row-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>` },
 ];
 
 const isOffline = (h) => h.status === 'Offline';
+const openPorts = (ip) => S.data.ports.filter((p) => p.host === ip).length;
+const isNewHost = (h) => h.firstSeen && Date.now() - new Date(h.firstSeen).getTime() < 86400000;
+
+/** Data e ora brevi: «oggi 14:20», «ieri 09:05», «12/10 18:40», «03/05/2025». */
+function shortWhen(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  const p = (n) => String(n).padStart(2, '0');
+  if (diff === 0) return `oggi ${hhmm(d)}`;
+  if (diff === 1) return `ieri ${hhmm(d)}`;
+  return d.getFullYear() === now.getFullYear() ? `${p(d.getDate())}/${p(d.getMonth() + 1)} ${hhmm(d)}` : `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+/** Prima rilevazione (da questo PC, anche in sessioni precedenti) con «Nuovo» nelle prime 24 ore; l'ultima nel tooltip. */
+function seenCell(h) {
+  return `<span class="seen" title="Visto la prima volta il ${esc(fmtDateTime(h.firstSeen))} · l'ultima il ${esc(fmtDateTime(h.lastSeen))}">${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${esc(shortWhen(h.firstSeen))}</span>`;
+}
 
 /** Pulsante «Riscansiona» di un host: gira su quel solo indirizzo, anche durante la scansione della rete. */
 function rescanButton(ip, big = false) {
@@ -243,14 +308,42 @@ function updateBar() {
   meter.style.width = `${pct}%`;
   $('[data-pct]', card).textContent = `${pct}%`;
   $('[data-stats]', card).innerHTML = runningStats();
+  updateAutoChip();
+}
+
+/** Il riquadro delle porte degli host trovati, sul posto. */
+function updateAutoChip() {
+  const box = $('#scan-card [data-auto-box]');
+  if (box) box.innerHTML = autoChip();
+}
+
+/** Prossima ripetizione, se è scelta: parte da sola all'ora indicata (se nel frattempo non ne gira già una). */
+function scheduleRepeat() {
+  const n = S.net;
+  clearTimeout(n.repeatTimer);
+  n.nextAt = 0;
+  if (!n.repeat) return;
+  n.nextAt = Date.now() + n.repeat * 60000;
+  n.repeatTimer = setTimeout(() => { n.nextAt = 0; if (!running()) start(); }, n.repeat * 60000);
+}
+
+function stopRepeat() {
+  clearTimeout(S.net.repeatTimer);
+  S.net.nextAt = 0;
 }
 
 async function start() {
   const n = S.net;
   if (running()) return;
+  stopRepeat();
   try {
-    const res = await call('scanNetwork', { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns });
+    const preset = autoPreset();
+    const res = await call('scanNetwork', {
+      target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns,
+      autoPorts: n.autoPorts && !!preset.ports, autoPortsList: preset.ports,
+    });
     adopt({ state: res.state });
+    if (n.autoPorts && !n.auto) n.auto = { done: 0, total: 0, running: 0, open: 0 };
     n.last = { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns };
     n.progress = { scanned: 0, total: res.total, percent: 0, seconds: 0, currentIp: '' };
     n.done = null;
@@ -328,7 +421,7 @@ function details(ip) {
       <dt>Sistema stimato</dt><dd>${esc(h.osGuess)}</dd>
       <dt>Latenza</dt><dd>${latency(h.responseTimeMs)}</dd>
       <dt>TTL</dt><dd>${h.ttl || '—'}</dd>
-      <dt>Visto la prima volta</dt><dd>${fmtDateTime(h.firstSeen)}</dd>
+      <dt>Visto la prima volta</dt><dd>${fmtDateTime(h.firstSeen)}${isNewHost(h) ? ' <span class="tag new">Nuovo</span>' : ''}</dd>
       <dt>Ultima volta</dt><dd>${fmtDateTime(h.lastSeen)}</dd>
     </dl>
     <div><div class="form-section-head"><div class="form-section-title">${icon('plug')}Porte aperte nella sessione</div></div>
@@ -358,7 +451,9 @@ function edit() {
 }
 
 const actions = {
-  'scan-stop': () => stop(),
+  'scan-stop': () => { stopRepeat(); stop(); },
+  'auto-stop': () => call('stopAutoPorts').catch(toastError),
+  'repeat-stop': () => { stopRepeat(); renderForm(); toast('La scansione non si ripete più da sola.', { tone: 'info' }); },
   'scan-edit': () => edit(),
   'scan-collapse': () => { S.net.editing = false; renderForm(); },
   'scan-restart': () => start(),
@@ -394,15 +489,70 @@ on('network.progress', (d) => {
 });
 
 on('network.done', (d) => {
-  S.net.done = d;
-  S.net.progress = null;
-  S.net.editing = false;
+  const n = S.net;
+  n.done = d;
+  n.progress = null;
+  n.editing = false;
   adopt({ state: d.state });
+  // chi questa volta non ha risposto resta nella tabella, segnato «non risponde»
+  for (const ip of d.offline || []) {
+    const h = S.data.hosts.find((x) => x.ipAddress === ip);
+    if (h) h.status = 'Offline';
+  }
+  if (!d.cancelled && !d.error) scheduleRepeat(); else stopRepeat();
   if (S.page === 'network') { renderForm(); renderTable(); }
+  emit('data', { list: 'hosts' });
+  const gone = (d.offline || []).length ? ` · ${plural(d.offline.length, 'non risponde più', 'non rispondono più')}` : '';
   if (d.error) toast(d.error, { tone: 'error', title: 'Scansione interrotta' });
   else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento.`, { tone: 'warning', title: 'Scansione fermata' });
-  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}.`, { tone: 'success', title: 'Scansione della rete completata' });
-  setTimeout(() => { S.net.fresh.clear(); }, 2000);
+  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}${gone}.`, { tone: 'success', title: 'Scansione della rete completata' });
+  const fresh = d.newDevices || [];
+  if (fresh.length && d.firstCensus) {
+    toast(`Da ora WhoIs Pro ricorda questi ${plural(fresh.length, 'dispositivo', 'dispositivi')}: alla prossima scansione segnala chi si collega per la prima volta.`, { tone: 'info', title: 'Dispositivi registrati', timeout: 10000 });
+  } else if (fresh.length) {
+    const names = fresh.slice(0, 4).map((h) => `${h.ipAddress} ${h.hostname || h.deviceType}`).join(', ');
+    toast(`${names}${fresh.length > 4 ? ` e altri ${fresh.length - 4}` : ''}.`, {
+      tone: 'warning', title: fresh.length === 1 ? 'Dispositivo nuovo nella rete' : `${fresh.length} dispositivi nuovi nella rete`, timeout: 15000,
+      action: { label: 'Mostra', run: () => navigate('network', { q: fresh.length === 1 ? fresh[0].ipAddress : '' }) },
+    });
+  }
+  setTimeout(() => { n.fresh.clear(); }, 2000);
+});
+
+/** Porte trovate sugli host della rete: nella sessione come quelle della pagina Porte. */
+on('autoports.progress', (d) => {
+  S.net.auto = { done: d.done, total: d.total, running: d.running, open: (S.net.auto ? S.net.auto.open : 0) };
+  for (const p of d.ports || []) {
+    const i = S.data.ports.findIndex((x) => x.host === p.host && x.portNumber === p.portNumber && x.protocol === p.protocol);
+    if (i >= 0) S.data.ports[i] = p; else S.data.ports.push(p);
+  }
+  S.net.auto.open += (d.ports || []).length;
+  markDirty();
+  emit('data', { list: 'ports' });
+  if (S.page === 'network') { renderTable(); updateAutoChip(); }
+});
+
+/** Un host finito: il tipo di dispositivo, che con le porte si riconosce meglio, e il conteggio. */
+on('autoports.host', (d) => {
+  if (d.host) {
+    const i = S.data.hosts.findIndex((x) => x.ipAddress === d.ip);
+    if (i >= 0) S.data.hosts[i] = d.host;
+  }
+  S.net.auto = { ...(S.net.auto || { open: 0 }), done: d.done, total: d.total, running: d.running };
+  emit('data', { list: 'hosts' });
+  if (S.page === 'network') { renderTable(); updateAutoChip(); }
+});
+
+on('autoports.done', (d) => {
+  S.net.auto = null;
+  adopt({ state: d.state });
+  addScan(d.scan);
+  emit('data', { list: 'scans' });
+  if (S.page === 'network') renderForm();
+  if (d.hosts) {
+    toast(`${plural(d.found, 'porta aperta', 'porte aperte')} su ${plural(d.hosts, 'host', 'host')} in ${fmtSeconds(d.seconds)}${d.cancelled ? ' (fermata)' : ''}.`,
+      { tone: d.cancelled ? 'warning' : 'success', title: 'Porte degli host trovati', action: { label: 'Vedi', run: () => navigate('ports') } });
+  }
 });
 
 bus.addEventListener('session', () => {
@@ -429,8 +579,20 @@ definePage('network', {
     if (field === 'target') n.target = el.value;
     if (field === 'threads') n.threads = Number(el.value) || 80;
     if (field === 'timeout') n.timeout = Number(el.value) || 900;
+    if (field === 'threads' || field === 'timeout') saveOptions();
   },
-  onChange: (el, field) => { if (field === 'resolveDns') S.net.resolveDns = el.checked; },
+  onChange: (el, field) => {
+    const n = S.net;
+    if (field === 'resolveDns') n.resolveDns = el.checked;
+    if (field === 'autoPorts') {
+      n.autoPorts = el.checked;
+      const sel = $('.auto-preset');
+      if (sel) sel.disabled = !el.checked;
+    }
+    if (field === 'autoPreset') n.autoPreset = el.value;
+    if (field === 'repeat') n.repeat = Number(el.value) || 0;
+    saveOptions();
+  },
   onSubmit: () => start(),
   onSort: (key) => { S.net.sort = nextSort(S.net.sort, key); renderTable(); },
   onContext: (row, point) => hostMenu(point, row.dataset.ip),

@@ -163,6 +163,7 @@ const KIND = {
   ports: { ic: 'plug', label: 'Porte', unit: ['porta aperta', 'porte aperte'] },
   trace: { ic: 'route', label: 'Traceroute', unit: ['salto', 'salti'] },
   host: { ic: 'refresh', label: 'Host', unit: ['risponde', 'risponde'] },
+  autoports: { ic: 'plug', label: 'Porte di', unit: ['porta aperta', 'porte aperte'] },
 };
 
 function stat(page, label, value, sub, tone = '') {
@@ -340,6 +341,7 @@ function scanAgain(index) {
   if (s.kind === 'ports') navigate('ports', { host: s.target, start: true });
   else if (s.kind === 'trace') navigate('trace', { target: s.target, start: true });
   else if (s.kind === 'host') navigate('network', { q: s.target });
+  else if (s.kind === 'autoports') navigate('ports');
   else navigate('network', { target: s.target });
 }
 

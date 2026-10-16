@@ -75,6 +75,10 @@ Namespace UI
         Private _netWatch As Stopwatch
         Private ReadOnly _netFound As New List(Of HostInfo)()
         Private _netSeen As Integer
+        Private ReadOnly _netSeenIps As New HashSet(Of String)()
+        Private ReadOnly _netNew As New List(Of HostInfo)()
+        Private _netFirstCensus As Boolean
+        Private ReadOnly _devices As New DeviceRegistry(MainWindow.LocalFolder)
         Private _portProgress As PortScanProgress
         Private _portWatch As Stopwatch
         Private ReadOnly _portFound As New List(Of PortInfo)()
@@ -109,7 +113,15 @@ Namespace UI
                 Case "rescanHost" : Return Await RescanHostAsync(args)
                 Case "stopNetwork"
                     _netCts?.Cancel()
+                    _autoCts?.Cancel()
                     Return Nothing
+                Case "stopAutoPorts"
+                    _autoCts?.Cancel()
+                    CheckAutoPortsDone()
+                    Return Nothing
+                Case "clearDevices"
+                    _devices.Clear()
+                    Return SettingsView()
                 Case "scanPorts" : Return StartPortScan(args)
                 Case "stopPorts"
                     _portCts?.Cancel()
@@ -236,6 +248,8 @@ Namespace UI
                 .theme = _settings.Theme,
                 .profiles = _settings.Profiles,
                 .dataFolder = MainWindow.LocalFolder,
+                .devices = _devices.Count,
+                .devicesFile = _devices.FilePath,
                 .exePath = Environment.ProcessPath
             }
         End Function
@@ -362,7 +376,9 @@ Namespace UI
                     .ports = PortDictionary.GetPresets().Select(Function(p) New With {.key = p.Key, .name = p.Name, .ports = p.Text}).ToList(),
                     .whoisServers = WhoisServers
                 },
-                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy},
+                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy, .autoPorts = _autoCts IsNot Nothing},
+                .autoPorts = New With {.done = _autoDone, .total = _autoSeen.Count, .running = _autoRunning, .open = _autoOpen},
+                .devices = _devices.Count,
                 .update = _updates.Status(),
                 .online = _online,
                 .theme = _settings.Theme,
@@ -459,16 +475,30 @@ Namespace UI
                 .TimeoutMs = Clamp(ArgNumber(args, "timeout", 900), 100, 10000),
                 .ResolveHostnames = ArgFlag(args, "resolveDns")
             }
+            ' porte degli host trovati: man mano che rispondono, a gruppi di cinque
+            Dim autoPorts = ArgFlag(args, "autoPorts")
+            If autoPorts Then
+                Dim list = PortDictionary.ParsePorts(ArgText(args, "autoPortsList"))
+                If list.Count = 0 Then Throw New UserMessageException("Scegli le porte da controllare sugli host trovati.")
+                BeginAutoPorts(list)
+            End If
+
             _netCts = New CancellationTokenSource()
             _netWatch = Stopwatch.StartNew()
             _netFound.Clear()
             _netSeen = 0
+            _netSeenIps.Clear()
+            _netNew.Clear()
+            _netFirstCensus = _devices.Count = 0
             Dim progress As New Progress(Of ScanProgress)(Sub(p)
                                                               _netProgress = p
-                                                              If p.DiscoveredHost IsNot Nothing Then
-                                                                  AddHost(p.DiscoveredHost)
-                                                                  _netFound.Add(p.DiscoveredHost)
+                                                              Dim h = p.DiscoveredHost
+                                                              If h IsNot Nothing Then
+                                                                  If AddHost(h) Then _netNew.Add(h)
+                                                                  _netFound.Add(h)
                                                                   _netSeen += 1
+                                                                  _netSeenIps.Add(h.IPAddress)
+                                                                  If autoPorts Then EnqueueAutoPorts(h.IPAddress)
                                                               End If
                                                               If Not _flush.Enabled Then _flush.Start()
                                                           End Sub)
@@ -496,11 +526,41 @@ Namespace UI
             FlushProgress(Nothing, EventArgs.Empty)
             ' fermata a metà, l'elenco finale non c'è: contano gli host arrivati fin lì
             found = Math.Max(found, _netSeen)
+
+            ' host della rete scansionata che questa volta non hanno risposto: restano nella sessione, segnati «Offline»
+            Dim offline As New List(Of String)()
+            If Not cancelled AndAlso failure Is Nothing Then
+                Dim scanned As New HashSet(Of String)(targets.Select(Function(a) a.ToString()))
+                For Each h In _session.Hosts
+                    If scanned.Contains(h.IPAddress) AndAlso Not _netSeenIps.Contains(h.IPAddress) AndAlso h.Status <> "Offline" Then
+                        h.Status = "Offline"
+                        offline.Add(h.IPAddress)
+                    End If
+                Next
+                If offline.Count > 0 Then Touch()
+            End If
+
+            _devices.Save()
+            Dim fresh = _netNew.ToList()
+            Dim firstCensus = _netFirstCensus
+            ' il primo censimento (registro vuoto) non è una notizia: tutti sarebbero «nuovi»
+            If fresh.Count > 0 AndAlso Not firstCensus Then NotifyNewDevices(fresh)
+
             Dim scan = AddScan("network", target, _netWatch.Elapsed.TotalSeconds, found, cancelled, failure)
             _owner.PostEvent("network.done", New With {
-                .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .scan = scan, .state = State()
+                .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .scan = scan,
+                .offline = offline, .newDevices = fresh, .firstCensus = firstCensus, .state = State()
             })
+            CheckAutoPortsDone()
         End Function
+
+        ''' <summary>Avviso di Windows per i dispositivi mai visti prima (se la finestra è nascosta); nella pagina lo dice un toast.</summary>
+        Private Sub NotifyNewDevices(list As List(Of HostInfo))
+            Dim title = If(list.Count = 1, "Dispositivo nuovo nella rete", $"{list.Count} dispositivi nuovi nella rete")
+            Dim lines = list.Take(3).Select(Function(h) $"{h.IPAddress} · {If(String.IsNullOrEmpty(h.Hostname), h.DeviceType, h.Hostname)}").ToList()
+            If list.Count > 3 Then lines.Add($"e altri {list.Count - 3}")
+            _owner.ShowNotice(title, String.Join(vbLf, lines))
+        End Sub
 
         ''' <summary>
         ''' Riscansione di un solo indirizzo (ARP, ping, nome DNS, produttore e tipo), anche mentre gira la scansione della
@@ -520,8 +580,11 @@ Namespace UI
             Dim watch = Stopwatch.StartNew()
             Dim found = Await scanner.ScanRangeAsync(New List(Of Net.IPAddress) From {address}, Nothing, CancellationToken.None)
             Dim host = found.FirstOrDefault()
+            Dim isNew = False
             If host IsNot Nothing Then
-                AddHost(host)
+                isNew = AddHost(host)
+                _devices.Save()
+                If isNew Then NotifyNewDevices(New List(Of HostInfo) From {host})
             Else
                 Dim known = _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)
                 If known IsNot Nothing AndAlso known.Status <> "Offline" Then
@@ -531,7 +594,7 @@ Namespace UI
             End If
             Dim scan = AddScan("host", ip, watch.Elapsed.TotalSeconds, If(host Is Nothing, 0, 1), False, Nothing)
             Return New With {
-                .ip = ip, .online = host IsNot Nothing,
+                .ip = ip, .online = host IsNot Nothing, .isNew = isNew,
                 .host = If(host, _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)),
                 .scan = scan, .state = State()
             }
@@ -550,8 +613,12 @@ Namespace UI
             Return record
         End Function
 
-        ''' <summary>Host nella sessione: aggiornato se c'è già lo stesso indirizzo, altrimenti aggiunto.</summary>
-        Private Sub AddHost(h As HostInfo)
+        ''' <summary>
+        ''' Host nella sessione: aggiornato se c'è già lo stesso indirizzo, altrimenti aggiunto. Prende la prima
+        ''' rilevazione dal registro dei dispositivi (anche da sessioni precedenti) e il tipo dalle porte già trovate.
+        ''' Vero se il dispositivo non era mai stato visto da questo PC.
+        ''' </summary>
+        Private Function AddHost(h As HostInfo) As Boolean
             Dim idx = _session.Hosts.FindIndex(Function(x) x.IPAddress = h.IPAddress)
             If idx >= 0 Then
                 h.FirstSeen = _session.Hosts(idx).FirstSeen
@@ -560,7 +627,119 @@ Namespace UI
             Else
                 _session.Hosts.Add(h)
             End If
+            ApplyOpenPorts(h)
+            Dim isNew = _devices.Observe(h)
             Touch()
+            Return isNew
+        End Function
+
+        ''' <summary>Porte aperte della sessione sull'host: il conteggio e il tipo di dispositivo, che con le porte si riconosce meglio.</summary>
+        Private Sub ApplyOpenPorts(h As HostInfo)
+            Dim mine = _session.Ports.Where(Function(p) p.Host = h.IPAddress).ToList()
+            h.OpenPortsCount = mine.Count
+            Dim tcp = mine.Where(Function(p) p.Protocol = "TCP" AndAlso p.Status = "Open").Select(Function(p) p.PortNumber).Distinct().ToList()
+            If tcp.Count = 0 Then Return
+            Dim c = DeviceClassifier.Classify(h.MacVendor, h.Hostname, tcp, h.TTL, h.MacAddress)
+            h.DeviceType = c.DeviceType
+            h.DeviceCategory = c.Category
+            h.DeviceIcon = c.Icon
+        End Sub
+
+#End Region
+
+#Region "Porte degli host trovati (durante la scansione della rete)"
+
+        Private Const AutoParallelHosts As Integer = 5
+        Private _autoCts As CancellationTokenSource
+        Private ReadOnly _autoQueue As New Queue(Of String)()
+        Private ReadOnly _autoSeen As New HashSet(Of String)()
+        Private ReadOnly _autoFound As New List(Of PortInfo)()
+        Private _autoList As List(Of Integer)
+        Private _autoRunning As Integer
+        Private _autoDone As Integer
+        Private _autoOpen As Integer
+        Private _autoWatch As Stopwatch
+
+        ''' <summary>Prepara la coda; se ce n'è già una in corso continua quella, con le porte nuove.</summary>
+        Private Sub BeginAutoPorts(list As List(Of Integer))
+            _autoList = list
+            If _autoCts IsNot Nothing Then Return
+            _autoCts = New CancellationTokenSource()
+            _autoQueue.Clear()
+            _autoSeen.Clear()
+            _autoFound.Clear()
+            _autoRunning = 0
+            _autoDone = 0
+            _autoOpen = 0
+            _autoWatch = Stopwatch.StartNew()
+        End Sub
+
+        Private Sub EnqueueAutoPorts(ip As String)
+            If _autoCts Is Nothing OrElse Not _autoSeen.Add(ip) Then Return
+            _autoQueue.Enqueue(ip)
+            PumpAutoPorts()
+        End Sub
+
+        ''' <summary>Fa partire gli host in coda finché ne girano cinque insieme.</summary>
+        Private Sub PumpAutoPorts()
+            While _autoCts IsNot Nothing AndAlso Not _autoCts.IsCancellationRequested AndAlso _autoRunning < AutoParallelHosts AndAlso _autoQueue.Count > 0
+                Dim ip = _autoQueue.Dequeue()
+                _autoRunning += 1
+                Dim unused = ScanAutoHostAsync(ip, _autoCts)
+            End While
+        End Sub
+
+        Private Async Function ScanAutoHostAsync(ip As String, cts As CancellationTokenSource) As Task
+            Dim scanner As New PortScanner With {.Concurrency = 64, .TimeoutMs = 800, .GrabBanner = True}
+            Dim found = 0
+            Dim progress As New Progress(Of PortScanProgress)(Sub(p)
+                                                                  Dim port = p.DiscoveredPort
+                                                                  If port IsNot Nothing AndAlso port.Status = "Open" Then
+                                                                      AddPort(port)
+                                                                      _autoFound.Add(port)
+                                                                      found += 1
+                                                                      If Not _flush.Enabled Then _flush.Start()
+                                                                  End If
+                                                              End Sub)
+            Try
+                Await scanner.ScanPortsAsync(ip, _autoList, True, False, progress, cts.Token)
+            Catch ex As OperationCanceledException
+            Catch ex As Exception
+                ' un host che sparisce a metà non ferma gli altri
+            End Try
+            ' gli ultimi avanzamenti arrivano dopo la fine del metodo: un attimo, così sono contati
+            Await Task.Delay(100)
+            _autoRunning -= 1
+            _autoDone += 1
+            _autoOpen += found
+            Dim host = _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)
+            If host IsNot Nothing Then
+                ApplyOpenPorts(host)
+                _devices.Observe(host)
+                _owner.PostEvent("autoports.host", New With {
+                    .ip = ip, .found = found, .host = host, .done = _autoDone, .total = _autoSeen.Count, .running = _autoRunning
+                })
+            End If
+            PumpAutoPorts()
+            CheckAutoPortsDone()
+        End Function
+
+        ''' <summary>Coda finita (scansione della rete conclusa e nessun host in corso, o fermata): esito e storico.</summary>
+        Private Sub CheckAutoPortsDone()
+            If _autoCts Is Nothing OrElse _netCts IsNot Nothing OrElse _autoRunning > 0 Then Return
+            If _autoQueue.Count > 0 AndAlso Not _autoCts.IsCancellationRequested Then Return
+            Dim cancelled = _autoCts.IsCancellationRequested
+            _autoCts.Dispose()
+            _autoCts = Nothing
+            _autoQueue.Clear()
+            _autoWatch.Stop()
+            _devices.Save()
+            FlushProgress(Nothing, EventArgs.Empty)
+            Dim scan As ScanRecord = Nothing
+            If _autoDone > 0 Then scan = AddScan("autoports", $"{_autoDone} host della rete", _autoWatch.Elapsed.TotalSeconds, _autoOpen, cancelled, Nothing)
+            _owner.PostEvent("autoports.done", New With {
+                .hosts = _autoDone, .found = _autoOpen, .seconds = _autoWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .scan = scan, .state = State()
+            })
         End Sub
 
 #End Region
@@ -654,7 +833,12 @@ Namespace UI
                     .seconds = If(_portWatch Is Nothing, 0, _portWatch.Elapsed.TotalSeconds), .ports = ports
                 })
             End If
-            If _netProgress Is Nothing AndAlso _portProgress Is Nothing Then _flush.Stop()
+            If _autoFound.Count > 0 Then
+                Dim found = _autoFound.ToList()
+                _autoFound.Clear()
+                _owner.PostEvent("autoports.progress", New With {.ports = found, .done = _autoDone, .total = _autoSeen.Count, .running = _autoRunning})
+            End If
+            If _netProgress Is Nothing AndAlso _portProgress Is Nothing AndAlso _autoFound.Count = 0 Then _flush.Stop()
         End Sub
 
 #End Region
@@ -881,6 +1065,7 @@ Namespace UI
 
         Private Sub StopAll()
             _netCts?.Cancel()
+            _autoCts?.Cancel()
             _portCts?.Cancel()
             _traceCts?.Cancel()
         End Sub

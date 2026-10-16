@@ -27,6 +27,19 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
 - **Riscansiona un host**: il pulsante su ogni riga della pagina Rete (e nel menu e nel dettaglio) rifà ARP, ping, nome
   e tipo di quel solo indirizzo, anche mentre gira la scansione della rete. Se non risponde più resta nella sessione
   segnato *non risponde*.
+- **Porte degli host trovati**: un'opzione della scansione della rete manda ogni host, appena risponde, alla
+  scansione delle porte (un gruppo a scelta), cinque host alla volta, mentre la rete continua. Le porte aperte
+  aiutano anche a riconoscere il tipo di dispositivo.
+- **Ripeti**: la scansione della rete riparte da sola ogni 1, 5, 15, 30 o 60 minuti; la riga di riepilogo dice
+  quando parte la prossima e *Non ripetere* la ferma.
+- **Data di rilevamento e dispositivi nuovi**: la colonna *Rilevato* nella tabella degli host, con *Nuovo* nelle
+  prime 24 ore. Un registro dei dispositivi conosciuti (per MAC, in `%LOCALAPPDATA%\WhoIsPro\dispositivi.json`)
+  tiene la prima rilevazione anche tra una sessione e l'altra e segnala chi si collega per la prima volta, anche con
+  l'avviso di Windows quando la finestra è nell'area di notifica. Il registro si svuota da *Impostazioni → Dati del
+  programma*.
+- **Chi non risponde più** dopo una scansione completa della sua rete resta in elenco, segnato *non risponde*.
+- Tabella degli host più compatta: MAC sotto il produttore, TTL sotto la latenza, nomi lunghi a capo; nuova colonna
+  *Porte* con le porte aperte di ogni host.
 - Una scansione della rete fermata a metà dice quanti host aveva già trovato, invece di zero.
 - Immagini del README e banner rifatti con la nuova grafica.
 
