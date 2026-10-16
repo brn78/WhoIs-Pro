@@ -232,7 +232,8 @@ dotnet test Tests\Tests.vbproj
 La pagina chiede le operazioni al programma con `postMessage({ id, cmd, args })` e riceve `{ id, ok, result | error }`;
 le scansioni in corso mandano eventi (`network.progress`, `ports.progress`, `trace.hop`, `…done`) accorpati ogni
 120 ms. Con `WHOISPRO_DEVTOOLS=1` (o nella versione Debug) si apre DevTools con F12. Le novità di ogni versione sono nel
-[CHANGELOG](CHANGELOG.md).
+[CHANGELOG](CHANGELOG.md); i componenti e i dati di terze parti, con le loro licenze, in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), che il setup copia accanto al programma.
 
 ## 📬 Contatti
 
