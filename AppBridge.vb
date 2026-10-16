@@ -807,7 +807,10 @@ Namespace UI
 
 #Region "Database dei produttori"
 
-        ''' <summary>Scarica il manuf di Wireshark, lo salva in %LOCALAPPDATA%\WhoIsPro e riclassifica gli host della sessione.</summary>
+        ''' <summary>
+        ''' Scarica i registri dell'IEEE (o, se non rispondono, il manuf di Wireshark), li salva in %LOCALAPPDATA%\WhoIsPro e
+        ''' riclassifica gli host della sessione.
+        ''' </summary>
         Private Async Function UpdateOuiAsync() As Task(Of Object)
             If _ouiBusy Then Throw New UserMessageException("L'aggiornamento del database è già in corso.")
             _ouiBusy = True

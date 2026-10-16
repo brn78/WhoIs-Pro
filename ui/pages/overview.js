@@ -51,10 +51,10 @@ function ouiCard() {
     <div class="card-body"><div class="fields">
       <dl class="kv compact">
         <dt>Origine</dt><dd>${o.file ? `<span class="mono" title="${esc(o.file)}">${esc(shortPath(o.file))}</span>` : '<span class="muted">Solo i produttori incorporati nel programma</span>'}</dd>
-        <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('L\'elenco ufficiale di Wireshark/IEEE (circa 3 MB) viene salvato in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati.')}</dd>
+        <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('I tre registri ufficiali dell\'IEEE (blocchi MA-L, MA-M e MA-S, aggiornati ogni giorno; se l\'IEEE non risponde, il database di Wireshark) vengono salvati in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati. Per ogni MAC si usa il blocco più preciso.')}</dd>
       </dl>
       ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>` : ''}
-      <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna da Wireshark</button></div>
+      <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna dall'IEEE</button></div>
     </div></div></section>`;
 }
 

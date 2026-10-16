@@ -42,9 +42,10 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 
 **📡 Scansione della rete**<br>
 Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host attivi rispondono ad ARP e
-ping e compaiono man mano, con MAC, **produttore** (database Wireshark/IEEE con oltre 58.000 prefissi, aggiornabile),
-nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS, Home Assistant, smart TV, telefoni,
-telecamere, stampanti, moduli domotici.
+ping e compaiono man mano, con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
+più preciso per ogni MAC, aggiornabili), nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS,
+Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere, centrali d'allarme, stampanti, moduli
+domotici e automazione.
 
 **🔌 Porte TCP e UDP**<br>
 Gruppi di porte pronti (le 20 o le 100 più comuni, web, database, posta, accesso remoto, domotica) o elenco libero
@@ -154,8 +155,9 @@ lavorano con un utente normale. <i>Termina il processo</i> chiude solo i process
 <summary><b>Perché alcuni host non hanno il MAC o il produttore?</b></summary>
 <br>
 Il MAC si legge con ARP, che funziona solo nella rete locale: per gli host dietro un router (altre reti, Internet) il
-MAC non è disponibile. Se il produttore manca, aggiorna il database da <i>Panoramica → Database dei produttori →
-Aggiorna da Wireshark</i>.
+MAC non è disponibile. Telefoni, tablet e PC recenti in Wi-Fi usano un <b>MAC privato</b> (casuale, diverso per ogni
+rete): il produttore non si può sapere e la tabella lo dice. Se il produttore manca, aggiorna il database da
+<i>Panoramica → Database dei produttori → Aggiorna dall'IEEE</i>.
 </details>
 
 <details>
@@ -188,7 +190,7 @@ finestra accanto all'orologio; dal menu dell'icona si riapre o si chiude davvero
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
 <code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il database dei produttori
 aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
-Wireshark per il database e i server WHOIS, RDAP e DNS che interroghi.
+l'IEEE (o Wireshark) per il database dei produttori e i server WHOIS, RDAP e DNS che interroghi.
 </details>
 
 <details>
@@ -211,7 +213,7 @@ AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute,
 Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanSession
 Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
 Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo)
-Core\Utils              NetworkUtils, MacVendorLookup (manuf di Wireshark), DeviceClassifier, PortDictionary
+Core\Utils              NetworkUtils, MacVendorLookup (registri IEEE / manuf di Wireshark), DeviceClassifier, PortDictionary
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup
 Core\Config             AppSettings: impostazioni (impostazioni.json), avvio automatico, profili di rete
 Core\Machine            NetworkConfig (IP delle schede, netsh elevato), ComputerInfo (CPU, memoria, dischi, sistema)

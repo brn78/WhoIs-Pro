@@ -102,6 +102,16 @@ export function shortVendor(name) {
   return s || String(name || '');
 }
 
+/** MAC privato (casuale): telefoni, tablet e PC recenti cambiano indirizzo per ogni rete Wi-Fi. */
+const PRIVATE_MAC = 'MAC privato (casuale)';
+const PRIVATE_MAC_TIP = 'Indirizzo casuale per la privacy: telefoni, tablet e PC recenti ne usano uno diverso per ogni rete Wi-Fi, quindi il produttore non si può sapere. Lo stesso dispositivo può comparire con MAC diversi.';
+
+/** Il produttore nella tabella: forma breve, nome completo nel tooltip; il MAC privato spiegato. */
+function vendorCell(h) {
+  if (h.macVendor === PRIVATE_MAC) return `<span class="trunc w-vendor muted" title="${esc(PRIVATE_MAC_TIP)}">MAC privato</span>`;
+  return `<span class="trunc w-vendor" title="${esc(h.macVendor)}">${esc(shortVendor(h.macVendor))}</span>`;
+}
+
 const OS_SHORT = { 'Linux / Android / iOS / macOS': 'Linux / Unix', 'Windows (PC / Server)': 'Windows', 'Cisco / Router / Network Device': 'Apparato di rete' };
 const osShort = (g) => OS_SHORT[g] || g || '';
 
@@ -120,7 +130,7 @@ const columns = [
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell' },
   { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
   { key: 'macAddress', label: 'MAC', cls: 'mono', cell: (h) => h.macAddress ? esc(h.macAddress) : '<span class="faint">—</span>' },
-  { key: 'macVendor', label: 'Produttore', cell: (h) => `<span class="trunc w-vendor" title="${esc(h.macVendor)}">${esc(shortVendor(h.macVendor))}</span>` },
+  { key: 'macVendor', label: 'Produttore', cell: vendorCell },
   { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => latency(h.responseTimeMs) },
   { key: 'ttl', label: 'TTL', cls: 'num muted', cell: (h) => h.ttl || '<span class="faint">—</span>' },
   { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button>` },
@@ -267,7 +277,7 @@ function details(ip) {
       <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
       <dt>Nome</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
       <dt>MAC</dt><dd class="mono">${h.macAddress ? esc(h.macAddress) : '<span class="muted">non disponibile (host fuori dalla rete locale)</span>'}</dd>
-      <dt>Produttore</dt><dd>${esc(h.macVendor)}</dd>
+      <dt>Produttore</dt><dd>${esc(h.macVendor)}${h.macVendor === PRIVATE_MAC ? `<br><small class="muted">${esc(PRIVATE_MAC_TIP)}</small>` : ''}</dd>
       <dt>Dispositivo</dt><dd>${esc(h.deviceType)} <span class="tag">${esc(h.deviceCategory || 'Altro')}</span></dd>
       <dt>Sistema stimato</dt><dd>${esc(h.osGuess)}</dd>
       <dt>Latenza</dt><dd>${latency(h.responseTimeMs)}</dd>

@@ -10,6 +10,21 @@ Namespace Utils
         Private ReadOnly LockObj As New Object()
         Private Const OfficialManufUrl As String = "https://www.wireshark.org/download/automated/data/manuf"
 
+        ''' <summary>
+        ''' I tre registri ufficiali dell'IEEE: blocchi grandi MA-L (24 bit), medi MA-M (28 bit) e piccoli MA-S (36 bit).
+        ''' L'IEEE li aggiorna ogni giorno, Wireshark una volta alla settimana: si prova prima l'IEEE.
+        ''' </summary>
+        Private ReadOnly IeeeRegistries As (Url As String, Registry As String)() = {
+            ("https://standards-oui.ieee.org/oui/oui.csv", "MA-L"),
+            ("https://standards-oui.ieee.org/oui28/mam.csv", "MA-M"),
+            ("https://standards-oui.ieee.org/oui36/oui36.csv", "MA-S")}
+
+        ''' <summary>
+        ''' Il produttore di un MAC «privato»: telefoni, tablet e PC recenti usano un indirizzo casuale diverso per ogni rete
+        ''' Wi-Fi (bit «amministrato localmente» del primo byte), quindi il produttore non si può sapere.
+        ''' </summary>
+        Public Const RandomMacLabel As String = "MAC privato (casuale)"
+
         Public ReadOnly Property TotalVendorsLoaded As Integer
             Get
                 SyncLock LockObj
@@ -59,18 +74,31 @@ Namespace Utils
             End SyncLock
         End Sub
 
+        ''' <summary>
+        ''' Aggiorna il database: i tre registri ufficiali dell'IEEE (MA-L, MA-M, MA-S), scritti nel formato «manuf»; se
+        ''' l'IEEE non risponde, il file manuf di Wireshark. Restituisce quanti prefissi sono caricati.
+        ''' </summary>
         Public Async Function UpdateDatabaseOnlineAsync(progress As IProgress(Of String), token As CancellationToken) As Task(Of Integer)
-            If progress IsNot Nothing Then progress.Report("Connessione al server ufficiale Wireshark OUI...")
-
             Using client As New HttpClient()
-                client.Timeout = TimeSpan.FromSeconds(25)
+                client.Timeout = TimeSpan.FromSeconds(60)
                 client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WhoIsPro/1.0")
 
-                Dim response = Await client.GetAsync(OfficialManufUrl, HttpCompletionOption.ResponseHeadersRead, token)
-                response.EnsureSuccessStatusCode()
-
-                If progress IsNot Nothing Then progress.Report("Download database OUI (circa 3 MB)...")
-                Dim content = Await response.Content.ReadAsStringAsync(token)
+                Dim content As String = Nothing
+                Dim source = "IEEE"
+                Try
+                    content = Await DownloadIeeeAsync(client, progress, token)
+                Catch ex As Exception When Not token.IsCancellationRequested AndAlso
+                                           (TypeOf ex Is HttpRequestException OrElse TypeOf ex Is TaskCanceledException OrElse TypeOf ex Is InvalidDataException)
+                    content = Nothing
+                End Try
+                If content Is Nothing Then
+                    ' L'IEEE a volte rifiuta i download automatici: resta il file di Wireshark
+                    source = "Wireshark"
+                    If progress IsNot Nothing Then progress.Report("L'IEEE non risponde: download del database di Wireshark (circa 3 MB)...")
+                    Dim response = Await client.GetAsync(OfficialManufUrl, HttpCompletionOption.ResponseHeadersRead, token)
+                    response.EnsureSuccessStatusCode()
+                    content = Await response.Content.ReadAsStringAsync(token)
+                End If
 
                 ' Salvataggio locale su AppData e directory corrente
                 Dim appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WhoIsPro")
@@ -93,9 +121,86 @@ Namespace Utils
                     _sourceFile = appDataFile
                 End SyncLock
 
-                If progress IsNot Nothing Then progress.Report($"Database aggiornato con successo! {loadedCount:N0} produttori caricati.")
+                If progress IsNot Nothing Then progress.Report($"Database aggiornato da {source}: {loadedCount:N0} prefissi caricati.")
                 Return loadedCount
             End Using
+        End Function
+
+        ''' <summary>
+        ''' Scarica i tre registri dell'IEEE e li scrive nel formato manuf di Wireshark (prefisso, nome breve, nome completo,
+        ''' separati da tab; «/28» e «/36» per i blocchi MA-M e MA-S): il file salvato si legge come prima.
+        ''' </summary>
+        Private Async Function DownloadIeeeAsync(client As HttpClient, progress As IProgress(Of String), token As CancellationToken) As Task(Of String)
+            Dim sb As New StringBuilder()
+            sb.AppendLine($"# Generato da WhoIs Pro il {DateTime.Now:yyyy-MM-dd HH:mm} dai registri pubblici dell'IEEE (MA-L, MA-M, MA-S),")
+            sb.AppendLine("# nel formato manuf di Wireshark: prefisso, nome breve e nome completo separati da tab.")
+            For Each reg In IeeeRegistries
+                If progress IsNot Nothing Then progress.Report($"Download del registro {reg.Registry} dall'IEEE...")
+                Dim response = Await client.GetAsync(reg.Url, HttpCompletionOption.ResponseHeadersRead, token)
+                response.EnsureSuccessStatusCode()
+                Dim csv = Await response.Content.ReadAsStringAsync(token)
+                ' Un registro vuoto o non riconosciuto (una pagina d'errore al posto del CSV) vale come IEEE non raggiungibile
+                If AppendIeeeCsv(csv, reg.Registry, sb) = 0 Then Throw New InvalidDataException($"Il registro {reg.Registry} scaricato dall'IEEE è vuoto.")
+            Next
+            Return sb.ToString()
+        End Function
+
+        ''' <summary>Le righe «Registry,Assignment,Organization Name,…» di un CSV dell'IEEE, aggiunte come righe manuf. Quante.</summary>
+        Public Function AppendIeeeCsv(csv As String, registry As String, sb As StringBuilder) As Integer
+            Dim digits = If(registry = "MA-M", 7, If(registry = "MA-S", 9, 6))
+            Dim count = 0
+            For Each raw In csv.Split(New Char() {ControlChars.Lf, ControlChars.Cr}, StringSplitOptions.RemoveEmptyEntries)
+                Dim cells = CsvCells(raw)
+                If cells.Count < 3 OrElse Not String.Equals(cells(0).Trim(), registry, StringComparison.OrdinalIgnoreCase) Then Continue For
+                Dim hex = cells(1).Trim().ToUpperInvariant()
+                If hex.Length <> digits OrElse Not Regex.IsMatch(hex, "^[0-9A-F]+$") Then Continue For
+                Dim name = Regex.Replace(cells(2), "\s+", " ").Trim()
+                If name = "" Then Continue For
+                ' 0055DA0 (28 bit) → 00:55:DA:00/28; 001BC5000 (36 bit) → 00:1B:C5:00:00/36
+                Dim padded = If(hex.Length Mod 2 = 1, hex & "0", hex)
+                Dim prefix = String.Join(":", Enumerable.Range(0, padded.Length \ 2).Select(Function(i) padded.Substring(i * 2, 2)))
+                If digits = 7 Then prefix &= "/28"
+                If digits = 9 Then prefix &= "/36"
+                Dim shortName = Regex.Replace(name.Split(" "c)(0), "[^A-Za-z0-9&\-]", "")
+                If shortName.Length > 12 Then shortName = shortName.Substring(0, 12)
+                If shortName = "" Then shortName = "-"
+                sb.Append(prefix).Append(ControlChars.Tab).Append(shortName).Append(ControlChars.Tab).AppendLine(name)
+                count += 1
+            Next
+            Return count
+        End Function
+
+        ''' <summary>Le celle di una riga CSV con le virgolette («"Hangzhou Hikvision Digital Technology Co.,Ltd."»).</summary>
+        Private Function CsvCells(line As String) As List(Of String)
+            Dim cells As New List(Of String)()
+            Dim sb As New StringBuilder()
+            Dim quoted = False
+            Dim i = 0
+            While i < line.Length
+                Dim c = line(i)
+                If quoted Then
+                    If c = """"c Then
+                        If i + 1 < line.Length AndAlso line(i + 1) = """"c Then
+                            sb.Append(""""c)
+                            i += 1
+                        Else
+                            quoted = False
+                        End If
+                    Else
+                        sb.Append(c)
+                    End If
+                ElseIf c = """"c Then
+                    quoted = True
+                ElseIf c = ","c Then
+                    cells.Add(sb.ToString())
+                    sb.Clear()
+                Else
+                    sb.Append(c)
+                End If
+                i += 1
+            End While
+            cells.Add(sb.ToString())
+            Return cells
         End Function
 
         Private Sub ParseManufFile(filePath As String)
@@ -117,28 +222,28 @@ Namespace Utils
             Return VendorDb.Count
         End Function
 
+        ''' <summary>
+        ''' Una riga del formato manuf: prefisso, nome breve e nome completo separati da tab (le colonne si leggono dai tab,
+        ''' così un nome breve con uno spazio non sposta il nome completo). Senza tab, colonne separate da spazi.
+        ''' </summary>
         Private Sub ParseManufLine(line As String)
             If String.IsNullOrWhiteSpace(line) OrElse line.StartsWith("#"c) Then Return
 
-            Dim tokens = line.Split(New Char() {ControlChars.Tab, " "c}, StringSplitOptions.RemoveEmptyEntries)
-            If tokens.Length < 2 Then Return
-
-            Dim rawPrefix = tokens(0).Trim()
-            Dim shortName = tokens(1).Trim()
-            Dim fullName As String = ""
-
-            If tokens.Length >= 3 Then
-                Dim firstToken = tokens(0)
-                Dim secondToken = tokens(1)
-                Dim idxFirst = line.IndexOf(firstToken)
-                Dim idxSecond = line.IndexOf(secondToken, idxFirst + firstToken.Length)
-                Dim idxThird = idxSecond + secondToken.Length
-                If idxThird < line.Length Then
-                    fullName = line.Substring(idxThird).Trim()
-                End If
+            Dim rawPrefix As String
+            Dim vendorName As String
+            If line.Contains(ControlChars.Tab) Then
+                Dim cells = line.Split(ControlChars.Tab)
+                rawPrefix = cells(0).Trim()
+                Dim shortName = If(cells.Length > 1, cells(1).Trim(), "")
+                Dim fullName = If(cells.Length > 2, String.Join(" ", cells.Skip(2)).Trim(), "")
+                vendorName = If(fullName <> "", fullName, shortName)
+            Else
+                Dim tokens = line.Split(New Char() {" "c}, StringSplitOptions.RemoveEmptyEntries)
+                If tokens.Length < 2 Then Return
+                rawPrefix = tokens(0)
+                vendorName = String.Join(" ", tokens.Skip(If(tokens.Length >= 3, 2, 1)))
             End If
-
-            Dim vendorName = If(Not String.IsNullOrEmpty(fullName), fullName, shortName)
+            If vendorName = "" Then Return
 
             Dim cleanHex = Regex.Replace(rawPrefix.Split("/"c)(0), "[^0-9A-Fa-f]", "").ToUpperInvariant()
             If rawPrefix.Contains("/28") AndAlso cleanHex.Length >= 7 Then
@@ -155,6 +260,16 @@ Namespace Utils
                 VendorDb.Add(key, name)
             End If
         End Sub
+
+        ''' <summary>
+        ''' MAC «amministrato localmente» (secondo bit del primo byte): di solito un indirizzo casuale per la privacy
+        ''' (telefoni, tablet, PC recenti in Wi-Fi), oppure macchine virtuali e contenitori.
+        ''' </summary>
+        Public Function IsRandomMac(mac As String) As Boolean
+            Dim clean = Regex.Replace(If(mac, ""), "[^0-9A-Fa-f]", "")
+            If clean.Length < 2 Then Return False
+            Return (Convert.ToInt32(clean.Substring(0, 2), 16) And 2) <> 0
+        End Function
 
         Public Function GetVendor(mac As String) As String
             If String.IsNullOrWhiteSpace(mac) Then Return "Sconosciuto"
@@ -180,6 +295,10 @@ Namespace Utils
                 End If
             End SyncLock
 
+            ' 4. Indirizzi amministrati localmente: i contenitori Docker (02:42), altrimenti un MAC casuale per la privacy
+            If cleanMac.StartsWith("0242", StringComparison.Ordinal) Then Return "Docker (contenitore)"
+            If IsRandomMac(cleanMac) Then Return RandomMacLabel
+
             Return "Produttore non catalogato"
         End Function
 
@@ -193,6 +312,9 @@ Namespace Utils
             AddKey("000C29", "VMware, Inc.")
             AddKey("005056", "VMware, Inc.")
             AddKey("00155D", "Microsoft Corp. (Hyper-V)")
+            ' QEMU/KVM usa un prefisso amministrato localmente: senza questa riga sembrerebbe un MAC casuale
+            AddKey("525400", "QEMU / KVM (macchina virtuale)")
+            AddKey("080027", "Oracle VirtualBox (macchina virtuale)")
             AddKey("B827EB", "Raspberry Pi Foundation")
             AddKey("DCA632", "Raspberry Pi Trading Ltd")
             AddKey("240AC4", "Espressif Inc. (ESP32/ESP8266)")

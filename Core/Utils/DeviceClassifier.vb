@@ -8,6 +8,34 @@ Namespace Utils
     End Class
 
     Public Module DeviceClassifier
+        ' Marche riconoscibili dal produttore del MAC: la parola cercata e il nome da mostrare
+        Private ReadOnly CameraBrands As (Key As String, Label As String)() = {
+            ("hikvision", "Hikvision"), ("dahua", "Dahua"), ("axis communications", "Axis"), ("hanwha", "Hanwha"), ("uniview", "Uniview"),
+            ("vivotek", "Vivotek"), ("reolink", "Reolink"), ("ezviz", "EZVIZ"), ("tiandy", "Tiandy"), ("avigilon", "Avigilon"),
+            ("milesight", "Milesight"), ("mobotix", "Mobotix"), ("provision-isr", "Provision-ISR"), ("foscam", "Foscam")}
+        Private ReadOnly AlarmBrands As (Key As String, Label As String)() = {
+            ("paradox", "Paradox"), ("bentel", "Bentel"), ("inim", "Inim"), ("ksenia", "Ksenia"), ("ajax systems", "Ajax"),
+            ("risco", "Risco"), ("texecom", "Texecom"), ("elkron", "Elkron"), ("tecnoalarm", "Tecnoalarm"),
+            ("honeywell security", "Honeywell"), ("hesa", "Hesa"), ("urmet", "Urmet")}
+        Private ReadOnly PrinterBrands As (Key As String, Label As String)() = {
+            ("brother", "Brother"), ("epson", "Epson"), ("canon", "Canon"), ("lexmark", "Lexmark"), ("kyocera", "Kyocera"),
+            ("ricoh", "Ricoh"), ("xerox", "Xerox"), ("konica", "Konica Minolta"), ("sharp corporation", "Sharp"), ("oki electric", "OKI"),
+            ("hp inc", "HP"), ("hewlett packard", "HP")}
+        Private ReadOnly AutomationBrands As (Key As String, Label As String)() = {
+            ("siemens", "Siemens"), ("schneider", "Schneider Electric"), ("abb", "ABB"), ("loxone", "Loxone"), ("nuki", "Nuki"),
+            ("bticino", "BTicino"), ("vimar", "Vimar"), ("knx", "KNX"), ("wago", "WAGO"), ("phoenix contact", "Phoenix Contact")}
+
+        ''' <summary>
+        ''' Il nome della prima marca dell'elenco che compare nel produttore ("" se nessuna), a parole intere: «inim» non
+        ''' deve trovare Minimax, «hesa» Hesai o Chesapeake, «ricoh» Sindoricoh.
+        ''' </summary>
+        Private Function BrandOf(vendor As String, brands As (Key As String, Label As String)()) As String
+            For Each b In brands
+                If Regex.IsMatch(vendor, "\b" & Regex.Escape(b.Key) & "\b") Then Return b.Label
+            Next
+            Return ""
+        End Function
+
         Public Function Classify(macVendor As String, hostname As String, openPorts As IEnumerable(Of Integer), ttl As Integer, mac As String) As DeviceClassification
             Dim res As New DeviceClassification()
             Dim v As String = If(macVendor, "").ToLowerInvariant()
@@ -26,6 +54,24 @@ Namespace Utils
                 res.DeviceType = "Broker MQTT / Gateway IoT"
                 res.Category = "Domotica / IoT"
                 res.Icon = "🏠"
+                Return res
+            End If
+
+            ' Automazione industriale e di edificio: Modbus TCP o il produttore (PLC, KNX, controllori)
+            Dim automation = BrandOf(v, AutomationBrands)
+            If ports.Contains(502) OrElse automation <> "" Then
+                res.DeviceType = If(automation <> "", $"Automazione / Domotica ({automation})", "Automazione / PLC (Modbus)")
+                res.Category = "Domotica / IoT"
+                res.Icon = "🏠"
+                Return res
+            End If
+
+            ' Centrali d'allarme: dal produttore o dal nome
+            Dim alarm = BrandOf(v, AlarmBrands)
+            If alarm <> "" OrElse h.Contains("allarme") OrElse h.Contains("alarm") Then
+                res.DeviceType = If(alarm <> "", $"Centrale d'allarme {alarm}", "Centrale d'allarme")
+                res.Category = "Centrale d'allarme"
+                res.Icon = "🚨"
                 Return res
             End If
 
@@ -50,16 +96,19 @@ Namespace Utils
                 Return res
             End If
 
-            If ports.Contains(554) OrElse ports.Contains(8554) OrElse h.Contains("camera") OrElse h.Contains("cam") OrElse h.Contains("nvr") Then
-                res.DeviceType = "Telecamera IP / NVR (RTSP)"
+            ' Telecamere e videoregistratori: dal produttore, dalle porte (RTSP, Dahua 37777, Hikvision 8000 con RTSP) o dal nome
+            Dim camera = BrandOf(v, CameraBrands)
+            If camera <> "" OrElse ports.Contains(554) OrElse ports.Contains(8554) OrElse ports.Contains(37777) OrElse
+               h.Contains("camera") OrElse h.Contains("cam") OrElse h.Contains("nvr") OrElse h.Contains("dvr") Then
+                res.DeviceType = If(camera <> "", $"Telecamera IP / NVR ({camera})", "Telecamera IP / NVR (RTSP)")
                 res.Category = "Telecamera IP"
                 res.Icon = "📹"
                 Return res
             End If
 
-            If ports.Contains(9100) OrElse ports.Contains(515) OrElse ports.Contains(631) OrElse v.Contains("brother") OrElse v.Contains("epson") OrElse v.Contains("canon") OrElse h.Contains("printer") Then
-                Dim prnVendor As String = If(v.Contains("brother"), "Brother", If(v.Contains("epson"), "Epson", If(v.Contains("canon"), "Canon", If(v.Contains("hp"), "HP", ""))))
-                res.DeviceType = $"Stampante di rete {prnVendor}".Trim()
+            Dim printer = BrandOf(v, PrinterBrands)
+            If ports.Contains(9100) OrElse ports.Contains(515) OrElse ports.Contains(631) OrElse (printer <> "" AndAlso printer <> "HP") OrElse h.Contains("printer") OrElse h.Contains("stampante") Then
+                res.DeviceType = $"Stampante di rete {printer}".Trim()
                 res.Category = "Stampante"
                 res.Icon = "🖨️"
                 Return res
@@ -74,6 +123,14 @@ Namespace Utils
 
             If v.Contains("qnap") OrElse h.Contains("qnap") Then
                 res.DeviceType = "NAS Storage (QNAP Turbo NAS)"
+                res.Category = "NAS / Storage"
+                res.Icon = "🗄️"
+                Return res
+            End If
+
+            If v.Contains("western digital") OrElse v.Contains("buffalo") OrElse v.Contains("asustor") OrElse v.Contains("terramaster") Then
+                Dim nas = If(v.Contains("western digital"), "WD", If(v.Contains("buffalo"), "Buffalo", If(v.Contains("asustor"), "Asustor", "TerraMaster")))
+                res.DeviceType = $"NAS Storage ({nas})"
                 res.Category = "NAS / Storage"
                 res.Icon = "🗄️"
                 Return res
@@ -155,6 +212,14 @@ Namespace Utils
                 res.DeviceType = "Sensore / Modulo IoT Domotico"
                 res.Category = "Domotica / IoT"
                 res.Icon = "🏠"
+                Return res
+            End If
+
+            ' MAC privato (casuale): telefoni, tablet e PC recenti in Wi-Fi; il produttore non si conosce
+            If v.Contains("mac privato") Then
+                res.DeviceType = "Smartphone / Tablet (MAC privato)"
+                res.Category = "Smartphone / Tablet"
+                res.Icon = "📱"
                 Return res
             End If
 
@@ -245,14 +310,15 @@ Namespace Utils
 
             If v.Contains("tp-link") OrElse v.Contains("netgear") OrElse v.Contains("d-link") OrElse v.Contains("cisco") OrElse v.Contains("mikrotik") OrElse
                v.Contains("keenetic") OrElse v.Contains("zyxel") OrElse v.Contains("technicolor") OrElse v.Contains("sagemcom") OrElse v.Contains("huawei technologies") OrElse
-               v.Contains("aruba") OrElse v.Contains("juniper") OrElse v.Contains("draytek") OrElse v.Contains("teltonika") Then
+               v.Contains("aruba") OrElse v.Contains("juniper") OrElse v.Contains("draytek") OrElse v.Contains("teltonika") OrElse
+               v.Contains("routerboard") OrElse v.Contains("ruckus") OrElse v.Contains("fortinet") OrElse v.Contains("tenda") OrElse v.Contains("cambium") Then
                 res.DeviceType = "Dispositivo di Rete (Router / Switch / AP)"
                 res.Category = "Router / Access Point"
                 res.Icon = "🌐"
                 Return res
             End If
 
-            If v.Contains("vmware") OrElse v.Contains("hyper-v") OrElse v.Contains("virtualbox") OrElse v.Contains("qemu") Then
+            If v.Contains("vmware") OrElse v.Contains("hyper-v") OrElse v.Contains("virtualbox") OrElse v.Contains("qemu") OrElse v.Contains("xensource") OrElse v.Contains("docker") Then
                 res.DeviceType = "Macchina Virtuale / Hypervisor"
                 res.Category = "PC / Server"
                 res.Icon = "💻"
