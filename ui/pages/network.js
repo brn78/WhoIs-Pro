@@ -278,7 +278,7 @@ function saveView() {
 }
 
 /** Una voce della descrizione: etichetta piccola e valore. */
-const fact = (label, value, cls = '') => `<span class="hc-fact ${cls}"><i>${label}</i>${value}</span>`;
+const fact = (label, value, cls = '', tip = '') => `<span class="hc-fact ${cls}"${tip ? ` title="${esc(tip)}"` : ''}><i>${label}</i><span class="hc-val">${value}</span></span>`;
 
 function hostCard(h) {
   const ports = S.data.ports.filter((p) => p.host === h.ipAddress).sort((a, b) => a.portNumber - b.portNumber);
@@ -288,20 +288,27 @@ function hostCard(h) {
   const name = h.hostname || h.deviceType;
   const v6 = h.ipv6 || [];
   const tags = `${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${isOffline(h) ? '<span class="tag danger">Non risponde</span>' : ''}${v6.length ? '<span class="tag v6">IPv6</span>' : ''}`;
-  const portList = ports.slice(0, 10).map((p) => `<span class="hc-port" title="${esc(p.banner || p.serviceName)}">${p.portNumber}${p.protocol === 'UDP' ? '/udp' : ''} <em>${esc(p.serviceName)}</em></span>`).join('')
-    + (ports.length > 10 ? `<span class="hc-port more">+${ports.length - 10}</span>` : '');
+  // al massimo 6 porte sulla riga (tutte nel tooltip e nel dettaglio): così ogni scheda ha la stessa altezza
+  const portTip = ports.map((p) => `${p.portNumber}/${p.protocol} ${p.serviceName}`).join(', ');
+  const portList = ports.slice(0, 6).map((p) => `<span class="hc-port">${p.portNumber}${p.protocol === 'UDP' ? '/udp' : ''} <em>${esc(p.serviceName)}</em></span>`).join('')
+    + (ports.length > 6 ? `<span class="hc-port more">+${ports.length - 6}</span>` : '');
+  const tipo = `${h.deviceCategory || 'Altro'}${h.osGuess ? ` · ${osShort(h.osGuess)}` : ''}`;
+  const macText = h.macAddress ? `${h.macAddress} · ${h.macVendor === PRIVATE_MAC ? 'MAC privato, produttore non noto' : h.macVendor}` : 'non disponibile, host fuori dalla rete locale';
+  const seen = `${shortWhen(h.firstSeen)}${h.lastSeen && shortWhen(h.lastSeen) !== shortWhen(h.firstSeen) ? ` · visto ${shortWhen(h.lastSeen)}` : ''}`;
   return `<article class="host-card ${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}" data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}">
     ${catIcon(h, true)}
     <div class="hc-main">
-      <div class="hc-title"><b>${esc(name)}</b>${h.hostname ? `<span class="hc-type">${esc(h.deviceType)}</span>` : ''}${tags}</div>
-      <div class="hc-facts">
+      <div class="hc-line hc-title" title="${esc(name)}${h.hostname ? ` · ${esc(h.deviceType)}` : ''}"><b>${esc(name)}</b>${h.hostname ? `<span class="hc-type">${esc(h.deviceType)}</span>` : ''}${tags}</div>
+      <div class="hc-line">
         <span class="hc-ip mono">${esc(h.ipAddress)}</span>
-        ${fact('Tipo', `${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}`)}
-        ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile, host fuori dalla rete locale</span>')}
+        ${fact('Tipo', esc(tipo), '', tipo)}
+        ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile</span>', 'grow', macText)}
         ${fact('Risposta', `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
-        ${ports.length ? fact('Porte', `<span class="hc-ports">${portList}</span>`, 'wide') : ''}
-        ${v6.length ? fact('IPv6', `<span class="mono">${esc(v6[0])}</span>${v6.length > 1 ? ` <span class="muted">+${v6.length - 1}</span>` : ''}`) : ''}
-        ${fact('Rilevato', `${esc(shortWhen(h.firstSeen))}${h.lastSeen && shortWhen(h.lastSeen) !== shortWhen(h.firstSeen) ? ` <span class="muted">· visto ${esc(shortWhen(h.lastSeen))}</span>` : ''}`)}
+      </div>
+      <div class="hc-line">
+        ${fact('Porte', ports.length ? `<span class="hc-ports">${portList}</span>` : '<span class="muted">nessuna scansione</span>', 'grow', portTip)}
+        ${v6.length ? fact('IPv6', `<span class="mono">${esc(v6[0])}</span>${v6.length > 1 ? ` <span class="muted">+${v6.length - 1}</span>` : ''}`, '', v6.join(', ')) : ''}
+        ${fact('Rilevato', esc(seen), '', `Prima volta ${fmtDateTime(h.firstSeen)} · ultima ${fmtDateTime(h.lastSeen)}`)}
       </div>
     </div>
     <div class="hc-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>
