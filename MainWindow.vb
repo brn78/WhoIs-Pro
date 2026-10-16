@@ -35,9 +35,16 @@ Namespace UI
 
         Private ReadOnly _view As New WebView2 With {.Dock = DockStyle.Fill}
         Private ReadOnly _bridge As AppBridge
+        Private ReadOnly _tray As New NotifyIcon()
+        Private ReadOnly _trayMenu As New ContextMenuStrip()
         Private _ready As Boolean
+        Private _startInTray As Boolean
+        Private _allowVisible As Boolean
+        Private _closeToTray As Boolean
+        Private _exiting As Boolean
 
-        Public Sub New()
+        ''' <param name="startInTray">Avvio automatico con Windows: solo l'icona nell'area di notifica (se attiva), la finestra si apre con un clic.</param>
+        Public Sub New(Optional startInTray As Boolean = False)
             SuspendLayout()
             Text = "WhoIs Pro"
             AutoScaleDimensions = New SizeF(96.0F, 96.0F)
@@ -53,7 +60,53 @@ Namespace UI
             _bridge = New AppBridge(Me)
             ResumeLayout(False)
             AddHandler SystemEvents.UserPreferenceChanged, AddressOf OnUserPreferenceChanged
+
+            ' Icona nell'area di notifica: menu con Apri ed Esci, doppio clic per aprire
+            _trayMenu.Items.Add("Apri WhoIs Pro", Nothing, Sub() ShowFromTray())
+            _trayMenu.Items.Add(New ToolStripSeparator())
+            _trayMenu.Items.Add("Esci", Nothing, Sub() ExitFromTray())
+            _tray.Icon = Icon
+            _tray.Text = "WhoIs Pro"
+            _tray.ContextMenuStrip = _trayMenu
+            AddHandler _tray.DoubleClick, Sub() ShowFromTray()
+            AddHandler _tray.MouseClick, Sub(s, e) If e.Button = MouseButtons.Left Then ShowFromTray()
+            Dim settings = _bridge.Settings
+            ApplyTraySettings(settings)
+            ApplyTheme(settings.Theme)
+            _startInTray = startInTray AndAlso settings.TrayIcon AndAlso settings.StartMinimized
         End Sub
+
+#Region "Area di notifica"
+
+        ''' <summary>Impostazioni dell'icona (anche quando cambiano dalla pagina Impostazioni).</summary>
+        Public Sub ApplyTraySettings(settings As Config.AppSettings)
+            _tray.Visible = settings.TrayIcon
+            _closeToTray = settings.TrayIcon AndAlso settings.CloseToTray
+        End Sub
+
+        ''' <summary>Con /tray la finestra non compare finché non la si apre dall'icona (SetVisibleCore).</summary>
+        Protected Overrides Sub SetVisibleCore(value As Boolean)
+            If _startInTray AndAlso Not _allowVisible Then
+                If Not IsHandleCreated Then CreateHandle()
+                value = False
+            End If
+            MyBase.SetVisibleCore(value)
+        End Sub
+
+        Public Sub ShowFromTray()
+            _allowVisible = True
+            Show()
+            If WindowState = FormWindowState.Minimized Then WindowState = FormWindowState.Normal
+            Activate()
+        End Sub
+
+        Private Sub ExitFromTray()
+            _exiting = True
+            If Not Visible Then ShowFromTray()
+            Close()
+        End Sub
+
+#End Region
 
         ''' <summary>%LOCALAPPDATA%\WhoIsPro: dati di WebView2, posizione della finestra e database OUI aggiornato.</summary>
         Public Shared ReadOnly Property LocalFolder As String
@@ -220,8 +273,19 @@ Namespace UI
         Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attribute As Integer, ByRef value As Integer, size As Integer) As Integer
         End Function
 
-        ''' <summary>Tema delle app di Windows (Impostazioni > Personalizzazione > Colori): la pagina lo segue da sé.</summary>
-        Private Shared Function AppsUseDarkTheme() As Boolean
+        Private _theme As String = "auto"
+
+        ''' <summary>Tema scelto nelle impostazioni ("auto", "light", "dark"): sfondo della finestra e barra del titolo; la pagina lo applica da sé.</summary>
+        Public Sub ApplyTheme(theme As String)
+            _theme = If(theme, "auto")
+            ApplyThemeColors()
+            If IsHandleCreated Then ApplyTitleBarTheme()
+        End Sub
+
+        ''' <summary>Tema delle app di Windows (Impostazioni > Personalizzazione > Colori), salvo scelta esplicita.</summary>
+        Private Function AppsUseDarkTheme() As Boolean
+            If _theme = "dark" Then Return True
+            If _theme = "light" Then Return False
             Try
                 Using key = Registry.CurrentUser.OpenSubKey("Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
                     Dim value = key?.GetValue("AppsUseLightTheme")
@@ -272,6 +336,7 @@ Namespace UI
         ''' <summary>Posizione e dimensioni dell'ultima volta, se cadono su uno schermo; altrimenti al centro, entro lo schermo.</summary>
         Private Sub RestorePlacement()
             Try
+                If Not Visible AndAlso _startInTray Then Return
                 If File.Exists(PlacementFile) Then
                     Dim p = JsonSerializer.Deserialize(Of Placement)(File.ReadAllText(PlacementFile))
                     Dim bounds As New Rectangle(p.X, p.Y, p.Width, p.Height)
@@ -316,6 +381,13 @@ Namespace UI
         Protected Overrides Sub OnFormClosing(e As FormClosingEventArgs)
             MyBase.OnFormClosing(e)
             If e.Cancel Then Return
+            ' La X nasconde nell'area di notifica (impostazione); Esci dal menu dell'icona e lo spegnimento chiudono davvero
+            If _closeToTray AndAlso Not _exiting AndAlso Not _closingForUpdate AndAlso e.CloseReason = CloseReason.UserClosing Then
+                e.Cancel = True
+                SavePlacement()
+                Hide()
+                Return
+            End If
             If _ready AndAlso Not _closingForUpdate AndAlso _bridge.HasUnsavedData Then
                 Dim answer = MessageBox.Show(Me, "La sessione ha dati non salvati. Salvarla prima di chiudere?", Text,
                                              MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
@@ -330,6 +402,9 @@ Namespace UI
         Protected Overrides Sub Dispose(disposing As Boolean)
             If disposing Then
                 RemoveHandler SystemEvents.UserPreferenceChanged, AddressOf OnUserPreferenceChanged
+                _tray.Visible = False
+                _tray.Dispose()
+                _trayMenu.Dispose()
                 _bridge.Dispose()
                 _view.Dispose()
             End If

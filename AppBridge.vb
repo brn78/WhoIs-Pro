@@ -4,6 +4,9 @@ Imports System.IO
 Imports System.Text.Json
 Imports System.Threading
 Imports System.Windows.Forms
+Imports System.Net.Http
+Imports WhoIsPro.Config
+Imports WhoIsPro.Machine
 Imports WhoIsPro.Models
 Imports WhoIsPro.Network
 Imports WhoIsPro.Storage
@@ -43,6 +46,18 @@ Namespace UI
         Private ReadOnly _flush As New System.Windows.Forms.Timer With {.Interval = 120}
         Private ReadOnly _updates As New UpdateService(MainWindow.LocalFolder)
         Private _installing As Boolean
+        Private ReadOnly _settings As AppSettings = SettingsStore.Load(MainWindow.LocalFolder)
+        Private ReadOnly _internetTimer As New System.Windows.Forms.Timer With {.Interval = 30000}
+        Private Shared ReadOnly InternetProbe As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(5)}
+        Private _online As Boolean?
+        Private _checkingInternet As Boolean
+
+        ''' <summary>Impostazioni del programma (per la finestra: icona di notifica e tema).</summary>
+        Public ReadOnly Property Settings As AppSettings
+            Get
+                Return _settings
+            End Get
+        End Property
 
         Private _session As New ScanSession()
         Private _file As String = ""
@@ -65,6 +80,7 @@ Namespace UI
         Public Sub New(owner As MainWindow)
             _owner = owner
             AddHandler _flush.Tick, AddressOf FlushProgress
+            AddHandler _internetTimer.Tick, Sub() CheckInternet()
         End Sub
 
         Public Shared ReadOnly Property Version As String
@@ -117,6 +133,16 @@ Namespace UI
                 Case "openFile" : Return OpenFile(ArgText(args, "path"))
                 Case "checkUpdate" : Return Await _updates.CheckAsync(manual:=True, CancellationToken.None)
                 Case "installUpdate" : Return Await InstallUpdateAsync()
+                Case "settings" : Return SettingsView()
+                Case "saveSettings" : Return SaveSettings(args)
+                Case "saveProfile" : Return SaveProfile(args)
+                Case "deleteProfile" : Return DeleteProfile(ArgText(args, "id"))
+                Case "applyProfile" : Return Await ApplyProfileAsync(args)
+                Case "adapterConfigs" : Return Await Task.Run(Function() NetworkConfig.ReadAll())
+                Case "computer" : Return Await Task.Run(Function() ComputerInfo.Snapshot())
+                Case "checkInternet"
+                    CheckInternet()
+                    Return Nothing
                 Case "getClipboard" : Return If(Clipboard.ContainsText(), Clipboard.GetText(), "")
                 Case "setClipboard"
                     Dim value = ArgText(args, "text")
@@ -131,8 +157,139 @@ Namespace UI
 
         Private Function Start() As Object
             Dim unused = AutoCheckUpdateAsync()
+            CheckInternet()
+            _internetTimer.Start()
             Return New With {.state = State(), .session = SessionData()}
         End Function
+
+#Region "Internet"
+
+        ''' <summary>Connessione a Internet: una richiesta leggera alla pagina di prova di Windows (NCSI), ogni 30 secondi; l'esito va alla pagina solo se cambia.</summary>
+        Private Async Sub CheckInternet()
+            If _checkingInternet Then Return
+            _checkingInternet = True
+            Dim online As Boolean
+            Try
+                If Not Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable() Then
+                    online = False
+                Else
+                    Using request As New HttpRequestMessage(HttpMethod.Head, "http://www.msftconnecttest.com/connecttest.txt")
+                        Using response = Await InternetProbe.SendAsync(request)
+                            online = response.IsSuccessStatusCode
+                        End Using
+                    End Using
+                End If
+            Catch
+                online = False
+            End Try
+            _checkingInternet = False
+            If Not _online.HasValue OrElse _online.Value <> online Then
+                _online = online
+                _owner.PostEvent("internet", New With {.online = online})
+            End If
+        End Sub
+
+#End Region
+
+#Region "Impostazioni e profili di rete"
+
+        Private Function SettingsView() As Object
+            _settings.AutoStart = SettingsStore.AutoStartEnabled()
+            Return New With {
+                .autoStart = _settings.AutoStart,
+                .trayIcon = _settings.TrayIcon,
+                .closeToTray = _settings.CloseToTray,
+                .startMinimized = _settings.StartMinimized,
+                .theme = _settings.Theme,
+                .profiles = _settings.Profiles,
+                .dataFolder = MainWindow.LocalFolder,
+                .exePath = Environment.ProcessPath
+            }
+        End Function
+
+        Private Function SaveSettings(args As JsonElement) As Object
+            Dim value As JsonElement
+            If args.TryGetProperty("autoStart", value) AndAlso (value.ValueKind = JsonValueKind.True OrElse value.ValueKind = JsonValueKind.False) Then
+                Dim enabled = value.ValueKind = JsonValueKind.True
+                Try
+                    SettingsStore.SetAutoStart(enabled)
+                Catch ex As Exception
+                    Throw New UserMessageException($"Avvio automatico non cambiato: {ex.Message}")
+                End Try
+                _settings.AutoStart = enabled
+            End If
+            If args.TryGetProperty("trayIcon", value) Then _settings.TrayIcon = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("closeToTray", value) Then _settings.CloseToTray = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("startMinimized", value) Then _settings.StartMinimized = value.ValueKind = JsonValueKind.True
+            Dim theme = ArgText(args, "theme")
+            If theme = "auto" OrElse theme = "light" OrElse theme = "dark" Then _settings.Theme = theme
+            SettingsStore.Save(MainWindow.LocalFolder, _settings)
+            _owner.ApplyTraySettings(_settings)
+            _owner.ApplyTheme(_settings.Theme)
+            Return SettingsView()
+        End Function
+
+        Private Shared Function ReadProfile(args As JsonElement) As NetworkProfile
+            Dim p As New NetworkProfile With {
+                .Name = ArgText(args, "name").Trim(),
+                .Adapter = ArgText(args, "adapter").Trim(),
+                .Dhcp = ArgFlag(args, "dhcp"),
+                .Ip = ArgText(args, "ip").Trim(),
+                .Mask = ArgText(args, "mask").Trim(),
+                .Gateway = ArgText(args, "gateway").Trim(),
+                .Dns1 = ArgText(args, "dns1").Trim(),
+                .Dns2 = ArgText(args, "dns2").Trim()
+            }
+            Dim id = ArgText(args, "id")
+            If id <> "" Then p.Id = id
+            Return p
+        End Function
+
+        Private Function SaveProfile(args As JsonElement) As Object
+            Dim p = ReadProfile(args)
+            If p.Name = "" Then Throw New UserMessageException("Dai un nome al profilo (per esempio il nome del sito).")
+            Try
+                NetworkConfig.Validate(p)
+            Catch ex As ArgumentException
+                Throw New UserMessageException(ex.Message)
+            End Try
+            Dim idx = _settings.Profiles.FindIndex(Function(x) x.Id = p.Id)
+            If idx >= 0 Then _settings.Profiles(idx) = p Else _settings.Profiles.Add(p)
+            SettingsStore.Save(MainWindow.LocalFolder, _settings)
+            Return SettingsView()
+        End Function
+
+        Private Function DeleteProfile(id As String) As Object
+            _settings.Profiles.RemoveAll(Function(x) x.Id = id)
+            SettingsStore.Save(MainWindow.LocalFolder, _settings)
+            Return SettingsView()
+        End Function
+
+        ''' <summary>Applica un profilo salvato (id) oppure i valori passati; Windows chiede il consenso UAC per netsh.</summary>
+        Private Async Function ApplyProfileAsync(args As JsonElement) As Task(Of Object)
+            Dim id = ArgText(args, "id")
+            Dim p = If(id <> "", _settings.Profiles.FirstOrDefault(Function(x) x.Id = id), Nothing)
+            If p Is Nothing Then p = ReadProfile(args)
+            Try
+                NetworkConfig.Validate(p)
+            Catch ex As ArgumentException
+                Throw New UserMessageException(ex.Message)
+            End Try
+            Dim code As Integer
+            Try
+                code = Await Task.Run(Function() NetworkConfig.Apply(p, MainWindow.LocalFolder))
+            Catch ex As OperationCanceledException
+                Throw New UserMessageException(ex.Message)
+            Catch ex As Exception
+                Throw New UserMessageException($"Configurazione non applicata: {ex.Message}")
+            End Try
+            If code <> 0 Then Throw New UserMessageException($"netsh ha risposto con il codice {code}: controlla il nome della scheda e gli indirizzi.")
+            _adapters = Nothing
+            Await Task.Delay(1500)
+            Return New With {.state = State(), .adapters = NetworkConfig.ReadAll(), .profile = p}
+        End Function
+
+#End Region
 
         ''' <summary>Controllo automatico delle nuove versioni (una volta al giorno), qualche secondo dopo l'avvio.</summary>
         Private Async Function AutoCheckUpdateAsync() As Task
@@ -173,7 +330,10 @@ Namespace UI
                     .whoisServers = WhoisServers
                 },
                 .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy},
-                .update = _updates.Status()
+                .update = _updates.Status(),
+                .online = _online,
+                .theme = _settings.Theme,
+                .copyright = "© 2026 Bruno Leonardi. Tutti i diritti riservati."
             }
         End Function
 
@@ -714,6 +874,8 @@ Namespace UI
             StopAll()
             _flush.Stop()
             _flush.Dispose()
+            _internetTimer.Stop()
+            _internetTimer.Dispose()
             _updates.Dispose()
         End Sub
 

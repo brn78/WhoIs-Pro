@@ -155,7 +155,7 @@ const actions = {
 };
 
 definePage('netstat', {
-  title: 'Connessioni', icon: 'activity', section: 'system',
+  title: 'Connessioni', icon: 'activity', section: 'system', order: 1,
   render, after: () => { updateInfo(); if (!S.netstat.list.length && !S.netstat.busy) refresh(); }, actions,
   leave: () => { /* il timer resta: refresh() non fa nulla fuori dalla pagina */ },
   onInput: (el, field) => { if (field === 'q') { S.netstat.q = el.value; renderTable(); } },

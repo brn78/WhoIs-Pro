@@ -947,3 +947,55 @@ table.dt tbody tr.is-new td { animation: flashRow 1.6s var(--ease); }
 .tag.danger { background: var(--danger-soft); color: var(--danger-text); }
 .title-input { font-size: 15px; font-weight: 620; }
 .adapter-row .cell-text small { font-family: var(--font-mono); }
+
+/* barra superiore: attività in corso al centro, stato di Internet accanto alla sessione; diritti in fondo */
+.topbar .crumbs { flex: 0 1 auto; }
+.topbar-middle { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; }
+.activity-chip { display: inline-flex; align-items: center; gap: 12px; height: 38px; max-width: 520px; padding: 0 14px 0 12px; border: 1px solid var(--primary-soft-2); border-radius: 20px; background: var(--primary-soft); color: var(--primary-text); font: inherit; cursor: pointer; animation: pageIn .25s var(--ease); }
+.activity-chip:hover { background: var(--primary-soft-2); }
+.activity-chip .activity-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; text-align: left; }
+.activity-chip b { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.activity-chip small { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.activity-chip .meter { width: 110px; height: 5px; flex: 0 0 auto; }
+.net-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 15px; font-size: 12px; font-weight: 650; background: var(--neutral-soft); color: var(--muted); white-space: nowrap; }
+.net-pill .icon { width: 15px; height: 15px; }
+.net-pill.is-on { background: var(--success-soft); color: var(--success-text); }
+.net-pill.is-off { background: var(--danger-soft); color: var(--danger-text); }
+.app-foot { padding: 10px 28px 18px; border-top: 1px solid var(--border); margin-top: 8px; }
+
+/* grafici a ciambella e legende (pagina Computer) */
+.donut { display: block; flex: 0 0 auto; }
+.donut-track { fill: none; stroke: var(--surface-3); }
+.donut-part { fill: none; transition: stroke-dasharray .5s var(--ease); }
+.donut-part.is-used { stroke: var(--primary); }
+.donut-part.is-warn { stroke: var(--warning); }
+.donut-part.is-danger { stroke: var(--danger); }
+.donut-part.is-info { stroke: var(--info); }
+.donut-center { fill: var(--text); font-size: 16px; font-weight: 700; font-family: var(--font-display); }
+.donut-sub { fill: var(--muted); font-size: 8px; }
+.chart-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.chart-legend { flex: 1 1 220px; min-width: 0; }
+.chart-legend ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.chart-legend li { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+.chart-legend li b { color: var(--text); font-weight: 650; margin-left: auto; font-variant-numeric: tabular-nums; }
+.chart-legend li .muted { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+.chart-legend .legend-label { flex: 1 1 auto; }
+.legend-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; font-size: 13px; color: var(--text); }
+.legend-head .icon { color: var(--muted); }
+.legend-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
+.legend-dot.is-used { background: var(--primary); }
+.legend-dot.is-warn { background: var(--warning); }
+.legend-dot.is-danger { background: var(--danger); }
+.legend-dot.is-info { background: var(--info); }
+.legend-dot.is-free { background: var(--surface-3); border: 1px solid var(--border-strong); }
+.legend-dot.is-total { background: transparent; border: 1px dashed var(--border-strong); }
+.disks { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.disk { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+
+/* impostazioni */
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.theme-option { flex-direction: column; align-items: flex-start; gap: 8px; }
+.theme-option.is-active { border-color: var(--primary); background: var(--primary-soft); }
+.theme-option > .icon { color: var(--primary-text); align-self: flex-end; margin-top: -26px; }
+.profile-config { font-family: var(--font-mono); font-size: 12px; }
+@media (max-width: 1180px) { .theme-options { grid-template-columns: minmax(0, 1fr); } }

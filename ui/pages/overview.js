@@ -5,7 +5,8 @@ import { icon } from '../core/icons.js';
 import { S, definePage, adopt, counts, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { table } from '../core/table.js';
-import { note, pageHead, toast, toastError } from '../core/ui.js';
+import { note, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { applyProfile } from './settings.js';
 
 S.overview = { ouiMessage: '' };
 
@@ -114,7 +115,9 @@ function adaptersCard() {
     { key: 'cidr', label: 'Rete', cls: 'mono' },
     { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
     { key: 'mac', label: 'MAC', cls: 'mono' },
-    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<button class="btn btn-sm" data-action="scan-adapter" data-cidr="${esc(a.cidr)}">${icon('radar')} Scansiona</button>` },
+    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<div class="row-actions">
+        <button class="btn btn-sm" data-action="scan-adapter" data-cidr="${esc(a.cidr)}">${icon('radar')} Scansiona</button>
+        <button class="btn btn-sm" data-action="adapter-profiles" data-adapter="${esc(a.name)}" title="Profili di rete: cambia l'indirizzo IP della scheda">${icon('network')} Profilo ${icon('chevronDown', { size: 13 })}</button></div>` },
   ];
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('network')}<h2>Schede di rete</h2><span class="count">${rows.length}</span></div>
       <button class="btn btn-sm" data-action="detect-adapters">${icon('refresh')} Rileva di nuovo</button></div>
@@ -141,8 +144,24 @@ function render() {
     <div class="grid section-gap">${adaptersCard()}</div>`;
 }
 
+/** Menu rapido dei profili di rete per una scheda: applica un profilo salvato, torna a DHCP o ne crea uno. */
+async function adapterProfiles(anchor, adapter) {
+  let settings;
+  try { settings = await call('settings'); } catch (err) { toastError(err); return; }
+  const mine = (settings.profiles || []).filter((p) => p.adapter === adapter);
+  const items = [{ header: adapter }];
+  for (const p of mine) items.push({ ic: 'zap', label: `Applica «${p.name}»`, hint: p.dhcp ? 'DHCP' : p.ip, run: () => applyProfile(p.id) });
+  if (!mine.length) items.push({ html: '<div class="menu-path">Nessun profilo per questa scheda</div>' });
+  items.push({ sep: true });
+  items.push({ ic: 'rotate', label: 'Torna a DHCP', run: () => applyProfile(null, { id: '', name: 'DHCP', adapter, dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' }) });
+  items.push({ ic: 'plus', label: 'Nuovo profilo per questa scheda…', run: () => navigate('settings', { newProfile: adapter }) });
+  items.push({ ic: 'settings', label: 'Tutti i profili (Impostazioni)', run: () => navigate('settings') });
+  openMenu(anchor, items);
+}
+
 const actions = {
   'scan-adapter': (el) => navigate('network', { target: el.dataset.cidr }),
+  'adapter-profiles': (el) => adapterProfiles(el, el.dataset.adapter),
   'detect-adapters': async () => {
     try {
       S.st.adapters = await call('adapters');

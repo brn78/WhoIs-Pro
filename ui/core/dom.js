@@ -40,6 +40,29 @@ export function fmtSeconds(s) {
 
 export const fmtMs = (ms) => `${fmtNumber(ms)} ms`;
 
+/** Byte in KB, MB, GB o TB con una cifra decimale ("15,8 GB"). */
+export function fmtBytes(n) {
+  const v = Number(n) || 0;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let x = v;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+  return `${i === 0 ? x : x.toFixed(x >= 100 ? 0 : 1).replace('.', ',')} ${units[i]}`;
+}
+
+/** Secondi come "3 g 4 h 12 min" oppure "25 min". */
+export function fmtDuration(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(`${d} g`);
+  if (d || h) parts.push(`${h} h`);
+  parts.push(`${m} min`);
+  return parts.join(' ');
+}
+
 export function plural(n, one, many) { return `${fmtNumber(n)} ${n === 1 ? one : many}`; }
 
 export const fileName = (p) => String(p || '').split('\\').pop();
