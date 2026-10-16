@@ -107,8 +107,111 @@ Namespace Machine
                     .dotnet = RuntimeInformation.FrameworkDescription,
                     .bootAt = DateTime.Now.AddMilliseconds(-Environment.TickCount64)
                 },
-                .gpu = ReadRegistry("SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000", "DriverDesc", "")
+                .gpu = ReadRegistry("SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000", "DriverDesc", ""),
+                .serialPorts = SerialPorts()
             }
+        End Function
+
+        ''' <summary>Porta seriale presente ora: nome (COM3), dispositivo e collegamento (USB, Bluetooth, scheda madre…).</summary>
+        Public Class SerialPortInfo
+            Public Property Port As String = ""
+            Public Property Device As String = ""
+            Public Property Bus As String = ""
+            Public Property Driver As String = ""
+        End Class
+
+        Private Const PortsClassGuid As String = "{4d36e978-e325-11ce-bfc1-08002be10318}"
+
+        ''' <summary>
+        ''' Porte COM presenti (HKLM\HARDWARE\DEVICEMAP\SERIALCOMM) con il nome del dispositivo preso dall'elenco dei
+        ''' dispositivi (HKLM\SYSTEM\CurrentControlSet\Enum, classe Ports), senza WMI.
+        ''' </summary>
+        Public Shared Function SerialPorts() As List(Of SerialPortInfo)
+            Dim list As New List(Of SerialPortInfo)()
+            Dim present As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase) ' COM3 -> \Device\VCP0
+            Try
+                Using key = Registry.LocalMachine.OpenSubKey("HARDWARE\DEVICEMAP\SERIALCOMM")
+                    If key IsNot Nothing Then
+                        For Each name In key.GetValueNames()
+                            Dim port = TryCast(key.GetValue(name), String)
+                            If Not String.IsNullOrEmpty(port) Then present(port) = name
+                        Next
+                    End If
+                End Using
+            Catch
+            End Try
+            If present.Count = 0 Then Return list
+
+            ' Dispositivi della classe Ports: Enum\<bus>\<dispositivo>\<istanza>, con PortName in "Device Parameters"
+            Dim devices As New Dictionary(Of String, SerialPortInfo)(StringComparer.OrdinalIgnoreCase)
+            Try
+                Using enumKey = Registry.LocalMachine.OpenSubKey("SYSTEM\CurrentControlSet\Enum")
+                    If enumKey IsNot Nothing Then
+                        For Each bus In enumKey.GetSubKeyNames()
+                            Using busKey = enumKey.OpenSubKey(bus)
+                                If busKey Is Nothing Then Continue For
+                                For Each device In busKey.GetSubKeyNames()
+                                    Using deviceKey = busKey.OpenSubKey(device)
+                                        If deviceKey Is Nothing Then Continue For
+                                        For Each instance In deviceKey.GetSubKeyNames()
+                                            Using instanceKey = deviceKey.OpenSubKey(instance)
+                                                If instanceKey Is Nothing Then Continue For
+                                                Dim classGuid = TryCast(instanceKey.GetValue("ClassGUID"), String)
+                                                If Not String.Equals(classGuid, PortsClassGuid, StringComparison.OrdinalIgnoreCase) Then Continue For
+                                                Dim portName As String = Nothing
+                                                Using parameters = instanceKey.OpenSubKey("Device Parameters")
+                                                    portName = TryCast(parameters?.GetValue("PortName"), String)
+                                                End Using
+                                                If String.IsNullOrEmpty(portName) OrElse devices.ContainsKey(portName) Then Continue For
+                                                Dim friendly = If(TryCast(instanceKey.GetValue("FriendlyName"), String), TryCast(instanceKey.GetValue("DeviceDesc"), String))
+                                                devices(portName) = New SerialPortInfo With {
+                                                    .Port = portName,
+                                                    .Device = CleanName(friendly, portName),
+                                                    .Bus = BusName(bus),
+                                                    .Driver = CleanName(TryCast(instanceKey.GetValue("Mfg"), String), "")
+                                                }
+                                            End Using
+                                        Next
+                                    End Using
+                                Next
+                            End Using
+                        Next
+                    End If
+                End Using
+            Catch
+            End Try
+
+            For Each port In present.Keys.OrderBy(Function(p) PortNumber(p)).ThenBy(Function(p) p)
+                Dim info As SerialPortInfo = Nothing
+                If Not devices.TryGetValue(port, info) Then
+                    info = New SerialPortInfo With {.Port = port, .Device = "Porta seriale", .Bus = If(present(port).IndexOf("Serial", StringComparison.OrdinalIgnoreCase) >= 0, "Scheda madre", "")}
+                End If
+                list.Add(info)
+            Next
+            Return list
+        End Function
+
+        ''' <summary>"@oem12.inf,%ftdi%;USB Serial Port (COM3)" → "USB Serial Port".</summary>
+        Private Shared Function CleanName(value As String, portName As String) As String
+            Dim s = If(value, "")
+            Dim semicolon = s.LastIndexOf(";"c)
+            If s.StartsWith("@") AndAlso semicolon >= 0 Then s = s.Substring(semicolon + 1)
+            If portName <> "" Then s = s.Replace($"({portName})", "").Trim()
+            Return s.Trim()
+        End Function
+
+        Private Shared Function BusName(bus As String) As String
+            Select Case bus.ToUpperInvariant()
+                Case "USB", "FTDIBUS", "USBSER" : Return "USB"
+                Case "BTHENUM", "BTHMODEM" : Return "Bluetooth"
+                Case "ACPI", "ROOT", "PCI" : Return "Scheda madre"
+                Case Else : Return bus
+            End Select
+        End Function
+
+        Private Shared Function PortNumber(port As String) As Integer
+            Dim n As Integer
+            Return If(Integer.TryParse(port.Replace("COM", "", StringComparison.OrdinalIgnoreCase), n), n, 999)
         End Function
 
         Private Shared Function OsName() As String
