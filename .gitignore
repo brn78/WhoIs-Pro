@@ -1,0 +1,10 @@
+# Build
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+My Project/launchSettings.json
+
+# Immagini del setup generate da Scripts\New-SetupImages.ps1
+Setup/Images/

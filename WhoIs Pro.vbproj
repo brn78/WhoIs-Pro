@@ -1,0 +1,70 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WhoIs Pro: scanner di rete e porte, WHOIS, DNS, traceroute e connessioni attive, con sessioni salvate in modo
+    atomico (SHA-256 e copia .bak). La finestra (MainWindow.vb) è una pagina HTML (cartella ui\, stessa grafica
+    delle console web) dentro WebView2; scansioni, file e appunti restano in VB.NET (AppBridge.vb). I motori sono
+    in Core\.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>WhoIsPro</RootNamespace>
+    <AssemblyName>WhoIsPro</AssemblyName>
+    <StartupObject>WhoIsPro.Program</StartupObject>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\WhoIsPro.ico</ApplicationIcon>
+    <Nullable>disable</Nullable>
+
+    <Version>2.0.0</Version>
+    <Product>WhoIs Pro</Product>
+    <AssemblyTitle>WhoIs Pro</AssemblyTitle>
+    <Authors>Bruno Leonardi</Authors>
+    <Company>Bruno Leonardi</Company>
+    <Description>Scanner di rete e porte, WHOIS, DNS, traceroute e connessioni attive</Description>
+    <Copyright>© 2026 Bruno Leonardi. Tutti i diritti riservati.</Copyright>
+
+    <OptionExplicit>On</OptionExplicit>
+    <OptionInfer>On</OptionInfer>
+    <OptionCompare>Binary</OptionCompare>
+    <SatelliteResourceLanguages>it</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+
+  <!-- Il pacchetto aggiunge anche il controllo per WPF: qui basta quello per Windows Forms -->
+  <Target Name="RemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+    <None Remove="ui\**" />
+    <Compile Remove="ui\**" />
+    <EmbeddedResource Include="ui\**\*" Exclude="ui\**\*.vb" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\WhoIsPro.ico" LogicalName="WhoIsPro.ico" />
+  </ItemGroup>
+
+  <!-- Database dei produttori (prefissi MAC, formato manuf di Wireshark) accanto al programma -->
+  <ItemGroup>
+    <None Update="manuf.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Import Include="System" />
+    <Import Include="System.Collections" />
+    <Import Include="System.Collections.Generic" />
+    <Import Include="System.Diagnostics" />
+    <Import Include="System.Linq" />
+    <Import Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,19 @@
+# Normalizzazione dei fine riga e file binari
+* text=auto
+*.vb text
+*.vbproj text
+*.slnx text
+*.json text
+*.js text
+*.css text
+*.html text
+*.md text
+*.iss text
+*.ps1 text
+*.txt text
+*.dll binary
+*.exe binary
+*.ico binary
+*.bmp binary
+*.png binary
+*.zip binary
