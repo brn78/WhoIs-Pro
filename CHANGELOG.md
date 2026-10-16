@@ -5,7 +5,7 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
-## 2.4.0 · in lavorazione
+## 2.4.0 · 16 ottobre 2026
 
 - **Grafica nuova, solo di WhoIs Pro**: barra laterale grafite anche nel tema chiaro, accento verde acqua, LED quadrati
   come quelli delle porte di rete, il carattere tecnico di Windows (Bahnschrift) per titoli e numeri, etichette in
