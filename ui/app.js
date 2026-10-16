@@ -293,7 +293,7 @@ function exportMenu(anchor) {
 async function updateOui() {
   if (S.st.running.oui) return;
   S.st.running.oui = true;
-  S.overview.ouiMessage = 'Connessione al server di Wireshark…';
+  S.overview.ouiMessage = 'Connessione ai registri dell\'IEEE…';
   bus.dispatchEvent(new Event('state'));
   updateChrome();
   try {

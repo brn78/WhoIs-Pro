@@ -4,6 +4,21 @@ Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https:
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.3.0 · 16 ottobre 2026
+
+- **Database dei produttori dall'IEEE**: *Aggiorna dall'IEEE* scarica i tre registri ufficiali (blocchi MA-L, MA-M e
+  MA-S), aggiornati ogni giorno; se l'IEEE non risponde usa come prima il database di Wireshark. Il file si legge per
+  colonne (tab), così nessun nome viene spezzato.
+- **MAC privato**: telefoni, tablet e PC recenti in Wi-Fi usano un indirizzo casuale; invece di «Produttore non
+  catalogato» la tabella scrive *MAC privato*, con la spiegazione, e il dispositivo è proposto come telefono o tablet.
+  Le macchine virtuali QEMU/KVM e i contenitori Docker, che usano lo stesso tipo di indirizzo, restano riconosciuti.
+- **Più marche riconosciute**: telecamere e videoregistratori (Hikvision, Dahua, Axis, Hanwha, Uniview, Reolink, EZVIZ…
+  e la porta 37777), la nuova categoria **Centrale d'allarme** (Paradox, Inim, Ksenia, Ajax, Risco, Elkron,
+  Tecnoalarm, Urmet…), altre stampanti (Lexmark, Kyocera, Ricoh, Xerox, Konica Minolta…), NAS (WD, Buffalo, Asustor,
+  TerraMaster), apparati di rete (Ruckus, Fortinet, Tenda, Cambium) e automazione (Siemens, Schneider, ABB, KNX,
+  Loxone, BTicino, Vimar e Modbus sulla porta 502). Le marche si cercano a parole intere: Minimax non diventa una
+  centrale Inim.
+
 ## 2.2.1 · 16 ottobre 2026
 
 - **Istanza singola**: aprire di nuovo il programma porta in primo piano la finestra già aperta (anche se era

@@ -125,6 +125,44 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub MacVendorLookup_ShouldRecognizePrivateMacs()
+            ' Bit «amministrato localmente»: indirizzo casuale per la privacy
+            Assert.That(MacVendorLookup.IsRandomMac("7A:11:22:33:44:55"), [Is].True)
+            Assert.That(MacVendorLookup.IsRandomMac("28:57:BE:11:22:33"), [Is].False)
+            Assert.That(MacVendorLookup.GetVendor("7A:11:22:33:44:55"), [Is].EqualTo(MacVendorLookup.RandomMacLabel))
+            ' Stesso bit, ma non sono telefoni
+            Assert.That(MacVendorLookup.GetVendor("52:54:00:12:34:56"), Does.Contain("QEMU"))
+            Assert.That(MacVendorLookup.GetVendor("02:42:AC:11:00:02"), Does.Contain("Docker"))
+            Dim c = DeviceClassifier.Classify(MacVendorLookup.RandomMacLabel, "", Nothing, 64, "7A:11:22:33:44:55")
+            Assert.That(c.Category, [Is].EqualTo("Smartphone / Tablet"))
+        End Sub
+
+        <Test>
+        Public Sub MacVendorLookup_ShouldConvertIeeeRegistries()
+            Dim sb As New System.Text.StringBuilder()
+            Dim csv = "Registry,Assignment,Organization Name,Organization Address" & vbCrLf &
+                      "MA-L,2857BE,""Hangzhou Hikvision Digital Technology Co.,Ltd."",""Hangzhou, CN""" & vbCrLf &
+                      "MA-M,0055DA0,Shinko Technos co.,ltd.,Osaka JP" & vbCrLf
+            Assert.That(MacVendorLookup.AppendIeeeCsv(csv, "MA-L", sb), [Is].EqualTo(1))
+            Assert.That(MacVendorLookup.AppendIeeeCsv(csv, "MA-M", sb), [Is].EqualTo(1))
+            Dim lines = sb.ToString().Split({vbCrLf, vbLf}, StringSplitOptions.RemoveEmptyEntries)
+            Assert.That(lines(0), [Is].EqualTo("28:57:BE" & vbTab & "Hangzhou" & vbTab & "Hangzhou Hikvision Digital Technology Co.,Ltd."))
+            Assert.That(lines(1), Does.StartWith("00:55:DA:00/28" & vbTab))
+        End Sub
+
+        <Test>
+        Public Sub DeviceClassifier_ShouldRecognizeCamerasAlarmsAndAutomation()
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision Digital Technology Co.,Ltd.", "", Nothing, 64, "").DeviceType, Does.Contain("Hikvision"))
+            Dim alarm = DeviceClassifier.Classify("INIM ELECTRONICS S.R.L.", "", Nothing, 64, "")
+            Assert.That(alarm.Category, [Is].EqualTo("Centrale d'allarme"))
+            Assert.That(alarm.DeviceType, Does.Contain("Inim"))
+            ' A parole intere: Minimax non è una centrale Inim
+            Assert.That(DeviceClassifier.Classify("Minimax GmbH & Co KG", "", Nothing, 64, "").Category, [Is].Not.EqualTo("Centrale d'allarme"))
+            Assert.That(DeviceClassifier.Classify("Unknown", "plc-linea1", New Integer() {502}, 64, "").DeviceType, Does.Contain("Modbus"))
+            Assert.That(DeviceClassifier.Classify("Kyocera Document Solutions Inc.", "", Nothing, 64, "").Category, [Is].EqualTo("Stampante"))
+        End Sub
+
+        <Test>
         Public Sub DeviceClassifier_ShouldClassifyHomeAssistant()
             Dim c1 = DeviceClassifier.Classify("Espressif Inc.", "homeassistant", Nothing, 64, "")
             Assert.That(c1.Category, [Is].EqualTo("Domotica / IoT"))

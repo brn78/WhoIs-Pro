@@ -7,6 +7,7 @@ const CATEGORIES = {
   'Smartphone / Tablet': { ic: 'smartphone', tone: 'success' },
   'Router / Access Point': { ic: 'router', tone: 'primary' },
   'Telecamera IP': { ic: 'camera', tone: 'danger' },
+  "Centrale d'allarme": { ic: 'shield', tone: 'danger' },
   'Stampante': { ic: 'printer', tone: '' },
   'NAS / Storage': { ic: 'hardDrive', tone: 'primary' },
   'Assistente Vocale': { ic: 'speaker', tone: 'info' },
