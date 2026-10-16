@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/immagini/banner.png" alt="WhoIs Pro: chi c'è nella tua rete, quali porte sono aperte, a chi appartiene un dominio" width="100%">
+  <img src="docs/immagini/banner.png" alt="WhoIs Pro: chi c'è nella tua rete, quali porte sono aperte, a chi appartiene un dominio, quanto traffico passa" width="100%">
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 
 **📡 Scansione della rete**<br>
 Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host attivi rispondono ad ARP e
-ping e compaiono man mano, con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
+ping e compaiono man mano (un singolo host si **riscansiona** con un clic, anche durante la scansione), con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
 più preciso per ogni MAC, aggiornabili), nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS,
 Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere, centrali d'allarme, stampanti, moduli
 domotici e automazione.
@@ -79,9 +79,15 @@ amministratore.
 Processore, memoria e dischi con i **grafici a ciambella** aggiornati ogni due secondi; Windows, nome del PC,
 utente, tempo di accensione, scheda video, schede di rete e **porte seriali (COM)** con il dispositivo collegato.
 
-**🎨 Un'interfaccia pulita**<br>
-Barra laterale, tabelle ordinabili, pannelli di dettaglio, menu e notifiche; **tema** automatico, chiaro o scuro;
-scansione in corso e stato di **Internet** sempre in vista; **icona nell'area di notifica** e avvio con Windows;
+**📊 Panoramica dal vivo**<br>
+Il **traffico** di ogni scheda collegata (ricezione e invio, gli ultimi tre minuti, il LED che lampeggia quando
+passano dati), indirizzo, gateway e DNS; gli host trovati con i **nuovi** delle ultime 24 ore, le porte aperte, la
+risposta di Internet, le **ultime scansioni** da ripetere con un clic, processore, memoria e disco.
+
+**🎨 Un'interfaccia da tecnico**<br>
+Barra laterale grafite, LED quadrati come quelli delle porte di rete, numeri grandi e leggibili; tabelle ordinabili
+con le colonne **larghe quanto il contenuto**, pannelli di dettaglio, menu e notifiche; **tema** automatico, chiaro
+o scuro; **Impostazioni** e **Rete del PC** sempre in alto; **icona nell'area di notifica** e avvio con Windows;
 scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 
 </td>
@@ -92,8 +98,8 @@ scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 
 <table>
 <tr>
-<td width="50%" align="center"><img src="docs/immagini/panoramica.png" alt="Panoramica con i conteggi della sessione"><br><b>Panoramica</b>: sessione, database dei produttori, aggiornamenti, schede di rete</td>
-<td width="50%" align="center"><img src="docs/immagini/dettaglio-host.png" alt="Dettaglio di un host"><br><b>Dettaglio dell'host</b>: con le sue porte e le azioni a portata di mano</td>
+<td width="50%" align="center"><img src="docs/immagini/panoramica.png" alt="Panoramica con i conteggi della sessione"><br><b>Panoramica</b>: traffico dal vivo delle schede, rete trovata, ultime scansioni e sistema</td>
+<td width="50%" align="center"><img src="docs/immagini/dettaglio-host.png" alt="Dettaglio di un host"><br><b>Dettaglio dell'host</b>: stato, porte, date di rilevamento e «Riscansiona»</td>
 </tr>
 <tr>
 <td align="center"><img src="docs/immagini/porte.png" alt="Scansione delle porte"><br><b>Porte</b>: TCP e UDP, servizio e banner</td>
@@ -105,7 +111,7 @@ scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 </tr>
 <tr>
 <td align="center"><img src="docs/immagini/computer.png" alt="Computer: processore, memoria e dischi"><br><b>Computer</b>: processore, memoria e dischi a colpo d'occhio</td>
-<td align="center"><img src="docs/immagini/impostazioni.png" alt="Impostazioni: avvio, tema e profili di rete"><br><b>Impostazioni</b>: avvio con Windows, tema e profili di rete</td>
+<td align="center"><img src="docs/immagini/impostazioni.png" alt="Impostazioni: schede di rete del PC e profili di rete"><br><b>Impostazioni</b>: rete del PC e profili di rete, avvio, tema, aggiornamenti</td>
 </tr>
 <tr>
 <td align="center"><img src="docs/immagini/dns.png" alt="DNS"><br><b>DNS</b>: record filtrati per tipo</td>
@@ -127,7 +133,8 @@ Microsoft Edge WebView2 Runtime, già presente in Windows.
 ## 🔄 Aggiornamenti al volo
 
 Il programma installato con il setup controlla **una volta al giorno** (o con *Controlla ora*) qual è l'ultima
-versione pubblicata qui su GitHub. Quando ce n'è una nuova lo dice nella *Panoramica*, con le novità, e il pulsante
+versione pubblicata qui su GitHub. Quando ce n'è una nuova lo dice con un avviso e un pallino sull'ingranaggio in
+alto; in *Impostazioni → Aggiornamenti* ci sono le novità e il pulsante
 **Scarica e installa** fa tutto da solo: scarica il setup dalla release, ne controlla **dimensione, impronta SHA-256 e
 versione**, chiude il programma, lo aggiorna e lo riapre. Niente si installa senza il tuo clic e la richiesta a GitHub
 non porta nessun dato. Chi usa il pacchetto portabile riceve lo stesso avviso con il collegamento alla pagina dei
@@ -157,7 +164,7 @@ lavorano con un utente normale. <i>Termina il processo</i> chiude solo i process
 Il MAC si legge con ARP, che funziona solo nella rete locale: per gli host dietro un router (altre reti, Internet) il
 MAC non è disponibile. Telefoni, tablet e PC recenti in Wi-Fi usano un <b>MAC privato</b> (casuale, diverso per ogni
 rete): il produttore non si può sapere e la tabella lo dice. Se il produttore manca, aggiorna il database da
-<i>Panoramica → Database dei produttori → Aggiorna dall'IEEE</i>.
+<i>Impostazioni → Produttori → Aggiorna dall'IEEE</i>.
 </details>
 
 <details>
@@ -171,9 +178,9 @@ cosa deriva.
 <details>
 <summary><b>Come cambio l'indirizzo IP della scheda per un sito?</b></summary>
 <br>
-In <i>Impostazioni → Profili di rete</i> crei un profilo (o lo salvi dalla configurazione attuale della scheda):
-nome, scheda, DHCP oppure IP, maschera, gateway e DNS. Poi <b>Applica</b>, anche dal menu <i>Profilo</i> accanto alla
-scheda nella <i>Panoramica</i>: Windows chiede il consenso (UAC) perché l'indirizzo lo scrive <code>netsh</code> con i
+In <i>Impostazioni → Rete del PC</i> crei un profilo (o lo salvi dalla configurazione attuale della scheda):
+nome, scheda, DHCP oppure IP, maschera, gateway e DNS. Poi <b>Applica</b>, anche dal pannello <i>Rete del PC</i>
+(l'icona delle schede in alto a destra): Windows chiede il consenso (UAC) perché l'indirizzo lo scrive <code>netsh</code> con i
 diritti di amministratore, il programma no. <i>Torna a DHCP</i> rimette la scheda in automatico.
 </details>
 
@@ -202,21 +209,22 @@ altrui può essere vista come un tentativo di intrusione.
 
 ## 🛠️ Per chi vuole compilarlo
 
-Programma in **VB.NET** (.NET 10, Windows Forms) con la finestra fatta da una pagina HTML dentro WebView2, con la
-stessa grafica delle console web di HikAccess Pro e BlackHole Workspaces.
+Programma in **VB.NET** (.NET 10, Windows Forms) con la finestra fatta da una pagina HTML dentro WebView2, con una
+grafica sua: barra laterale grafite, accento verde acqua, LED delle porte e Bahnschrift per titoli e numeri.
 
 ```
 WhoIs Pro.vbproj        progetto (la cartella ui\ è incorporata nell'exe)
 Program.vb              avvio
 MainWindow.vb           finestra: WebView2, pagina servita da https://whoispro.invalid, tema, posizione, chiusura
 AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, aggiornamenti
-Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanSession
+Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanRecord, ScanSession
 Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
 Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo)
 Core\Utils              NetworkUtils, MacVendorLookup (registri IEEE / manuf di Wireshark), DeviceClassifier, PortDictionary
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup
 Core\Config             AppSettings: impostazioni (impostazioni.json), avvio automatico, profili di rete
-Core\Machine            NetworkConfig (IP delle schede, netsh elevato), ComputerInfo (CPU, memoria, dischi, sistema)
+Core\Machine            NetworkConfig (IP delle schede, netsh elevato), ComputerInfo (CPU, memoria, dischi, sistema),
+                        TrafficMonitor (traffico delle schede per la Panoramica)
 ui\                     index.html, app.css, app.js, core\ (bridge, store, ui, table, chart…), pages\ (una per pagina)
 Scripts\                Publish.ps1 (zip portabile), Build-Setup.ps1 (Inno Setup), Publish-Release.ps1 (release su GitHub)
 Setup\WhoIsPro.iss      programma di installazione
@@ -227,7 +235,11 @@ Tests\                  prove NUnit dei motori in Core\
 dotnet build "WhoIs Pro.vbproj" -c Release
 dotnet test Tests\Tests.vbproj
 .\Scripts\Build-Setup.ps1        # setup e zip in artifacts\ (serve Inno Setup)
+.\dev\serve.ps1                  # anteprima dell'interfaccia nel browser, con dati finti (http://localhost:5517/)
 ```
+
+La cartella `dev\` non finisce nel programma: `preview.html` carica la pagina vera di `ui\` con `mock.js`, che risponde
+ai comandi al posto del programma con una rete dimostrativa. Serve per lavorare sulla grafica senza compilare.
 
 La pagina chiede le operazioni al programma con `postMessage({ id, cmd, args })` e riceve `{ id, ok, result | error }`;
 le scansioni in corso mandano eventi (`network.progress`, `ports.progress`, `trace.hop`, `…done`) accorpati ogni

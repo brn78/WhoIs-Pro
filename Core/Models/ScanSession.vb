@@ -11,5 +11,7 @@
         Public Property WhoisEntries As New List(Of WhoisResult)()
         Public Property DnsRecords As New List(Of DnsRecordInfo)()
         Public Property TracerouteHops As New List(Of TracerouteHop)()
+        ''' <summary>Le scansioni fatte (le ultime 200), per la Panoramica; le sessioni salvate prima della 2.4 non le hanno.</summary>
+        Public Property Scans As New List(Of ScanRecord)()
     End Class
 End Namespace

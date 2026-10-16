@@ -130,7 +130,15 @@ Namespace UI
             MyBase.OnLoad(e)
             RestorePlacement()
             Try
-                Dim environment = Await CoreWebView2Environment.CreateAsync(Nothing, Path.Combine(LocalFolder, "WebView2"), Nothing)
+                Dim options As CoreWebView2EnvironmentOptions = Nothing
+#If DEBUG Then
+                ' solo nella versione Debug: WHOISPRO_DEBUG_PORT=9333 apre la porta di debug remoto di WebView2 (prove automatiche della pagina)
+                Dim debugPort = System.Environment.GetEnvironmentVariable("WHOISPRO_DEBUG_PORT")
+                If Not String.IsNullOrEmpty(debugPort) AndAlso Integer.TryParse(debugPort, Nothing) Then
+                    options = New CoreWebView2EnvironmentOptions($"--remote-debugging-port={debugPort}")
+                End If
+#End If
+                Dim environment = Await CoreWebView2Environment.CreateAsync(Nothing, Path.Combine(LocalFolder, "WebView2"), options)
                 Await _view.EnsureCoreWebView2Async(environment)
             Catch ex As WebView2RuntimeNotFoundException
                 If MessageBox.Show(Me, "Per la finestra di WhoIs Pro serve Microsoft Edge WebView2 Runtime, di solito già presente in Windows 10 e 11." & vbCrLf & vbCrLf &
