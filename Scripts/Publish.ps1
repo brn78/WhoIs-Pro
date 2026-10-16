@@ -33,6 +33,8 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish non riuscito." }
 Get-ChildItem $publishDir -Filter "*.xml" | Remove-Item -Force
 Copy-Item (Join-Path $root "README.md") $publishDir
 Copy-Item (Join-Path $root "CHANGELOG.md") $publishDir
+# Componenti e dati di terze parti con le loro licenze (WebView2, icone Lucide, produttori dei MAC)
+Copy-Item (Join-Path $root "THIRD-PARTY-NOTICES.md") $publishDir
 
 $zip = Join-Path $root "artifacts\WhoIsPro-$version-win-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
