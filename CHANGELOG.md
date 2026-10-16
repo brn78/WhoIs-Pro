@@ -1,8 +1,34 @@
 # Novità delle versioni
 
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
-Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
+Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggiornamenti → Scarica e installa*
+(fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
+
+## 2.4.0 · in lavorazione
+
+- **Grafica nuova, solo di WhoIs Pro**: barra laterale grafite anche nel tema chiaro, accento verde acqua, LED quadrati
+  come quelli delle porte di rete, il carattere tecnico di Windows (Bahnschrift) per titoli e numeri, etichette in
+  tondo invece che in maiuscolo, angoli più netti. Non è più la stessa grafica delle console web.
+- **Panoramica rifatta**: il traffico dal vivo di ogni scheda collegata (ricezione e invio, traccia degli ultimi tre
+  minuti, LED che lampeggia quando passano dati), indirizzo, gateway, DNS e MAC; host nella rete con i nuovi delle
+  ultime 24 ore, porte aperte, risposta di Internet e ultima scansione; le ultime scansioni con esito, durata e
+  «Ripeti»; processore, memoria e disco; dispositivi per tipo e ultimi arrivati.
+- **Storico delle scansioni nella sessione**: rete, porte e traceroute, con ora, durata ed esito (finisce nel file).
+- **Impostazioni in alto**: l'ingranaggio nella barra superiore apre le Impostazioni, divise in Generale, Rete del PC,
+  Aggiornamenti, Produttori e Dati del programma. Aggiornamenti e database dei produttori sono passati qui dalla
+  Panoramica.
+- **Rete del PC**: l'icona accanto all'ingranaggio apre un pannello con tutte le schede (IP, maschera, gateway, DNS,
+  MAC, DHCP o statico), i profili da applicare al volo e *Torna a DHCP*.
+- **Dettagli della sessione** (titolo, note, file, impronta, date) in un pannello, dal menu della sessione o dalla
+  Panoramica.
+- **Colonne larghe quanto il contenuto**: nelle tabelle niente più nomi, produttori e DNS tagliati con i puntini; se la
+  finestra è stretta la tabella scorre in orizzontale e la colonna delle azioni resta sempre in vista.
+- **Riscansiona un host**: il pulsante su ogni riga della pagina Rete (e nel menu e nel dettaglio) rifà ARP, ping, nome
+  e tipo di quel solo indirizzo, anche mentre gira la scansione della rete. Se non risponde più resta nella sessione
+  segnato *non risponde*.
+- Una scansione della rete fermata a metà dice quanti host aveva già trovato, invece di zero.
+- Immagini del README e banner rifatti con la nuova grafica.
 
 ## 2.3.0 · 16 ottobre 2026
 

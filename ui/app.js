@@ -14,7 +14,8 @@ import './pages/dns.js';
 import './pages/trace.js';
 import './pages/netstat.js';
 import './pages/computer.js';
-import './pages/settings.js';
+import { openPcNetwork } from './pages/settings.js';
+import { openSessionDrawer } from './pages/session.js';
 
 const SECTIONS = [
   { key: 'scan', title: 'Scansione' },
@@ -140,13 +141,17 @@ function internetPill() {
 }
 
 function topbarActions() {
-  const s = S.st.session;
+  const st = S.st;
+  const s = st.session;
   const dirty = s.dirty;
   const label = s.file ? fileName(s.file) : 'Sessione non salvata';
   return `${internetPill()}<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
       <span class="site-icon ${dirty ? 'is-dirty' : s.file ? 'is-saved' : ''}">${icon(dirty ? 'edit' : s.file ? 'check' : 'archive')}</span>
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
-    ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}`;
+    ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}
+    <span class="topbar-sep"></span>
+    <button class="icon-btn" data-action="pc-network" title="Rete del PC: schede, IP, gateway, DNS e profili">${icon('network')}</button>
+    <button class="icon-btn ${S.page === 'settings' ? 'is-active' : ''}" data-action="go" data-page="settings" title="Impostazioni${st.update && st.update.available ? ' · nuova versione disponibile' : ''}">${icon('settings')}${st.update && st.update.available ? '<span class="dot-badge"></span>' : ''}</button>`;
 }
 
 function render() {
@@ -163,6 +168,8 @@ function renderPage(scrollTop = false) {
   void content.offsetWidth;
   content.classList.add('page-enter');
   $$('.nav-item[data-page]').forEach((a) => a.classList.toggle('is-active', a.dataset.page === S.page));
+  const gear = $('.topbar [data-page="settings"]');
+  if (gear) gear.classList.toggle('is-active', S.page === 'settings');
   $('#topbar-title').innerHTML = `<span class="page-icon">${icon(page.icon)}</span><h1>${esc(page.heading || page.title)}</h1>`;
   if (scrollTop) window.scrollTo({ top: 0 });
   if (page.after) page.after();
@@ -181,8 +188,6 @@ function updateChrome() {
     el.textContent = fmtNumber(n);
     el.classList.toggle('hidden', !n);
   }
-  const overview = $('.nav-item[data-page="overview"]');
-  if (overview) overview.classList.toggle('has-notice', !!(S.st.update && S.st.update.available));
 }
 
 function go(page, params = {}, scrollTop = true) {
@@ -269,6 +274,8 @@ function sessionMenu(anchor) {
   openMenu(anchor, [
     { header: s.file ? fileName(s.file) : 'Sessione non salvata' },
     ...(s.file ? [{ html: `<div class="menu-path">${esc(s.file)}</div>` }] : []),
+    { ic: 'edit', label: 'Dettagli della sessione…', run: () => openSessionDrawer() },
+    { sep: true },
     { ic: 'filePlus', label: 'Nuova sessione', hint: 'Ctrl+N', run: newSession },
     { ic: 'folderOpen', label: 'Apri…', hint: 'Ctrl+O', run: openSession },
     { ic: 'save', label: 'Salva', hint: 'Ctrl+S', run: () => saveSession(false) },
@@ -277,8 +284,6 @@ function sessionMenu(anchor) {
     { ic: 'fileCode', label: 'Esporta report HTML…', run: () => exportSession('html') },
     { ic: 'sheet', label: 'Esporta host in CSV…', run: () => exportSession('csv') },
     { ic: 'fileText', label: 'Esporta riepilogo di testo…', run: () => exportSession('txt') },
-    { sep: true },
-    { ic: 'dashboard', label: 'Panoramica', run: () => go('overview') },
   ]);
 }
 
@@ -293,18 +298,18 @@ function exportMenu(anchor) {
 async function updateOui() {
   if (S.st.running.oui) return;
   S.st.running.oui = true;
-  S.overview.ouiMessage = 'Connessione ai registri dell\'IEEE…';
+  S.settings.ouiMessage = 'Connessione ai registri dell\'IEEE…';
   bus.dispatchEvent(new Event('state'));
   updateChrome();
   try {
     const r = adopt(await call('updateOui'));
     updateChrome();
-    if (S.page === 'overview') renderPage();
+    if (S.page === 'settings') renderPage();
     toast(`${plural(r.count, 'produttore', 'produttori')}${r.changedHosts ? ` · ${plural(r.changedHosts, 'host riclassificato', 'host riclassificati')}` : ''}.`, { tone: 'success', title: 'Database dei produttori aggiornato' });
   } catch (err) {
     S.st.running.oui = false;
     updateChrome();
-    if (S.page === 'overview') renderPage();
+    if (S.page === 'settings') renderPage();
     toastError(err, 'Database non aggiornato');
   }
 }
@@ -317,7 +322,7 @@ let updateNotified = false;
 function announceUpdate(u) {
   if (!u || !u.available || updateNotified) return;
   updateNotified = true;
-  toast(`WhoIs Pro ${u.version} è pronta: aprila dalla Panoramica.`, { tone: 'info', title: 'Nuova versione disponibile', timeout: 12000, action: { label: 'Vedi', run: () => go('overview') } });
+  toast(`WhoIs Pro ${u.version} è pronta: la trovi in Impostazioni, Aggiornamenti.`, { tone: 'info', title: 'Nuova versione disponibile', timeout: 12000, action: { label: 'Vedi', run: () => go('settings', { tab: 'updates' }) } });
 }
 
 async function checkUpdate() {
@@ -409,6 +414,8 @@ const ACTIONS = {
   'open-url': (el) => call('openUrl', { url: el.dataset.url }),
   'copy-text': (el) => call('setClipboard', { text: el.dataset.text }).then(() => toast('Copiato negli appunti.', { tone: 'success' }), (e) => toastError(e)),
   'close-overlay': () => closeTopOverlay(),
+  'pc-network': () => openPcNetwork(),
+  'session-details': () => openSessionDrawer(),
 };
 
 document.addEventListener('click', (e) => {

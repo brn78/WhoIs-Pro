@@ -9,7 +9,7 @@
      gh (GitHub CLI) e carica WhoIsPro-<versione>-Setup.exe e WhoIsPro-<versione>-win-x64.zip.
   4. Tiene la lista delle release al minimo: restano le ultime -Mantieni (2: quella appena pubblicata e la precedente),
      le altre vengono cancellate da GitHub insieme al tag. Le novità di tutte le versioni restano nel CHANGELOG.
-  I programmi installati trovano la nuova versione da soli (Panoramica → Aggiornamenti → Scarica e installa): GitHub
+  I programmi installati trovano la nuova versione da soli (Impostazioni → Aggiornamenti → Scarica e installa): GitHub
   pubblica l'impronta SHA-256 degli allegati e il programma la verifica prima di avviare il setup.
 
 .EXAMPLE

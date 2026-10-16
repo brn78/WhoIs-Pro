@@ -1,233 +1,332 @@
-// Panoramica: conteggi della sessione, file e salvataggio, database dei produttori, aggiornamenti, schede di rete.
+// Panoramica: il collegamento di rete dal vivo (traffico delle schede con i LED delle porte), la rete trovata
+// (host, nuovi arrivi, porte, Internet), le ultime scansioni e il sistema. Si aggiorna ogni due secondi.
 import { call, on } from '../core/bridge.js';
-import { $, esc, fmtDateTime, fmtNumber, plural, shortPath } from '../core/dom.js';
+import { $, $$, esc, fmtAgo, fmtBytes, fmtDateTime, fmtDuration, fmtLinkSpeed, fmtNumber, fmtRate, fmtSeconds, plural } from '../core/dom.js';
 import { icon } from '../core/icons.js';
-import { S, definePage, adopt, counts, bus } from '../core/store.js';
+import { catIcon, categoryOf } from '../core/categories.js';
+import { S, definePage, addScan, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table } from '../core/table.js';
-import { help, note, openMenu, pageHead, toast, toastError } from '../core/ui.js';
-import { applyProfile } from './settings.js';
+import { emptyState, pageHead, toastError } from '../core/ui.js';
+import { shortVendor } from './network.js';
+import { openSessionDrawer } from './session.js';
+import { openPcNetwork } from './settings.js';
 
-S.overview = { ouiMessage: '', notesOpen: false };
+const SAMPLES = 90;          // 90 letture ogni 2 secondi: gli ultimi 3 minuti
+const DAY = 86400000;
 
-function kpi(page, ic, tone, label, value, sub) {
-  return `<button class="kpi is-link" data-action="go" data-page="${page}" title="Apri la pagina">
-    <div class="kpi-top"><span class="kpi-label">${label}</span><span class="kpi-icon ${tone}">${icon(ic, { size: 16 })}</span></div>
-    <div class="kpi-value">${fmtNumber(value)}</div><div class="kpi-sub">${sub}</div></button>`;
-}
+S.overview = { dash: null, error: '', timer: 0, busy: false, sel: '', hist: new Map() };
 
-function sessionCard() {
-  const s = S.st.session;
-  const status = s.dirty
-    ? '<span class="pill warning pill-dot">Modifiche non salvate</span>'
-    : s.file ? '<span class="pill success pill-dot">Salvata</span>' : '<span class="pill">Vuota, mai salvata</span>';
-  return `<section class="card"><div class="card-head"><div class="card-title">${icon('archive')}<h2>Sessione</h2></div>${status}</div>
-    <div class="card-body"><div class="fields">
-      <div class="field"><label for="f-title">Titolo</label>
-        <input class="input title-input" id="f-title" data-field="title" value="${esc(s.title)}" maxlength="120" autocomplete="off" placeholder="Es. Rete ufficio, ottobre 2026"></div>
-      <div class="field"><label for="f-notes">Note</label>
-        <textarea class="input" id="f-notes" data-field="notes" rows="3" placeholder="Appunti sulla sessione (finiscono nel file)">${esc(s.notes || '')}</textarea></div>
-      <dl class="meta">
-        <div><dt>File</dt><dd>${s.file ? `<span class="mono" title="${esc(s.file)}">${esc(shortPath(s.file))}</span>` : '<span class="muted">Non ancora salvata</span>'}</dd></div>
-        <div><dt>SHA-256</dt><dd>${s.checksum ? `<span class="mono" title="${esc(s.checksum)}">${esc(s.checksum.slice(0, 24))}…</span>` : '<span class="muted">—</span>'}</dd></div>
-        <div><dt>Creata</dt><dd>${fmtDateTime(s.createdAt) || '<span class="muted">—</span>'}</dd></div>
-        <div><dt>Modificata</dt><dd>${fmtDateTime(s.modifiedAt) || '<span class="muted">—</span>'}</dd></div>
-      </dl>
-    </div></div>
-    <div class="card-foot">
-      <button class="btn btn-sm" data-action="save-as">${icon('download')} Salva con nome…</button>
-      <button class="btn btn-sm" data-action="export-menu">${icon('fileText')} Esporta ${icon('chevronDown', { size: 13 })}</button>
-      <span class="foot-note">Salvataggio atomico, copia .bak ${help('File temporaneo, SHA-256 e sostituzione in un colpo solo; la versione precedente resta in .bak.')}</span>
-    </div>
-  </section>`;
-}
-
-function ouiCard() {
-  const o = S.st.oui;
-  const busy = S.st.running.oui;
-  const msg = S.overview.ouiMessage;
-  return `<section class="card"><div class="card-head"><div class="card-title">${icon('database')}<h2>Database dei produttori</h2></div>
-      <span class="pill primary">${plural(o.count, 'produttore', 'produttori')}</span></div>
-    <div class="card-body"><div class="fields">
-      <dl class="kv compact">
-        <dt>Origine</dt><dd>${o.file ? `<span class="mono" title="${esc(o.file)}">${esc(shortPath(o.file))}</span>` : '<span class="muted">Solo i produttori incorporati nel programma</span>'}</dd>
-        <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('I tre registri ufficiali dell\'IEEE (blocchi MA-L, MA-M e MA-S, aggiornati ogni giorno; se l\'IEEE non risponde, il database di Wireshark) vengono salvati in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati. Per ogni MAC si usa il blocco più preciso.')}</dd>
-      </dl>
-      ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>` : ''}
-      <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna dall'IEEE</button></div>
-    </div></div></section>`;
-}
-
-/**
- * Note della release (Markdown semplice del CHANGELOG) come HTML: elenco puntato con le righe spezzate riunite,
- * grassetto, corsivo e codice; tutto il resto come testo.
- */
-function notesHtml(notes) {
-  const inline = (t) => esc(t)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
-  const blocks = [];
-  let current = null;
-  for (const raw of String(notes || '').split('\n')) {
-    const line = raw.replace(/\s+$/, '');
-    if (!line.trim()) { current = null; continue; }
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (bullet) { current = { type: 'li', text: bullet[1] }; blocks.push(current); continue; }
-    const head = /^#+\s+(.*)$/.exec(line);
-    if (head) { current = null; blocks.push({ type: 'h', text: head[1] }); continue; }
-    if (current && /^\s/.test(raw)) { current.text += ` ${line.trim()}`; continue; }
-    if (current && current.type === 'p') { current.text += ` ${line.trim()}`; continue; }
-    current = { type: 'p', text: line.trim() };
-    blocks.push(current);
+// ---------------------------------------------------------------------------------------------------------------------
+// Dati dal vivo
+// ---------------------------------------------------------------------------------------------------------------------
+function remember(dash) {
+  const o = S.overview;
+  for (const a of dash.traffic || []) {
+    const h = o.hist.get(a.id) || [];
+    h.push({ rx: a.rxBps, tx: a.txBps });
+    if (h.length > SAMPLES) h.splice(0, h.length - SAMPLES);
+    o.hist.set(a.id, h);
   }
-  let html = '';
-  let inList = false;
-  for (const b of blocks) {
-    if (b.type === 'li') { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(b.text)}</li>`; continue; }
-    if (inList) { html += '</ul>'; inList = false; }
-    html += b.type === 'h' ? `<h4>${inline(b.text)}</h4>` : `<p>${inline(b.text)}</p>`;
-  }
-  if (inList) html += '</ul>';
-  return html;
+  const list = dash.traffic || [];
+  if (!list.some((a) => a.id === o.sel)) o.sel = list.length ? list[0].id : '';
 }
 
-/** Riquadro degli aggiornamenti: versione in uso e ultima pubblicata su una riga, novità ripiegate, «Scarica e installa». */
-function updateCard() {
-  const u = S.st.update || {};
-  const d = u.download;
-  const busy = d && d.phase !== 'error';
-  let pill;
-  if (u.available) pill = `<span class="pill warning pill-dot">Nuova versione ${esc(u.version)}</span>`;
-  else if (u.error) pill = '<span class="pill danger pill-dot">Controllo non riuscito</span>';
-  else if (u.checkedAt) pill = '<span class="pill success pill-dot">Versione aggiornata</span>';
-  else pill = '<span class="pill">Mai controllato</span>';
+const selected = () => {
+  const d = S.overview.dash;
+  return d && (d.traffic || []).find((a) => a.id === S.overview.sel);
+};
 
-  let progress = '';
-  if (d && d.phase === 'error') progress = note('danger', 'alert', esc(d.error));
-  else if (d) {
-    const mb = (n) => (n / 1048576).toFixed(1).replace('.', ',');
-    const pct = d.total > 0 ? Math.min(100, Math.round(d.done * 100 / d.total)) : 0;
-    const text = d.phase === 'download' ? `Scaricamento del setup ${esc(d.version)}: ${mb(d.done)} di ${mb(d.total)} MB`
-      : d.phase === 'verify' ? 'Controllo di dimensione, impronta SHA-256 e versione del setup…'
-        : 'Setup avviato: il programma si chiude e si riapre aggiornato.';
-    progress = `<div class="stack" style="gap:8px"><div class="meter"><span style="width:${d.phase === 'download' ? pct : 100}%"></span></div>
-      <div class="scan-stat"><span class="spinner"></span>${text}</div></div>`;
+async function load() {
+  const o = S.overview;
+  if (o.busy) return;
+  o.busy = true;
+  try {
+    o.dash = await call('dashboard');
+    o.error = '';
+    remember(o.dash);
+  } catch (err) {
+    o.error = err.message;
   }
-  const open = S.overview.notesOpen;
-  const notesLink = u.available && u.notes
-    ? `<a href="#" class="notes-toggle" data-action="toggle-notes" aria-expanded="${open}">${esc(u.title || `Novità della ${u.version}`)} ${icon('chevronDown')}</a>` : '';
-  const notes = u.available && u.notes && open ? `<div class="notes">${notesHtml(u.notes)}</div>` : '';
-  const install = !u.available ? ''
-    : (u.installed && u.hasSetup)
-      ? `<button class="btn btn-sm btn-primary" data-action="install-update" ${busy ? 'disabled' : ''}>${icon('download')} Scarica e installa</button>`
-      : `<button class="btn btn-sm btn-primary" data-action="open-url" data-url="${esc(u.pageUrl)}">${icon('external')} Apri la pagina dei download</button>`;
-  const latest = u.version
-    ? `<span class="muted">· ${esc(u.version)}${u.publishedAt ? `, ${fmtDateTime(u.publishedAt).slice(0, 10)}` : ''}</span>` : '<span class="muted">· —</span>';
-  const checkHelp = help('Una volta al giorno il programma chiede a GitHub qual è l\'ultima versione pubblicata. Niente si installa da solo: quando c\'è una versione nuova compare qui «Scarica e installa».');
-  return `<section class="card"><div class="card-head"><div class="card-title">${icon('rotate')}<h2>Aggiornamenti</h2></div>${pill}</div>
-    <div class="card-body"><div class="fields">
-      <dl class="kv compact">
-        <dt>In uso · ultima pubblicata</dt><dd><b>${esc(u.current)}</b>${u.installed ? '' : ' <span class="tag">copia portabile</span>'} ${latest}</dd>
-        <dt>Ultimo controllo</dt><dd>${u.checkedAt ? fmtDateTime(u.checkedAt) : '<span class="muted">mai</span>'} ${checkHelp}</dd>
-      </dl>
-      ${u.error ? note('danger', 'alert', esc(u.error)) : ''}
-      ${progress}
-      ${u.available && !u.installed ? note('info', 'info', 'Questa copia non è stata installata con il setup: scarica il nuovo pacchetto dalla pagina delle release e sostituisci i file.') : ''}
-      <div class="card-actions" style="margin-top:0">
-        ${install}
-        <button class="btn btn-sm ${u.checking ? 'is-loading' : ''}" data-action="check-update" ${busy || u.checking ? 'disabled' : ''}>${icon('refresh')} Controlla ora</button>
-        <button class="btn btn-sm btn-ghost" data-action="open-url" data-url="${esc(u.pageUrl || 'https://github.com/brn78/WhoIs-Pro/releases/latest')}">${icon('external')} Tutte le versioni</button>
-        ${notesLink}
+  o.busy = false;
+  if (S.page === 'overview') refreshLive();
+}
+
+function startTimer() {
+  stopTimer();
+  S.overview.timer = setInterval(() => { if (S.page === 'overview') load(); else stopTimer(); }, 2000);
+}
+function stopTimer() {
+  clearInterval(S.overview.timer);
+  S.overview.timer = 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Collegamento: porte (schede), velocità e traccia del traffico
+// ---------------------------------------------------------------------------------------------------------------------
+/** Scala del grafico: il primo valore «tondo» sopra il massimo (1, 2, 5 × 10^n bit/s). */
+function niceMax(bytesPerSecond) {
+  const bits = Math.max(8000, bytesPerSecond * 8 * 1.15);
+  const p = 10 ** Math.floor(Math.log10(bits));
+  const step = [1, 2, 5, 10].find((m) => m * p >= bits);
+  return (step * p) / 8;
+}
+
+/** Traccia del traffico: ricezione come area blu, invio come linea arancio; il più recente a destra. */
+function scope(hist) {
+  const W = 900;
+  const H = 150;
+  const max = niceMax(Math.max(0, ...hist.map((s) => Math.max(s.rx, s.tx))));
+  const x = (i) => W - (hist.length - 1 - i) * (W / (SAMPLES - 1));
+  const y = (v) => H - Math.min(1, v / max) * (H - 6);
+  const line = (key) => hist.map((s, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(s[key]).toFixed(1)}`).join(' ');
+  const area = (key) => (hist.length > 1 ? `${line(key)} L${x(hist.length - 1).toFixed(1)} ${H} L${x(0).toFixed(1)} ${H} Z` : '');
+  const grid = [0.25, 0.5, 0.75].map((f) => `<line class="scope-grid" x1="0" x2="${W}" y1="${(H - f * (H - 6)).toFixed(1)}" y2="${(H - f * (H - 6)).toFixed(1)}"/>`).join('');
+  const svg = hist.length < 2 ? '' : `<path class="scope-area rx" d="${area('rx')}"/><path class="scope-area tx" d="${area('tx')}"/>
+    <path class="scope-line rx" d="${line('rx')}"/><path class="scope-line tx" d="${line('tx')}"/>`;
+  return `<svg class="scope-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Traffico degli ultimi tre minuti">${grid}${svg}</svg>
+    <span class="scope-max">${esc(fmtRate(max).text)}</span><span class="scope-span">ultimi 3 min</span>`;
+}
+
+function ledClass(a) {
+  return a.rxBps + a.txBps > 2048 ? 'led is-act' : 'led is-link';
+}
+
+function portsHtml() {
+  const d = S.overview.dash;
+  const list = (d && d.traffic) || [];
+  if (!list.length) return '';
+  return list.map((a) => `<button class="port ${a.id === S.overview.sel ? 'is-active' : ''}" data-action="link-select" data-id="${esc(a.id)}" title="${esc(a.description)}">
+      <span class="${ledClass(a)}" data-led="${esc(a.id)}"></span>
+      <span class="port-text"><b>${esc(a.name)}</b><small>${esc([a.type, fmtLinkSpeed(a.speedMbps)].filter(Boolean).join(', '))}</small></span></button>`).join('');
+}
+
+function readout(cls, ic, label, bps, total, attr) {
+  const r = fmtRate(bps);
+  return `<div class="readout ${cls}">
+    <span class="readout-label">${icon(ic, { size: 15 })}${label}</span>
+    <span class="readout-value"><b data-${attr}>${esc(r.value)}</b><span data-${attr}-unit>${esc(r.unit)}</span></span>
+    <small data-${attr}-total>${esc(fmtBytes(total))} dall'avvio di Windows</small></div>`;
+}
+
+function prefix(mask) {
+  const bits = String(mask || '').split('.').map((n) => (Number(n) >>> 0).toString(2).padStart(8, '0')).join('');
+  return /^1*0*$/.test(bits) && bits.length === 32 ? `/${bits.indexOf('0') < 0 ? 32 : bits.indexOf('0')}` : '';
+}
+
+function factsHtml(a) {
+  const f = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  return `${f('Indirizzo', `<span class="mono">${esc(a.ip)}${esc(prefix(a.mask))}</span>`)}
+    ${f('Gateway', a.gateway ? `<span class="mono">${esc(a.gateway)}</span>` : '<span class="faint">nessuno</span>')}
+    ${f('DNS', (a.dns || []).length ? `<span class="mono">${esc(a.dns.join(', '))}</span>` : '<span class="faint">—</span>')}
+    ${f('Configurazione', a.dhcp ? 'automatica (DHCP)' : 'statica')}
+    ${f('MAC', `<span class="mono">${esc(a.mac)}</span>`)}`;
+}
+
+function linkPanel() {
+  const o = S.overview;
+  const a = selected();
+  let inner;
+  if (o.error && !o.dash) inner = `<div class="link-empty">${emptyState('alert', 'Traffico non letto', esc(o.error))}</div>`;
+  else if (!o.dash) inner = '<div class="loading-block"><span class="spinner"></span> Lettura delle schede di rete…</div>';
+  else if (!a) inner = `<div class="link-empty">${emptyState('wifiOff', 'Nessuna scheda collegata', 'Collega il cavo o la rete Wi-Fi: la scheda compare qui con il suo traffico.')}</div>`;
+  else {
+    inner = `<div class="link-body">
+        <div class="readouts">
+          ${readout('rx', 'download', 'Ricezione', a.rxBps, a.rxTotal, 'rx')}
+          ${readout('tx', 'upload', 'Invio', a.txBps, a.txTotal, 'tx')}
+        </div>
+        <div class="scope" id="scope">${scope(o.hist.get(a.id) || [])}</div>
       </div>
-      ${notes}
-    </div></div></section>`;
+      <dl class="link-facts" id="link-facts">${factsHtml(a)}</dl>`;
+  }
+  return `<section class="card link-panel" id="link-panel">
+    <div class="link-head">
+      <div class="ports" id="ports">${portsHtml()}</div>
+      <button class="btn btn-sm" data-action="pc-network">${icon('settings')} Rete del PC</button>
+    </div>
+    ${inner}
+  </section>`;
 }
 
-function adaptersCard() {
-  const rows = S.st.adapters || [];
-  const columns = [
-    { key: 'name', label: 'Scheda', cell: (a) => `<div class="cell-main"><span class="cat-icon primary">${icon('network')}</span><div class="cell-text"><b class="trunc" title="${esc(a.name)}">${esc(a.name)}</b><small class="trunc" title="${esc(a.description)}">${esc(a.description)}</small></div></div>` },
-    { key: 'ip', label: 'Indirizzo IP', cls: 'mono' },
-    { key: 'cidr', label: 'Rete', cls: 'mono' },
-    { key: 'gateway', label: 'Gateway', cls: 'mono', cell: (a) => esc(a.gateway || '—') },
-    { key: 'mac', label: 'MAC', cls: 'mono' },
-    { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (a) => `<div class="row-actions">
-        <button class="btn btn-sm" data-action="scan-adapter" data-cidr="${esc(a.cidr)}">${icon('radar')} Scansiona</button>
-        <button class="row-menu-btn" data-action="adapter-menu" data-adapter="${esc(a.name)}" data-cidr="${esc(a.cidr)}" title="Altre azioni">${icon('more')}</button></div>` },
-  ];
-  return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('network')}<h2>Schede di rete</h2><span class="count">${rows.length}</span></div>
-      <button class="btn btn-sm" data-action="detect-adapters">${icon('refresh')} Rileva di nuovo</button></div>
-    ${table({ columns, rows, sort: null, empty: '<div class="empty"><h3>Nessuna scheda di rete attiva</h3><p>Nessuna interfaccia IPv4 collegata.</p></div>' })}
-  </section>`;
+// ---------------------------------------------------------------------------------------------------------------------
+// Rete trovata: host, nuovi arrivi, porte, Internet, ultima scansione
+// ---------------------------------------------------------------------------------------------------------------------
+const isNew = (h) => h.firstSeen && Date.now() - new Date(h.firstSeen).getTime() < DAY;
+
+function lastScan() {
+  const list = S.data.scans || [];
+  return list.length ? list[list.length - 1] : null;
+}
+
+const KIND = {
+  network: { ic: 'radar', label: 'Rete', unit: ['host attivo', 'host attivi'] },
+  ports: { ic: 'plug', label: 'Porte', unit: ['porta aperta', 'porte aperte'] },
+  trace: { ic: 'route', label: 'Traceroute', unit: ['salto', 'salti'] },
+  host: { ic: 'refresh', label: 'Host', unit: ['risponde', 'risponde'] },
+};
+
+function stat(page, label, value, sub, tone = '') {
+  return `<button class="stat ${tone}" data-action="go" data-page="${page}"><span class="stat-label">${label}</span>
+    <span class="stat-value">${value}</span><span class="stat-sub">${sub}</span></button>`;
+}
+
+function statsHtml() {
+  const hosts = S.data.hosts;
+  const fresh = hosts.filter(isNew).length;
+  const portHosts = new Set(S.data.ports.map((p) => p.host)).size;
+  const net = S.overview.dash && S.overview.dash.internet;
+  const online = net ? net.online : S.st.online;
+  const ms = net && net.latencyMs;
+  const last = lastScan();
+  const k = last && (KIND[last.kind] || KIND.network);
+  return `${stat('network', 'Host nella rete', fmtNumber(hosts.length), fresh ? `<b class="tone-new">${plural(fresh, 'nuovo', 'nuovi')}</b> nelle ultime 24 ore` : 'nessun nuovo nelle ultime 24 ore')}
+    ${stat('ports', 'Porte aperte', fmtNumber(S.data.ports.length), portHosts ? `su ${plural(portHosts, 'host', 'host')}` : 'nessuna scansione delle porte')}
+    ${stat('netstat', 'Internet', online === false ? 'Assente' : ms != null ? `${fmtNumber(ms)}<small>ms</small>` : '—',
+      online === false ? 'WHOIS, DNS pubblici e aggiornamenti non funzionano' : 'risposta della pagina di prova di Windows', online === false ? 'is-bad' : '')}
+    ${stat(last ? (last.kind === 'ports' ? 'ports' : last.kind === 'trace' ? 'trace' : 'network') : 'network', 'Ultima scansione', last ? esc(fmtAgo(last.at)) : 'mai',
+      last ? `${esc(k.label)} ${esc(last.target)}` : 'avvia la prima dalla pagina Rete')}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Ultime scansioni e sistema
+// ---------------------------------------------------------------------------------------------------------------------
+function scansCard() {
+  const list = (S.data.scans || []).slice(-7).reverse();
+  const items = list.map((s, i) => {
+    const k = KIND[s.kind] || KIND.network;
+    const result = s.error ? `<span class="tone-bad">errore: ${esc(s.error)}</span>`
+      : s.kind === 'host' ? (s.found ? 'risponde' : '<span class="tone-bad">non risponde</span>')
+        : `${plural(s.found, k.unit[0], k.unit[1])}${s.cancelled ? ' · fermata' : ''}`;
+    return `<li class="scan-item">
+      <span class="scan-kind">${icon(k.ic, { size: 16 })}</span>
+      <span class="scan-text"><b>${esc(k.label)} <span class="mono">${esc(s.target)}</span></b><small>${result} in ${esc(fmtSeconds(s.seconds))}</small></span>
+      <span class="scan-when" title="${esc(fmtDateTime(s.at))}">${esc(fmtAgo(s.at))}</span>
+      <button class="btn btn-sm btn-ghost btn-icon" data-action="scan-again" data-index="${(S.data.scans.length - 1) - i}" title="Ripeti">${icon('refresh')}</button></li>`;
+  }).join('');
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Ultime scansioni</h2>${S.data.scans.length ? `<span class="count">${S.data.scans.length}</span>` : ''}</div>
+      <button class="btn btn-sm" data-action="go" data-page="network">${icon('radar')} Scansiona la rete</button></div>
+    ${list.length ? `<ul class="scan-list">${items}</ul>` : emptyState('radar', 'Nessuna scansione in questa sessione', 'Le scansioni della rete, delle porte e i traceroute finiscono qui, con esito e durata.')}</section>`;
+}
+
+function bar(label, pct, value, sub) {
+  const tone = pct >= 90 ? 'danger' : pct >= 75 ? 'warning' : '';
+  return `<div class="gauge ${tone}"><div class="gauge-top"><span>${label}</span><b>${Math.round(pct)}%</b></div>
+    <div class="gauge-track"><span style="width:${Math.min(100, Math.max(0, pct)).toFixed(1)}%"></span></div>
+    <div class="gauge-sub"><span>${value}</span><span class="muted">${sub}</span></div></div>`;
+}
+
+function systemInner() {
+  const d = S.overview.dash;
+  if (!d || !d.system) return '<div class="loading-block"><span class="spinner"></span> Lettura del sistema…</div>';
+  const { cpu, memory, disk, os } = d.system;
+  return `${bar('Processore', cpu.usage, esc(cpu.name), `${fmtNumber(cpu.logical)} thread`)}
+    ${bar('Memoria', memory.total ? (memory.used / memory.total) * 100 : 0, `${esc(fmtBytes(memory.used))} di ${esc(fmtBytes(memory.total))}`, 'in uso')}
+    ${disk ? bar(`Disco ${esc(disk.name)}`, disk.total ? (disk.used / disk.total) * 100 : 0, `${esc(fmtBytes(disk.free))} liberi`, `su ${esc(fmtBytes(disk.total))}`) : ''}
+    <dl class="sys-facts">
+      <div><dt>Windows</dt><dd>${esc(os.name)}${os.version ? ` ${esc(os.version)}` : ''}</dd></div>
+      <div><dt>Computer</dt><dd class="mono">${esc(os.machine)}</dd></div>
+      <div><dt>Acceso da</dt><dd>${esc(fmtDuration(os.uptimeSeconds))}</dd></div>
+    </dl>`;
+}
+
+function systemCard() {
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('laptop')}<h2>Questo PC</h2></div>
+      <button class="btn btn-sm" data-action="go" data-page="computer">${icon('cpu')} Dettagli</button></div>
+    <div class="card-body sys-body" id="sys-body">${systemInner()}</div></section>`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Dispositivi per categoria e ultimi arrivati
+// ---------------------------------------------------------------------------------------------------------------------
+function categoriesCard() {
+  const map = new Map();
+  for (const h of S.data.hosts) {
+    const key = h.deviceCategory || 'Altro';
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+  const rows = [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'it'));
+  const max = rows.length ? rows[0][1] : 1;
+  const items = rows.map(([cat, n]) => `<li><button class="cat-row" data-action="filter-hosts" data-q="${esc(cat)}" title="Mostra ${esc(cat)} nella pagina Rete">
+      ${catIcon({ deviceCategory: cat })}<span class="cat-name">${esc(cat)}</span>
+      <span class="cat-bar tone-${categoryOf({ deviceCategory: cat }).tone || 'neutral'}"><span style="width:${((n / max) * 100).toFixed(1)}%"></span></span>
+      <b>${fmtNumber(n)}</b></button></li>`).join('');
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('dashboard')}<h2>Dispositivi per tipo</h2></div></div>
+    ${rows.length ? `<ul class="cat-list">${items}</ul>` : emptyState('radar', 'Ancora nessun dispositivo', 'Scansiona la rete: telecamere, router, NAS, domotica e telefoni vengono riconosciuti e contati qui.')}</section>`;
+}
+
+function arrivalsCard() {
+  const list = [...S.data.hosts].sort((a, b) => new Date(b.firstSeen) - new Date(a.firstSeen)).slice(0, 6);
+  const items = list.map((h) => `<li><button class="arrival" data-action="filter-hosts" data-q="${esc(h.ipAddress)}">
+      ${catIcon(h)}<span class="arrival-text"><b>${esc(h.hostname || h.deviceType)}</b><small><span class="mono">${esc(h.ipAddress)}</span> · ${esc(shortVendor(h.macVendor))}</small></span>
+      <span class="arrival-when">${isNew(h) ? '<span class="tag new">Nuovo</span>' : ''}<small title="${esc(fmtDateTime(h.firstSeen))}">${esc(fmtAgo(h.firstSeen))}</small></span></button></li>`).join('');
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('clock')}<h2>Ultimi arrivati</h2></div>
+      <span class="card-sub">per data di prima rilevazione</span></div>
+    ${list.length ? `<ul class="arrivals">${items}</ul>` : emptyState('clock', 'Nessun host ancora', 'Ogni dispositivo trovato porta con sé l\'ora in cui è comparso per la prima volta.')}</section>`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Pagina
+// ---------------------------------------------------------------------------------------------------------------------
+function headHtml() {
+  const s = S.st.session;
+  const sub = `<span class="session-line">${icon('archive', { size: 15 })}<b>${esc(s.title)}</b>${s.file ? ` <span class="muted">${esc(s.fileName)}</span>` : ' <span class="muted">non ancora salvata</span>'}${s.dirty ? ' <span class="pill warning pill-dot">da salvare</span>' : ''}</span>`;
+  return pageHead(sub,
+    `<button class="btn" data-action="session-details">${icon('edit')} Dettagli</button>
+     <button class="btn" data-action="new">${icon('filePlus')} Nuova</button>
+     <button class="btn" data-action="open">${icon('folderOpen')} Apri…</button>`);
 }
 
 function render() {
-  const c = counts();
-  const s = S.st.session;
-  const total = `${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}, ${plural(c.whois, 'WHOIS', 'WHOIS')}, ${plural(c.dns, 'record DNS', 'record DNS')}, ${plural(c.trace, 'salto', 'salti')}`;
-  const sub = s.file ? `File <b>${esc(s.fileName)}</b>${s.dirty ? ' · modifiche non salvate' : ''} · ${total}` : `Sessione non ancora salvata (i dati raccolti si salvano in un file .whoispro) · ${total}`;
-  return `${pageHead(sub,
-    `<button class="btn" data-action="new">${icon('filePlus')} Nuova</button>
-     <button class="btn" data-action="open">${icon('folderOpen')} Apri…</button>`)}
-    <div class="kpis kpis-5">
-      ${kpi('network', 'radar', '', 'Host trovati', c.hosts, 'scansione della rete')}
-      ${kpi('ports', 'plug', 'success', 'Porte aperte', c.ports, 'scansione delle porte')}
-      ${kpi('whois', 'globe', 'info', 'Ricerche WHOIS', c.whois, 'domini e indirizzi')}
-      ${kpi('dns', 'dns', 'neutral', 'Record DNS', c.dns, 'A, AAAA, MX, NS, TXT, PTR')}
-      ${kpi('trace', 'route', 'warning', 'Salti traceroute', c.trace, 'percorsi verso le destinazioni')}
-    </div>
-    <div class="grid grid-2">${sessionCard()}<div class="grid">${updateCard()}${ouiCard()}</div></div>
-    <div class="grid section-gap">${adaptersCard()}</div>`;
+  return `${headHtml()}
+    ${linkPanel()}
+    <div class="stats" id="stats">${statsHtml()}</div>
+    <div class="grid grid-dash section-gap"><div id="scans-card">${scansCard()}</div>${systemCard()}</div>
+    <div class="grid grid-2 section-gap" id="lists">${categoriesCard()}${arrivalsCard()}</div>`;
 }
 
-/** Menu ⋯ di una scheda: profili di rete (applica, DHCP, nuovo) e copia dell'indirizzo. */
-async function adapterMenu(anchor, adapter, cidr) {
-  let settings;
-  try { settings = await call('settings'); } catch (err) { toastError(err); return; }
-  const a = (S.st.adapters || []).find((x) => x.name === adapter) || {};
-  const mine = (settings.profiles || []).filter((p) => p.adapter === adapter);
-  const items = [{ header: adapter }];
-  items.push({ ic: 'radar', label: `Scansiona ${cidr}`, run: () => navigate('network', { target: cidr }) });
-  items.push({ sep: true });
-  for (const p of mine) items.push({ ic: 'zap', label: `Applica «${p.name}»`, hint: p.dhcp ? 'DHCP' : p.ip, run: () => applyProfile(p.id) });
-  if (!mine.length) items.push({ html: '<div class="menu-path">Nessun profilo per questa scheda</div>' });
-  items.push({ ic: 'rotate', label: 'Torna a DHCP', run: () => applyProfile(null, { id: '', name: 'DHCP', adapter, dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' }) });
-  items.push({ ic: 'plus', label: 'Nuovo profilo per questa scheda…', run: () => navigate('settings', { newProfile: adapter }) });
-  items.push({ ic: 'settings', label: 'Tutti i profili (Impostazioni)', run: () => navigate('settings') });
-  items.push({ sep: true });
-  items.push({ ic: 'copy', label: 'Copia l\'indirizzo IP', disabled: !a.ip, run: () => copy(a.ip) });
-  items.push({ ic: 'copy', label: 'Copia il MAC', disabled: !a.mac, run: () => copy(a.mac) });
-  openMenu(anchor, items);
+/** Ogni due secondi, sul posto: LED, velocità, traccia, configurazione e sistema (niente sfarfallio). */
+function refreshLive() {
+  const o = S.overview;
+  const panel = $('#link-panel');
+  if (!panel) return;
+  const a = selected();
+  const ids = ((o.dash && o.dash.traffic) || []).map((x) => x.id).join('|');
+  if (!a || !$('#scope') || panel.dataset.ids !== ids) {
+    panel.outerHTML = linkPanel();
+    const fresh = $('#link-panel');
+    if (fresh) fresh.dataset.ids = ids;
+  } else {
+    for (const x of o.dash.traffic) {
+      const led = $(`[data-led="${CSS.escape(x.id)}"]`);
+      if (led) led.className = ledClass(x);
+    }
+    const rx = fmtRate(a.rxBps);
+    const tx = fmtRate(a.txBps);
+    $('[data-rx]').textContent = rx.value; $('[data-rx-unit]').textContent = rx.unit;
+    $('[data-tx]').textContent = tx.value; $('[data-tx-unit]').textContent = tx.unit;
+    $('[data-rx-total]').textContent = `${fmtBytes(a.rxTotal)} dall'avvio di Windows`;
+    $('[data-tx-total]').textContent = `${fmtBytes(a.txTotal)} dall'avvio di Windows`;
+    $('#scope').innerHTML = scope(o.hist.get(a.id) || []);
+    const facts = factsHtml(a);
+    const box = $('#link-facts');
+    if (box && box.dataset.html !== facts) { box.innerHTML = facts; box.dataset.html = facts; }
+  }
+  const sys = $('#sys-body');
+  if (sys) sys.innerHTML = systemInner();
+  const stats = $('#stats');
+  if (stats) stats.innerHTML = statsHtml();
 }
 
-async function copy(text) {
-  try { await call('setClipboard', { text }); toast('Copiato negli appunti.', { tone: 'success' }); } catch (err) { toastError(err); }
+/** Host, porte o scansioni cambiati: contatori ed elenchi. */
+function refreshData() {
+  if (S.page !== 'overview') return;
+  const stats = $('#stats');
+  if (stats) stats.innerHTML = statsHtml();
+  const scans = $('#scans-card');
+  if (scans) scans.innerHTML = scansCard();
+  const lists = $('#lists');
+  if (lists) lists.innerHTML = categoriesCard() + arrivalsCard();
 }
-
-const actions = {
-  'scan-adapter': (el) => navigate('network', { target: el.dataset.cidr }),
-  'adapter-menu': (el) => adapterMenu(el, el.dataset.adapter, el.dataset.cidr),
-  'toggle-notes': () => { S.overview.notesOpen = !S.overview.notesOpen; rerender(); },
-  'detect-adapters': async () => {
-    try {
-      S.st.adapters = await call('adapters');
-      rerender();
-      toast(plural(S.st.adapters.length, 'scheda di rete attiva', 'schede di rete attive'), { tone: 'success' });
-    } catch (err) { toastError(err); }
-  },
-};
-
-const saveInfo = async () => {
-  const title = $('#f-title');
-  const notes = $('#f-notes');
-  if (!title || !notes) return;
-  if (title.value.trim() === S.st.session.title && notes.value === (S.st.session.notes || '')) return;
-  try {
-    adopt(await call('sessionInfo', { title: title.value, notes: notes.value }));
-    rerender();
-  } catch (err) { toastError(err); }
-};
 
 function rerender() {
   if (S.page !== 'overview') return;
@@ -235,17 +334,48 @@ function rerender() {
   if (content) content.innerHTML = render();
 }
 
-on('oui.progress', (d) => {
-  S.overview.ouiMessage = d.message;
-  const box = $('#oui-status .note-text');
-  if (box) box.textContent = d.message;
-});
-bus.addEventListener('state', () => { if (S.page === 'overview' && !$('#f-title:focus') && !$('#f-notes:focus')) rerender(); });
+function scanAgain(index) {
+  const s = S.data.scans[index];
+  if (!s) return;
+  if (s.kind === 'ports') navigate('ports', { host: s.target, start: true });
+  else if (s.kind === 'trace') navigate('trace', { target: s.target, start: true });
+  else if (s.kind === 'host') navigate('network', { q: s.target });
+  else navigate('network', { target: s.target });
+}
+
+const actions = {
+  'link-select': (el) => {
+    S.overview.sel = el.dataset.id;
+    $$('.port').forEach((p) => p.classList.toggle('is-active', p.dataset.id === el.dataset.id));
+    const panel = $('#link-panel');
+    if (panel) { panel.outerHTML = linkPanel(); }
+  },
+  'pc-network': () => openPcNetwork(),
+  'session-details': () => openSessionDrawer(),
+  'scan-again': (el) => scanAgain(Number(el.dataset.index)),
+  'filter-hosts': (el) => navigate('network', { q: el.dataset.q }),
+};
+
+for (const name of ['network.done', 'ports.done', 'trace.done']) {
+  on(name, (d) => { addScan(d && d.scan); setTimeout(refreshData, 0); });
+}
+bus.addEventListener('data', refreshData);
 bus.addEventListener('session', rerender);
+bus.addEventListener('state', () => {
+  // il titolo della sessione e lo stato di salvataggio stanno nella riga in cima
+  if (S.page !== 'overview') return;
+  const head = $('.page-head');
+  if (!head) return;
+  const fresh = document.createElement('div');
+  fresh.innerHTML = headHtml();
+  const next = fresh.firstElementChild;
+  if (next && next.innerHTML !== head.innerHTML) head.innerHTML = next.innerHTML;
+});
 
 definePage('overview', {
   title: 'Panoramica', heading: 'Panoramica', icon: 'dashboard', section: '',
   render,
+  after: () => { load().catch(toastError); startTimer(); },
+  leave: stopTimer,
   actions,
-  onChange: (el, field) => { if (field === 'title' || field === 'notes') saveInfo(); },
 });

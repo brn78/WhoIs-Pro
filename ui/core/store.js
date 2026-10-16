@@ -1,7 +1,7 @@
 // Stato della pagina condiviso tra app.js e le pagine, e registro delle pagine.
 export const S = {
   st: null,                       // stato dal programma: sessione (senza elenchi), database OUI, schede di rete, modelli
-  data: { hosts: [], ports: [], whois: [], dns: [], trace: [] },   // gli elenchi della sessione
+  data: { hosts: [], ports: [], whois: [], dns: [], trace: [], scans: [] },   // gli elenchi della sessione
   page: 'overview',
   collapsed: false,
 };
@@ -18,6 +18,13 @@ export function definePage(key, def) {
   NAV.push({ key, ...def });
 }
 
+/** Una scansione finita (evento *.done con il suo record): nello storico della sessione, una volta sola. */
+export function addScan(scan) {
+  if (!scan || S.data.scans.includes(scan)) return;
+  S.data.scans.push(scan);
+  if (S.data.scans.length > 200) S.data.scans.splice(0, S.data.scans.length - 200);
+}
+
 /** Avvisi tra moduli: 'state' (stato cambiato), 'session' (elenchi sostituiti), 'data' (elementi aggiunti). */
 export const bus = new EventTarget();
 export const emit = (name, detail) => bus.dispatchEvent(new CustomEvent(name, { detail }));
@@ -32,6 +39,7 @@ export function setSession(data) {
   if (!data) return;
   S.data = {
     hosts: data.hosts || [], ports: data.ports || [], whois: data.whois || [], dns: data.dns || [], trace: data.trace || [],
+    scans: data.scans || [],
   };
   emit('session');
 }

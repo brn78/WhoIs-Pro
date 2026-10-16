@@ -50,6 +50,7 @@ Namespace UI
         Private ReadOnly _internetTimer As New System.Windows.Forms.Timer With {.Interval = 30000}
         Private Shared ReadOnly InternetProbe As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(5)}
         Private _online As Boolean?
+        Private _internetMs As Integer?
         Private _checkingInternet As Boolean
 
         ''' <summary>Impostazioni del programma (per la finestra: icona di notifica e tema).</summary>
@@ -73,6 +74,7 @@ Namespace UI
         Private _netProgress As ScanProgress
         Private _netWatch As Stopwatch
         Private ReadOnly _netFound As New List(Of HostInfo)()
+        Private _netSeen As Integer
         Private _portProgress As PortScanProgress
         Private _portWatch As Stopwatch
         Private ReadOnly _portFound As New List(Of PortInfo)()
@@ -104,6 +106,7 @@ Namespace UI
                     _adapters = Nothing
                     Return Adapters()
                 Case "scanNetwork" : Return StartNetworkScan(args)
+                Case "rescanHost" : Return Await RescanHostAsync(args)
                 Case "stopNetwork"
                     _netCts?.Cancel()
                     Return Nothing
@@ -140,6 +143,7 @@ Namespace UI
                 Case "applyProfile" : Return Await ApplyProfileAsync(args)
                 Case "adapterConfigs" : Return Await Task.Run(Function() NetworkConfig.ReadAll())
                 Case "computer" : Return Await Task.Run(Function() ComputerInfo.Snapshot())
+                Case "dashboard" : Return Await DashboardAsync()
                 Case "checkInternet"
                     CheckInternet()
                     Return Nothing
@@ -178,25 +182,45 @@ Namespace UI
             If _checkingInternet Then Return
             _checkingInternet = True
             Dim online As Boolean
+            Dim elapsed As Integer? = Nothing
             Try
                 If Not Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable() Then
                     online = False
                 Else
+                    Dim watch = Stopwatch.StartNew()
                     Using request As New HttpRequestMessage(HttpMethod.Head, "http://www.msftconnecttest.com/connecttest.txt")
                         Using response = Await InternetProbe.SendAsync(request)
                             online = response.IsSuccessStatusCode
                         End Using
                     End Using
+                    If online Then elapsed = CInt(watch.ElapsedMilliseconds)
                 End If
             Catch
                 online = False
             End Try
+            ' tempo di risposta della stessa pagina di prova: la Panoramica lo mostra come «risposta di Internet»
+            _internetMs = elapsed
             _checkingInternet = False
             If Not _online.HasValue OrElse _online.Value <> online Then
                 _online = online
                 _owner.PostEvent("internet", New With {.online = online})
             End If
         End Sub
+
+        ''' <summary>
+        ''' Dati dal vivo della Panoramica, chiesti ogni due secondi: traffico delle schede, processore, memoria, disco e
+        ''' risposta di Internet (l'ultimo controllo, ogni 30 secondi). Le letture girano fuori dal thread della finestra.
+        ''' </summary>
+        Private Async Function DashboardAsync() As Task(Of Object)
+            Dim traffic = Await Task.Run(Function() TrafficMonitor.Read())
+            Dim machine = Await Task.Run(Function() ComputerInfo.Summary())
+            Return New With {
+                .at = DateTime.Now,
+                .traffic = traffic,
+                .system = machine,
+                .internet = New With {.online = _online, .latencyMs = _internetMs}
+            }
+        End Function
 
 #End Region
 
@@ -374,7 +398,8 @@ Namespace UI
                 .ports = _session.Ports,
                 .whois = _session.WhoisEntries,
                 .dns = _session.DnsRecords,
-                .trace = _session.TracerouteHops
+                .trace = _session.TracerouteHops,
+                .scans = If(_session.Scans, New List(Of ScanRecord)())
             }
         End Function
 
@@ -437,19 +462,21 @@ Namespace UI
             _netCts = New CancellationTokenSource()
             _netWatch = Stopwatch.StartNew()
             _netFound.Clear()
+            _netSeen = 0
             Dim progress As New Progress(Of ScanProgress)(Sub(p)
                                                               _netProgress = p
                                                               If p.DiscoveredHost IsNot Nothing Then
                                                                   AddHost(p.DiscoveredHost)
                                                                   _netFound.Add(p.DiscoveredHost)
+                                                                  _netSeen += 1
                                                               End If
                                                               If Not _flush.Enabled Then _flush.Start()
                                                           End Sub)
-            Dim unused = RunNetworkScanAsync(scanner, targets, progress, _netCts)
+            Dim unused = RunNetworkScanAsync(scanner, target, targets, progress, _netCts)
             Return New With {.started = True, .total = targets.Count, .state = State()}
         End Function
 
-        Private Async Function RunNetworkScanAsync(scanner As NetworkScanner, targets As List(Of Net.IPAddress),
+        Private Async Function RunNetworkScanAsync(scanner As NetworkScanner, target As String, targets As List(Of Net.IPAddress),
                                                    progress As IProgress(Of ScanProgress), cts As CancellationTokenSource) As Task
             Dim found = 0
             Dim cancelled = False
@@ -467,9 +494,60 @@ Namespace UI
             cts.Dispose()
             If ReferenceEquals(_netCts, cts) Then _netCts = Nothing
             FlushProgress(Nothing, EventArgs.Empty)
+            ' fermata a metà, l'elenco finale non c'è: contano gli host arrivati fin lì
+            found = Math.Max(found, _netSeen)
+            Dim scan = AddScan("network", target, _netWatch.Elapsed.TotalSeconds, found, cancelled, failure)
             _owner.PostEvent("network.done", New With {
-                .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .state = State()
+                .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .scan = scan, .state = State()
             })
+        End Function
+
+        ''' <summary>
+        ''' Riscansione di un solo indirizzo (ARP, ping, nome DNS, produttore e tipo), anche mentre gira la scansione della
+        ''' rete: aggiorna l'host nella sessione, oppure lo segna «Offline» se non risponde più.
+        ''' </summary>
+        Private Async Function RescanHostAsync(args As JsonElement) As Task(Of Object)
+            Dim ip = ArgText(args, "ip").Trim()
+            Dim address As Net.IPAddress = Nothing
+            If Not Net.IPAddress.TryParse(ip, address) OrElse address.AddressFamily <> Net.Sockets.AddressFamily.InterNetwork Then
+                Throw New UserMessageException($"«{ip}» non è un indirizzo IPv4.")
+            End If
+            Dim scanner As New NetworkScanner With {
+                .Concurrency = 1,
+                .TimeoutMs = Clamp(ArgNumber(args, "timeout", 900), 100, 10000),
+                .ResolveHostnames = ArgFlag(args, "resolveDns")
+            }
+            Dim watch = Stopwatch.StartNew()
+            Dim found = Await scanner.ScanRangeAsync(New List(Of Net.IPAddress) From {address}, Nothing, CancellationToken.None)
+            Dim host = found.FirstOrDefault()
+            If host IsNot Nothing Then
+                AddHost(host)
+            Else
+                Dim known = _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)
+                If known IsNot Nothing AndAlso known.Status <> "Offline" Then
+                    known.Status = "Offline"
+                    Touch()
+                End If
+            End If
+            Dim scan = AddScan("host", ip, watch.Elapsed.TotalSeconds, If(host Is Nothing, 0, 1), False, Nothing)
+            Return New With {
+                .ip = ip, .online = host IsNot Nothing,
+                .host = If(host, _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)),
+                .scan = scan, .state = State()
+            }
+        End Function
+
+        ''' <summary>Scansione nello storico della sessione (le ultime 200), per «Ultime scansioni» della Panoramica.</summary>
+        Private Function AddScan(kind As String, target As String, seconds As Double, found As Integer, cancelled As Boolean, failure As String) As ScanRecord
+            Dim record As New ScanRecord With {
+                .Kind = kind, .Target = target, .At = DateTime.Now, .Seconds = Math.Round(seconds, 1),
+                .Found = found, .Cancelled = cancelled, .Error = If(failure, "")
+            }
+            If _session.Scans Is Nothing Then _session.Scans = New List(Of ScanRecord)()
+            _session.Scans.Add(record)
+            If _session.Scans.Count > 200 Then _session.Scans.RemoveRange(0, _session.Scans.Count - 200)
+            Touch()
+            Return record
         End Function
 
         ''' <summary>Host nella sessione: aggiornato se c'è già lo stesso indirizzo, altrimenti aggiunto.</summary>
@@ -538,8 +616,9 @@ Namespace UI
             cts.Dispose()
             If ReferenceEquals(_portCts, cts) Then _portCts = Nothing
             FlushProgress(Nothing, EventArgs.Empty)
+            Dim scan = AddScan("ports", host, _portWatch.Elapsed.TotalSeconds, found, cancelled, failure)
             _owner.PostEvent("ports.done", New With {
-                .host = host, .found = found, .seconds = _portWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .state = State()
+                .host = host, .found = found, .seconds = _portWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .scan = scan, .state = State()
             })
         End Function
 
@@ -629,6 +708,7 @@ Namespace UI
         End Function
 
         Private Async Function RunTracerouteAsync(engine As TracerouteEngine, target As String, progress As IProgress(Of TracerouteHop), cts As CancellationTokenSource) As Task
+            Dim watch = Stopwatch.StartNew()
             Dim hops = 0
             Dim cancelled = False
             Dim failure As String = Nothing
@@ -643,8 +723,9 @@ Namespace UI
             If cts.IsCancellationRequested Then cancelled = True
             cts.Dispose()
             If ReferenceEquals(_traceCts, cts) Then _traceCts = Nothing
+            Dim scan = AddScan("trace", target, watch.Elapsed.TotalSeconds, hops, cancelled, failure)
             _owner.PostEvent("trace.done", New With {
-                .target = target, .hops = hops, .cancelled = cancelled, .error = failure,
+                .target = target, .hops = hops, .cancelled = cancelled, .error = failure, .scan = scan,
                 .unresolved = hops = 0 AndAlso Not cancelled AndAlso failure Is Nothing, .state = State()
             })
         End Function
@@ -752,6 +833,7 @@ Namespace UI
                 Case "whois" : _session.WhoisEntries.Clear()
                 Case "dns" : _session.DnsRecords.Clear()
                 Case "trace" : _session.TracerouteHops.Clear()
+                Case "scans" : _session.Scans?.Clear()
                 Case Else : Throw New UserMessageException($"Elenco sconosciuto: {list}")
             End Select
             Touch()

@@ -112,6 +112,36 @@ Namespace Machine
             }
         End Function
 
+        ''' <summary>Il riepilogo per la Panoramica: processore, memoria, disco di Windows e sistema, senza le parti lente (porte COM, scheda video).</summary>
+        Public Shared Function Summary() As Object
+            Dim mem As New MEMORYSTATUSEX With {.dwLength = CUInt(Marshal.SizeOf(GetType(MEMORYSTATUSEX)))}
+            GlobalMemoryStatusEx(mem)
+            Dim disk As Object = Nothing
+            Try
+                Dim d As New DriveInfo(If(Path.GetPathRoot(Environment.SystemDirectory), "C:\"))
+                If d.IsReady Then
+                    disk = New With {.name = d.Name.TrimEnd("\"c), .total = d.TotalSize, .free = d.AvailableFreeSpace, .used = d.TotalSize - d.AvailableFreeSpace}
+                End If
+            Catch
+            End Try
+            Return New With {
+                .cpu = New With {
+                    .usage = CpuUsage(),
+                    .name = ReadRegistry("HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", "Processore").Trim(),
+                    .logical = Environment.ProcessorCount
+                },
+                .memory = New With {.total = mem.ullTotalPhys, .used = mem.ullTotalPhys - mem.ullAvailPhys, .percent = mem.dwMemoryLoad},
+                .disk = disk,
+                .os = New With {
+                    .name = OsName(),
+                    .version = ReadRegistry("SOFTWARE\Microsoft\Windows NT\CurrentVersion", "DisplayVersion", ""),
+                    .machine = Environment.MachineName,
+                    .user = Environment.UserName,
+                    .uptimeSeconds = Environment.TickCount64 \ 1000
+                }
+            }
+        End Function
+
         ''' <summary>Porta seriale presente ora: nome (COM3), dispositivo e collegamento (USB, Bluetooth, scheda madre…).</summary>
         Public Class SerialPortInfo
             Public Property Port As String = ""

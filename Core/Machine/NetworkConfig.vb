@@ -38,31 +38,36 @@ Namespace Machine
             Dim list As New List(Of AdapterConfig)()
             For Each nic In NetworkInterface.GetAllNetworkInterfaces()
                 If Not IsRealAdapter(nic) Then Continue For
-                Dim cfg As New AdapterConfig With {
-                    .Name = nic.Name,
-                    .Description = nic.Description,
-                    .Up = nic.OperationalStatus = OperationalStatus.Up,
-                    .Mac = String.Join(":", nic.GetPhysicalAddress().GetAddressBytes().Select(Function(b) b.ToString("X2")))
-                }
-                Try
-                    Dim props = nic.GetIPProperties()
-                    Try
-                        cfg.Dhcp = props.GetIPv4Properties().IsDhcpEnabled
-                    Catch
-                    End Try
-                    Dim uni = props.UnicastAddresses.FirstOrDefault(Function(u) u.Address.AddressFamily = AddressFamily.InterNetwork)
-                    If uni IsNot Nothing Then
-                        cfg.Ip = uni.Address.ToString()
-                        cfg.Mask = If(uni.IPv4Mask?.ToString(), "")
-                    End If
-                    Dim gw = props.GatewayAddresses.FirstOrDefault(Function(g) g.Address.AddressFamily = AddressFamily.InterNetwork)
-                    If gw IsNot Nothing Then cfg.Gateway = gw.Address.ToString()
-                    cfg.Dns = props.DnsAddresses.Where(Function(d) d.AddressFamily = AddressFamily.InterNetwork).Select(Function(d) d.ToString()).ToList()
-                Catch
-                End Try
-                list.Add(cfg)
+                list.Add(ReadConfig(nic))
             Next
             Return list.OrderByDescending(Function(a) a.Up).ThenBy(Function(a) a.Name).ToList()
+        End Function
+
+        ''' <summary>La configurazione IPv4 attuale di una scheda (anche per il traffico della Panoramica).</summary>
+        Friend Shared Function ReadConfig(nic As NetworkInterface) As AdapterConfig
+            Dim cfg As New AdapterConfig With {
+                .Name = nic.Name,
+                .Description = nic.Description,
+                .Up = nic.OperationalStatus = OperationalStatus.Up,
+                .Mac = String.Join(":", nic.GetPhysicalAddress().GetAddressBytes().Select(Function(b) b.ToString("X2")))
+            }
+            Try
+                Dim props = nic.GetIPProperties()
+                Try
+                    cfg.Dhcp = props.GetIPv4Properties().IsDhcpEnabled
+                Catch
+                End Try
+                Dim uni = props.UnicastAddresses.FirstOrDefault(Function(u) u.Address.AddressFamily = AddressFamily.InterNetwork)
+                If uni IsNot Nothing Then
+                    cfg.Ip = uni.Address.ToString()
+                    cfg.Mask = If(uni.IPv4Mask?.ToString(), "")
+                End If
+                Dim gw = props.GatewayAddresses.FirstOrDefault(Function(g) g.Address.AddressFamily = AddressFamily.InterNetwork)
+                If gw IsNot Nothing Then cfg.Gateway = gw.Address.ToString()
+                cfg.Dns = props.DnsAddresses.Where(Function(d) d.AddressFamily = AddressFamily.InterNetwork).Select(Function(d) d.ToString()).ToList()
+            Catch
+            End Try
+            Return cfg
         End Function
 
         Private Shared ReadOnly HiddenDescriptions As String() = {
@@ -71,7 +76,7 @@ Namespace Machine
         }
 
         ''' <summary>Solo le schede che ha senso configurare: Ethernet e Wi-Fi fisiche o virtuali, niente miniport, tunnel e filtri.</summary>
-        Private Shared Function IsRealAdapter(nic As NetworkInterface) As Boolean
+        Friend Shared Function IsRealAdapter(nic As NetworkInterface) As Boolean
             Select Case nic.NetworkInterfaceType
                 Case NetworkInterfaceType.Loopback, NetworkInterfaceType.Tunnel, NetworkInterfaceType.Ppp, NetworkInterfaceType.Unknown
                     Return False

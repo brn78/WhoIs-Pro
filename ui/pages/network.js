@@ -3,7 +3,7 @@ import { call, on } from '../core/bridge.js';
 import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
-import { S, definePage, adopt, markDirty, bus, emit } from '../core/store.js';
+import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { table, nextSort } from '../core/table.js';
 import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
@@ -12,6 +12,7 @@ S.net = {
   target: '', threads: 80, timeout: 900, resolveDns: true,
   q: '', sort: { key: 'ipAddress', dir: 1 },
   progress: null, done: null, fresh: new Set(),
+  rescanning: new Set(), // indirizzi riscansionati uno per uno, in corso
   editing: false,      // modulo riaperto con «Modifica» dopo una scansione
   last: null,          // parametri dell'ultima scansione avviata (per la riga di riepilogo)
 };
@@ -126,15 +127,58 @@ function latency(ms) {
 const columns = [
   { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
       <b class="trunc" title="${esc(h.deviceType)}">${esc(h.deviceType)}</b>
-      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}</small></div></div>` },
+      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}</small></div></div>` },
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell' },
   { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
   { key: 'macAddress', label: 'MAC', cls: 'mono', cell: (h) => h.macAddress ? esc(h.macAddress) : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore', cell: vendorCell },
   { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => latency(h.responseTimeMs) },
   { key: 'ttl', label: 'TTL', cls: 'num muted', cell: (h) => h.ttl || '<span class="faint">—</span>' },
-  { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button>` },
+  { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<div class="row-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>` },
 ];
+
+const isOffline = (h) => h.status === 'Offline';
+
+/** Pulsante «Riscansiona» di un host: gira su quel solo indirizzo, anche durante la scansione della rete. */
+function rescanButton(ip, big = false) {
+  const busy = S.net.rescanning.has(ip);
+  if (big) return `<button class="btn ${busy ? 'is-loading' : ''}" data-action="host-rescan" data-ip="${esc(ip)}" ${busy ? 'disabled' : ''}>${icon('refresh')} Riscansiona</button>`;
+  return `<button class="row-menu-btn rescan-btn ${busy ? 'is-busy' : ''}" data-action="host-rescan" data-ip="${esc(ip)}" title="Riscansiona questo host" ${busy ? 'disabled' : ''}>${busy ? '<span class="spinner"></span>' : icon('refresh')}</button>`;
+}
+
+/** Riscansione di un solo indirizzo: aggiorna la riga (e il pannello di dettaglio, se è aperto). */
+async function rescan(ip) {
+  if (S.net.rescanning.has(ip)) return;
+  S.net.rescanning.add(ip);
+  renderTable();
+  refreshDrawer(ip);
+  try {
+    const res = await call('rescanHost', { ip, timeout: S.net.timeout, resolveDns: S.net.resolveDns });
+    adopt({ state: res.state });
+    if (res.host) {
+      const i = S.data.hosts.findIndex((x) => x.ipAddress === ip);
+      if (i >= 0) S.data.hosts[i] = res.host; else S.data.hosts.push(res.host);
+    }
+    addScan(res.scan);
+    markDirty();
+    emit('data', { list: 'hosts' });
+    if (res.online) toast(`${ip}${res.host && res.host.hostname ? ` (${res.host.hostname})` : ''} risponde${res.host.responseTimeMs > 0 ? ` in ${fmtMs(res.host.responseTimeMs)}` : ' in meno di 1 ms'}.`, { tone: 'success', title: 'Host aggiornato' });
+    else toast(res.host ? 'Non risponde né ad ARP né al ping: resta nella sessione segnato come «non risponde».' : 'Non risponde né ad ARP né al ping.', { tone: 'warning', title: `${ip} non risponde` });
+  } catch (err) {
+    toastError(err, 'Riscansione non riuscita');
+  }
+  S.net.rescanning.delete(ip);
+  renderTable();
+  refreshDrawer(ip);
+}
+
+/** Il pannello di dettaglio aperto su quell'host si ridisegna con i dati nuovi. */
+function refreshDrawer(ip) {
+  const drawer = $('#overlays .drawer[data-host]');
+  if (!drawer || drawer.dataset.host !== ip) return;
+  closeOverlays();
+  details(ip);
+}
 
 function tableHtml() {
   const rows = filteredHosts();
@@ -144,7 +188,7 @@ function tableHtml() {
   if (!rows.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
   return table({
     columns, rows, sort: S.net.sort, cls: 'scan-h',
-    rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''}"`,
+    rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}"`,
   }).replace('<table class="dt">', '<table class="dt clickable">');
 }
 
@@ -242,6 +286,7 @@ function hostMenu(anchor, ip) {
   if (!h) return;
   openMenu(anchor, [
     { header: `${h.ipAddress}${h.hostname ? ` · ${h.hostname}` : ''}` },
+    { ic: 'refresh', label: 'Riscansiona questo host', disabled: S.net.rescanning.has(ip), run: () => rescan(ip) },
     { ic: 'plug', label: 'Scansiona le porte', run: () => navigate('ports', { host: ip, start: true }) },
     { ic: 'globe', label: 'WHOIS', run: () => navigate('whois', { target: ip, start: true }) },
     { ic: 'route', label: 'Traceroute', run: () => navigate('trace', { target: ip, start: true }) },
@@ -275,6 +320,7 @@ function details(ip) {
   const body = `<div class="fields">
     <dl class="kv">
       <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
+      <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
       <dt>Nome</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
       <dt>MAC</dt><dd class="mono">${h.macAddress ? esc(h.macAddress) : '<span class="muted">non disponibile (host fuori dalla rete locale)</span>'}</dd>
       <dt>Produttore</dt><dd>${esc(h.macVendor)}${h.macVendor === PRIVATE_MAC ? `<br><small class="muted">${esc(PRIVATE_MAC_TIP)}</small>` : ''}</dd>
@@ -289,15 +335,18 @@ function details(ip) {
       ${ports.length ? `<div class="pill-list">${ports.map((p) => `<span class="pill ${p.status === 'Open' ? 'success' : 'warning'}">${p.portNumber}/${esc(p.protocol)} · ${esc(p.serviceName)}</span>`).join('')}</div>`
         : '<p class="card-text muted">Nessuna scansione delle porte per questo host.</p>'}</div>
   </div>`;
-  openDrawer({
+  const d = openDrawer({
     ic: 'monitor', title: h.ipAddress, sub: `${h.deviceType}${h.hostname ? ` · ${h.hostname}` : ''}`, body,
     foot: `<div class="left">
+        ${rescanButton(ip, true)}
         <button class="btn btn-primary" data-action="host-ports" data-ip="${esc(ip)}">${icon('plug')} Scansiona le porte</button>
         <button class="btn" data-action="host-whois" data-ip="${esc(ip)}">${icon('globe')} WHOIS</button>
         <button class="btn" data-action="host-trace" data-ip="${esc(ip)}">${icon('route')} Traceroute</button>
         <button class="btn" data-action="host-tools" data-ip="${esc(ip)}">${icon('external')} Apri con… ${icon('chevronDown', { size: 13 })}</button></div>
       <button class="btn btn-ghost" data-action="close-overlay">Chiudi</button>`,
   });
+  const drawer = $('.drawer', d.wrap);
+  if (drawer) drawer.dataset.host = ip;
 }
 
 /** Riapre il modulo completo (dopo una scansione) e porta il cursore sul campo della rete. */
@@ -321,6 +370,7 @@ const actions = {
     try { adopt(await call('clearList', { list: 'hosts' })); S.net.done = null; S.net.editing = false; renderTable(); renderForm(); } catch (err) { toastError(err); }
   },
   'host-menu': (el) => hostMenu(el, el.dataset.ip),
+  'host-rescan': (el) => rescan(el.dataset.ip),
   'host-details': (el) => details(el.dataset.ip),
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),
   'host-whois': (el) => navigate('whois', { target: el.dataset.ip, start: true }),
@@ -363,7 +413,16 @@ bus.addEventListener('session', () => {
 definePage('network', {
   title: 'Rete', heading: 'Scansione della rete', icon: 'radar', section: 'scan', badge: () => S.data.hosts.length,
   render, after, actions,
-  enter: (params) => { if (params.target) { S.net.target = params.target; if (!running()) edit(); } },
+  enter: (params) => {
+    if (params.target) { S.net.target = params.target; if (!running()) edit(); }
+    // dalla Panoramica: un tipo di dispositivo o un indirizzo da cercare nella tabella
+    if (params.q != null) {
+      S.net.q = params.q;
+      const f = $('[data-field="q"]');
+      if (f) f.value = params.q;
+      renderTable();
+    }
+  },
   onInput: (el, field) => {
     const n = S.net;
     if (field === 'q') { n.q = el.value; renderTable(); return; }

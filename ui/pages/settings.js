@@ -1,12 +1,22 @@
-// Impostazioni: avvio con Windows e icona nell'area di notifica, tema, profili di rete (IP della scheda al volo).
-import { call } from '../core/bridge.js';
-import { $, esc, shortPath } from '../core/dom.js';
+// Impostazioni (dalla barra superiore): avvio con Windows e area di notifica, tema, rete del PC con i profili di rete
+// (IP della scheda al volo), aggiornamenti del programma, database dei produttori e cartella dei dati.
+import { call, on } from '../core/bridge.js';
+import { $, esc, fmtDateTime, plural, shortPath } from '../core/dom.js';
 import { icon } from '../core/icons.js';
-import { S, definePage, adopt, emit } from '../core/store.js';
+import { S, definePage, adopt, bus, emit } from '../core/store.js';
+import { navigate } from '../core/nav.js';
 import { table } from '../core/table.js';
-import { closeOverlays, confirmDialog, emptyState, note, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { closeOverlays, confirmDialog, emptyState, help, note, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
-S.settings = { data: null, adapters: null, busy: false, loading: false };
+S.settings = { data: null, adapters: null, busy: false, loading: false, tab: 'general', ouiMessage: '', notesOpen: false };
+
+const TABS = [
+  { key: 'general', ic: 'settings', label: 'Generale' },
+  { key: 'network', ic: 'network', label: 'Rete del PC' },
+  { key: 'updates', ic: 'rotate', label: 'Aggiornamenti' },
+  { key: 'vendors', ic: 'database', label: 'Produttori' },
+  { key: 'data', ic: 'folder', label: 'Dati del programma' },
+];
 
 const sw = (field, label, text, checked, disabled = false) => `<label class="switch"><input type="checkbox" data-field="${field}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span class="track"></span>
     <span class="switch-text">${label}<small>${text}</small></span></label>`;
@@ -79,12 +89,180 @@ function dataCard(d) {
     </dl></div></section>`;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Aggiornamenti e database dei produttori (erano nella Panoramica)
+// ---------------------------------------------------------------------------------------------------------------------
+/**
+ * Note della release (Markdown semplice del CHANGELOG) come HTML: elenco puntato con le righe spezzate riunite,
+ * grassetto, corsivo e codice; tutto il resto come testo.
+ */
+function notesHtml(notes) {
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
+  const blocks = [];
+  let current = null;
+  for (const raw of String(notes || '').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) { current = null; continue; }
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) { current = { type: 'li', text: bullet[1] }; blocks.push(current); continue; }
+    const head = /^#+\s+(.*)$/.exec(line);
+    if (head) { current = null; blocks.push({ type: 'h', text: head[1] }); continue; }
+    if (current && /^\s/.test(raw)) { current.text += ` ${line.trim()}`; continue; }
+    if (current && current.type === 'p') { current.text += ` ${line.trim()}`; continue; }
+    current = { type: 'p', text: line.trim() };
+    blocks.push(current);
+  }
+  let html = '';
+  let inList = false;
+  for (const b of blocks) {
+    if (b.type === 'li') { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(b.text)}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    html += b.type === 'h' ? `<h4>${inline(b.text)}</h4>` : `<p>${inline(b.text)}</p>`;
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+
+/** Versione in uso e ultima pubblicata, novità ripiegate, «Scarica e installa». */
+function updateCard() {
+  const u = S.st.update || {};
+  const d = u.download;
+  const busy = d && d.phase !== 'error';
+  let pill;
+  if (u.available) pill = `<span class="pill warning pill-dot">Nuova versione ${esc(u.version)}</span>`;
+  else if (u.error) pill = '<span class="pill danger pill-dot">Controllo non riuscito</span>';
+  else if (u.checkedAt) pill = '<span class="pill success pill-dot">Versione aggiornata</span>';
+  else pill = '<span class="pill">Mai controllato</span>';
+
+  let progress = '';
+  if (d && d.phase === 'error') progress = note('danger', 'alert', esc(d.error));
+  else if (d) {
+    const mb = (n) => (n / 1048576).toFixed(1).replace('.', ',');
+    const pct = d.total > 0 ? Math.min(100, Math.round(d.done * 100 / d.total)) : 0;
+    const text = d.phase === 'download' ? `Scaricamento del setup ${esc(d.version)}: ${mb(d.done)} di ${mb(d.total)} MB`
+      : d.phase === 'verify' ? 'Controllo di dimensione, impronta SHA-256 e versione del setup…'
+        : 'Setup avviato: il programma si chiude e si riapre aggiornato.';
+    progress = `<div class="stack" style="gap:8px"><div class="meter"><span style="width:${d.phase === 'download' ? pct : 100}%"></span></div>
+      <div class="scan-stat"><span class="spinner"></span>${text}</div></div>`;
+  }
+  const open = S.settings.notesOpen;
+  const notesLink = u.available && u.notes
+    ? `<a href="#" class="notes-toggle" data-action="toggle-notes" aria-expanded="${open}">${esc(u.title || `Novità della ${u.version}`)} ${icon('chevronDown')}</a>` : '';
+  const notes = u.available && u.notes && open ? `<div class="notes">${notesHtml(u.notes)}</div>` : '';
+  const install = !u.available ? ''
+    : (u.installed && u.hasSetup)
+      ? `<button class="btn btn-sm btn-primary" data-action="install-update" ${busy ? 'disabled' : ''}>${icon('download')} Scarica e installa</button>`
+      : `<button class="btn btn-sm btn-primary" data-action="open-url" data-url="${esc(u.pageUrl)}">${icon('external')} Apri la pagina dei download</button>`;
+  const latest = u.version
+    ? `<span class="muted">· ${esc(u.version)}${u.publishedAt ? `, ${fmtDateTime(u.publishedAt).slice(0, 10)}` : ''}</span>` : '<span class="muted">· —</span>';
+  const checkHelp = help('Una volta al giorno il programma chiede a GitHub qual è l\'ultima versione pubblicata. Niente si installa da solo: quando c\'è una versione nuova compare qui «Scarica e installa».');
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('rotate')}<h2>Aggiornamenti</h2></div>${pill}</div>
+    <div class="card-body"><div class="fields">
+      <dl class="kv compact">
+        <dt>In uso · ultima pubblicata</dt><dd><b>${esc(u.current)}</b>${u.installed ? '' : ' <span class="tag">copia portabile</span>'} ${latest}</dd>
+        <dt>Ultimo controllo</dt><dd>${u.checkedAt ? fmtDateTime(u.checkedAt) : '<span class="muted">mai</span>'} ${checkHelp}</dd>
+      </dl>
+      ${u.error ? note('danger', 'alert', esc(u.error)) : ''}
+      ${progress}
+      ${u.available && !u.installed ? note('info', 'info', 'Questa copia non è stata installata con il setup: scarica il nuovo pacchetto dalla pagina delle release e sostituisci i file.') : ''}
+      <div class="card-actions" style="margin-top:0">
+        ${install}
+        <button class="btn btn-sm ${u.checking ? 'is-loading' : ''}" data-action="check-update" ${busy || u.checking ? 'disabled' : ''}>${icon('refresh')} Controlla ora</button>
+        <button class="btn btn-sm btn-ghost" data-action="open-url" data-url="${esc(u.pageUrl || 'https://github.com/brn78/WhoIs-Pro/releases/latest')}">${icon('external')} Tutte le versioni</button>
+        ${notesLink}
+      </div>
+      ${notes}
+    </div></div></section>`;
+}
+
+function ouiCard() {
+  const o = S.st.oui;
+  const busy = S.st.running.oui;
+  const msg = S.settings.ouiMessage;
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('database')}<h2>Database dei produttori</h2></div>
+      <span class="pill primary">${plural(o.count, 'produttore', 'produttori')}</span></div>
+    <div class="card-body"><div class="fields">
+      <dl class="kv compact">
+        <dt>Origine</dt><dd>${o.file ? `<span class="mono" title="${esc(o.file)}">${esc(shortPath(o.file))}</span>` : '<span class="muted">Solo i produttori incorporati nel programma</span>'}</dd>
+        <dt>Serve a</dt><dd>produttore e tipo di dispositivo ${help('I tre registri ufficiali dell\'IEEE (blocchi MA-L, MA-M e MA-S, aggiornati ogni giorno; se l\'IEEE non risponde, il database di Wireshark) vengono salvati in %LOCALAPPDATA%\\WhoIsPro e gli host della sessione vengono riclassificati. Per ogni MAC si usa il blocco più preciso.')}</dd>
+      </dl>
+      ${busy ? `<div class="form-note info" id="oui-status"><span class="spinner"></span><div class="note-text">${esc(msg || 'Aggiornamento in corso…')}</div></div>` : ''}
+      <div class="card-actions"><button class="btn btn-sm" data-action="oui-update" ${busy ? 'disabled' : ''}>${icon('refresh')} Aggiorna dall'IEEE</button></div>
+    </div></div></section>`;
+}
+
+function tabsHtml() {
+  const tab = S.settings.tab;
+  return `<div class="tabs" role="tablist">${TABS.map((t) => `<button class="tab ${t.key === tab ? 'is-active' : ''}" role="tab" aria-selected="${t.key === tab}" data-action="settings-tab" data-tab="${t.key}">${icon(t.ic)}${t.label}${t.key === 'updates' && S.st.update && S.st.update.available ? '<span class="tab-dot"></span>' : ''}</button>`).join('')}</div>`;
+}
+
 function render() {
   const d = S.settings.data;
-  const head = pageHead('Avvio con Windows, icona nell\'area di notifica, tema e profili di rete.');
-  if (!d) return `${head}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle impostazioni…</div></div>`;
-  return `${head}<div class="grid grid-2">${startupCard(d)}${themeCard(d)}</div>
-    <div class="grid section-gap">${profilesCard(d)}${adaptersCard()}${dataCard(d)}</div>`;
+  const head = pageHead('Come si avvia il programma, il tema, la rete di questo PC e i profili di rete, gli aggiornamenti e il database dei produttori.');
+  if (!d) return `${head}${tabsHtml()}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle impostazioni…</div></div>`;
+  let body;
+  switch (S.settings.tab) {
+    case 'network': body = `<div class="grid">${adaptersCard()}${profilesCard(d)}</div>`; break;
+    case 'updates': body = `<div class="grid settings-narrow">${updateCard()}</div>`; break;
+    case 'vendors': body = `<div class="grid settings-narrow">${ouiCard()}</div>`; break;
+    case 'data': body = `<div class="grid settings-narrow">${dataCard(d)}</div>`; break;
+    default: body = `<div class="grid grid-2">${startupCard(d)}${themeCard(d)}</div>`;
+  }
+  return `${head}${tabsHtml()}${body}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Rete del PC: pannello rapido dalla barra superiore
+// ---------------------------------------------------------------------------------------------------------------------
+function pcNetworkBody() {
+  const rows = S.settings.adapters;
+  if (!rows) return '<div class="loading-block"><span class="spinner"></span> Lettura delle schede di rete…</div>';
+  if (!rows.length) return emptyState('network', 'Nessuna scheda di rete', 'Windows non vede schede Ethernet o Wi-Fi.');
+  const profiles = ((S.settings.data || {}).profiles || []);
+  return `<div class="nic-list">${rows.map((a) => {
+    const mine = profiles.filter((p) => p.adapter === a.name);
+    return `<article class="nic ${a.up ? '' : 'is-down'}">
+      <header class="nic-head"><span class="led ${a.up ? 'is-link' : 'is-off'}"></span>
+        <div class="nic-titles"><b>${esc(a.name)}</b><small>${esc(a.description)}</small></div>
+        <span class="pill ${a.up ? (a.dhcp ? 'info' : 'primary') : ''}">${a.up ? (a.dhcp ? 'DHCP' : 'Statico') : 'Scollegata'}</span></header>
+      ${a.ip ? `<dl class="nic-facts">
+        <div><dt>IP</dt><dd class="mono">${esc(a.ip)}</dd></div><div><dt>Maschera</dt><dd class="mono">${esc(a.mask)}</dd></div>
+        <div><dt>Gateway</dt><dd class="mono">${esc(a.gateway || '—')}</dd></div><div><dt>DNS</dt><dd class="mono">${esc((a.dns || []).join(', ') || '—')}</dd></div>
+        <div><dt>MAC</dt><dd class="mono">${esc(a.mac)}</dd></div></dl>` : '<p class="card-text muted nic-none">Nessun indirizzo IPv4.</p>'}
+      <footer class="nic-actions">
+        ${mine.map((p) => `<button class="btn btn-sm" data-pcn="apply" data-id="${esc(p.id)}" title="${esc(p.dhcp ? 'DHCP' : `${p.ip} / ${p.mask}`)}">${icon('zap')} ${esc(p.name)}</button>`).join('')}
+        ${a.dhcp ? '' : `<button class="btn btn-sm" data-pcn="dhcp" data-adapter="${esc(a.name)}">${icon('rotate')} Torna a DHCP</button>`}
+        <button class="btn btn-sm btn-ghost" data-pcn="save" data-adapter="${esc(a.name)}">${icon('plus')} Salva come profilo</button>
+      </footer></article>`;
+  }).join('')}</div>`;
+}
+
+/** «Rete del PC»: schede con IP, gateway e DNS, profili da applicare al volo e ritorno a DHCP. */
+export async function openPcNetwork() {
+  const d = openDrawer({
+    ic: 'network', title: 'Rete del PC', sub: 'Schede di rete di questo computer e profili da applicare', body: pcNetworkBody(), size: 'drawer-sm',
+    foot: `<div class="left"><button class="btn" data-pcn="settings">${icon('settings')} Profili di rete…</button></div>
+      <button class="btn btn-ghost" data-pcn="reload">${icon('refresh')} Aggiorna</button><button class="btn btn-primary" data-action="close-overlay">Chiudi</button>`,
+  });
+  const paint = () => { const b = $('.drawer-body', d.wrap); if (b) b.innerHTML = pcNetworkBody(); };
+  d.wrap.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-pcn]');
+    if (!el) return;
+    const kind = el.dataset.pcn;
+    if (kind === 'settings') { closeOverlays(); navigate('settings', { tab: 'network' }); return; }
+    if (kind === 'reload') { call('adapterConfigs').then((r) => { S.settings.adapters = r; paint(); }, toastError); return; }
+    if (kind === 'apply') { applyProfile(el.dataset.id).then(paint); return; }
+    if (kind === 'dhcp') { applyProfile(null, { id: '', name: 'DHCP', adapter: el.dataset.adapter, dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' }).then(paint); return; }
+    if (kind === 'save') { closeOverlays(); actions['save-adapter']({ dataset: { adapter: el.dataset.adapter } }); }
+  });
+  try {
+    if (!S.settings.data) S.settings.data = await call('settings');
+    S.settings.adapters = await call('adapterConfigs');
+    paint();
+  } catch (err) { toastError(err); }
 }
 
 function rerender() {
@@ -213,6 +391,8 @@ export async function applyProfile(id, values = null) {
 }
 
 const actions = {
+  'settings-tab': (el) => { S.settings.tab = el.dataset.tab; rerender(); },
+  'toggle-notes': () => { S.settings.notesOpen = !S.settings.notesOpen; rerender(); },
   'theme': (el) => {
     const theme = el.dataset.theme;
     if (window.setTheme) window.setTheme(theme);
@@ -266,11 +446,27 @@ const actions = {
   },
 };
 
+on('oui.progress', (d) => {
+  S.settings.ouiMessage = d.message;
+  const box = $('#oui-status .note-text');
+  if (box) box.textContent = d.message;
+});
+// aggiornamenti e database cambiano lo stato: la scheda aperta si ridisegna (non mentre si scrive in un campo)
+bus.addEventListener('state', () => { if (S.page === 'settings' && ['updates', 'vendors'].includes(S.settings.tab)) rerender(); });
+
+/** Impostazioni non sta nel menu laterale: si apre dall'ingranaggio della barra superiore. */
 definePage('settings', {
-  title: 'Impostazioni', heading: 'Impostazioni', icon: 'settings', section: 'system', order: 3,
+  title: 'Impostazioni', heading: 'Impostazioni', icon: 'settings', section: 'hidden',
   render,
   after: () => { if (!S.settings.data || !S.settings.adapters) load(); },
-  enter: (params) => { if (params.newProfile) setTimeout(() => actions['save-adapter']({ dataset: { adapter: params.newProfile } }), S.settings.adapters ? 0 : 1200); },
+  enter: (params) => {
+    if (params.tab && TABS.some((t) => t.key === params.tab)) { S.settings.tab = params.tab; rerender(); }
+    if (params.newProfile) {
+      S.settings.tab = 'network';
+      rerender();
+      setTimeout(() => actions['save-adapter']({ dataset: { adapter: params.newProfile } }), S.settings.adapters ? 0 : 1200);
+    }
+  },
   actions,
   onChange: (el, field) => {
     if (['autoStart', 'trayIcon', 'closeToTray', 'startMinimized'].includes(field)) {

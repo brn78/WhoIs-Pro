@@ -50,6 +50,35 @@ export function fmtBytes(n) {
   return `${i === 0 ? x : x.toFixed(x >= 100 ? 0 : 1).replace('.', ',')} ${units[i]}`;
 }
 
+/** Velocità di rete da byte al secondo, in bit come le schede: { value: "12,4", unit: "Mbit/s" }. */
+export function fmtRate(bytesPerSecond) {
+  let x = Math.max(0, Number(bytesPerSecond) || 0) * 8;
+  const units = ['bit/s', 'kbit/s', 'Mbit/s', 'Gbit/s'];
+  let i = 0;
+  while (x >= 1000 && i < units.length - 1) { x /= 1000; i++; }
+  const value = i === 0 ? String(Math.round(x)) : x.toFixed(x >= 100 ? 0 : 1).replace(/\.0$/, '').replace('.', ',');
+  return { value, unit: units[i], text: `${value} ${units[i]}` };
+}
+
+/** Velocità del collegamento in Mbit/s come la scrive Windows: "1 Gbit/s", "100 Mbit/s", "2,5 Gbit/s". */
+export function fmtLinkSpeed(mbps) {
+  const n = Number(mbps) || 0;
+  if (!n) return '';
+  return n >= 1000 ? `${String(Math.round(n / 100) / 10).replace('.', ',')} Gbit/s` : `${fmtNumber(n)} Mbit/s`;
+}
+
+/** Quanto tempo fa: "adesso", "4 min fa", "3 h fa", "ieri", "5 g fa". */
+export function fmtAgo(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '';
+  const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (s < 60) return 'adesso';
+  if (s < 3600) return `${Math.floor(s / 60)} min fa`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h fa`;
+  if (s < 172800) return 'ieri';
+  return `${Math.floor(s / 86400)} g fa`;
+}
+
 /** Secondi come "3 g 4 h 12 min" oppure "25 min". */
 export function fmtDuration(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds) || 0));
