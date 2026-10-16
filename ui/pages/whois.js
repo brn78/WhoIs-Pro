@@ -14,9 +14,9 @@ function formCard() {
     <form data-form="query" class="scan-form" autocomplete="off">
       <div class="field"><label for="f-target">Dominio o indirizzo IP</label>
         <input class="input input-mono" id="f-target" data-field="target" value="${esc(w.target)}" placeholder="esempio.it · 8.8.8.8" ${w.busy ? 'disabled' : ''}></div>
-      <div class="field" style="grid-column: span 2"><label for="f-server">Server</label>
+      <div class="field field-2"><label for="f-server">Server</label>
         <select class="select" id="f-server" data-field="server" ${w.busy ? 'disabled' : ''}><option value="" ${w.server ? '' : 'selected'}>Automatico (TLD, IANA, referral, RDAP)</option>${servers}</select></div>
-      <div class="field"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         <button type="submit" class="btn btn-primary ${w.busy ? 'is-loading' : ''}" ${w.busy ? 'disabled' : ''}>${icon('search')} Interroga</button></div></div>
     </form></div></section>`;
 }

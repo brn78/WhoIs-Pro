@@ -15,9 +15,9 @@ function formCard() {
   const d = S.dns;
   return `<section class="card"><div class="card-body">
     <form data-form="query" class="scan-form" autocomplete="off">
-      <div class="field" style="grid-column: span 3"><label for="f-target">Nome o indirizzo IP</label>
+      <div class="field"><label for="f-target">Nome o indirizzo IP</label>
         <input class="input input-mono" id="f-target" data-field="target" value="${esc(d.target)}" placeholder="esempio.it · 192.168.1.1" ${d.busy ? 'disabled' : ''}></div>
-      <div class="field"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         <button type="submit" class="btn btn-primary ${d.busy ? 'is-loading' : ''}" ${d.busy ? 'disabled' : ''}>${icon('search')} Risolvi</button></div></div>
     </form>
     <div class="scan-bar" style="border-top:0;padding-top:0;margin-top:10px"><span class="hint">A e AAAA dal resolver di Windows; MX, TXT e NS con nslookup; PTR per gli indirizzi IP.</span></div>

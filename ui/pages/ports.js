@@ -39,17 +39,17 @@ function formCard() {
     <form data-form="scan" class="scan-form ports-form" autocomplete="off">
       <div class="field"><label for="f-host">Host</label>
         <input class="input input-mono" id="f-host" data-field="host" value="${esc(p.host)}" placeholder="192.168.1.10 oppure nome.dominio"></div>
-      <div class="field"><label for="f-preset">Gruppo di porte</label>
+      <div class="field field-select"><label for="f-preset">Gruppo di porte</label>
         <select class="select" id="f-preset" data-field="preset">${options}</select></div>
       <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="1000" data-field="threads" value="${p.threads}"></div>
       <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${p.timeout}"></div>
       <div class="field field-wide"><div class="field-label-row"><label for="f-ports">Porte</label><span class="hint" id="ports-count">${count} porte</span></div>
         <textarea class="input ports" id="f-ports" data-field="ports" rows="2" placeholder="22, 80, 443, 8000-8100">${esc(p.ports)}</textarea></div>
-      <div class="field field-switches-row"><span class="field-label">Protocolli e opzioni</span><div class="field-switches">
+      <div class="field field-auto"><span class="field-label">Protocolli e opzioni</span><div class="field-switches">
         <label class="switch"><input type="checkbox" data-field="tcp" ${p.tcp ? 'checked' : ''}><span class="track"></span><span>TCP</span></label>
         <label class="switch"><input type="checkbox" data-field="udp" ${p.udp ? 'checked' : ''}><span class="track"></span><span>UDP</span></label>
         <label class="switch"><input type="checkbox" data-field="banner" ${p.banner ? 'checked' : ''}><span class="track"></span><span>Leggi il banner</span></label></div></div>
-      <div class="field field-actions-end"><span class="field-label">&nbsp;</span><div class="field-actions">
+      <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${p.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
         <button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>
       </div></div>

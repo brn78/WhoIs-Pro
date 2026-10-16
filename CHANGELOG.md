@@ -2,6 +2,15 @@
 
 Setup e pacchetto portabile di ogni versione sono nella pagina [Releases](https://github.com/brn78/WhoIs-Pro/releases).
 Il programma installato con il setup si aggiorna da solo: *Panoramica → Aggiornamenti → Scarica e installa*.
+Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
+
+## 2.2.1 · 16 ottobre 2026
+
+- **Istanza singola**: aprire di nuovo il programma porta in primo piano la finestra già aperta (anche se era
+  nell'area di notifica) invece di aprirne una seconda.
+- Moduli di scansione e ricerca con una regola unica: il primo campo prende lo spazio che resta, gli interruttori
+  quello del loro testo e il pulsante di avvio è ancorato al bordo destro, staccato dai campi.
+- Campo di ricerca delle tabelle più largo.
 
 ## 2.2.0 · 16 ottobre 2026
 

@@ -7,22 +7,50 @@
   2. Crea setup e zip con Scripts\Build-Setup.ps1 (salvo -SkipBuild).
   3. Controlla che il repository sia pulito e che il tag v<versione> non esista ancora, poi crea tag e release con
      gh (GitHub CLI) e carica WhoIsPro-<versione>-Setup.exe e WhoIsPro-<versione>-win-x64.zip.
+  4. Tiene la lista delle release al minimo: restano le ultime -Mantieni (2: quella appena pubblicata e la precedente),
+     le altre vengono cancellate da GitHub insieme al tag. Le novità di tutte le versioni restano nel CHANGELOG.
   I programmi installati trovano la nuova versione da soli (Panoramica → Aggiornamenti → Scarica e installa): GitHub
   pubblica l'impronta SHA-256 degli allegati e il programma la verifica prima di avviare il setup.
 
 .EXAMPLE
   .\Scripts\Publish-Release.ps1
   .\Scripts\Publish-Release.ps1 -Bozza        # release in bozza, da pubblicare a mano su GitHub
+  .\Scripts\Publish-Release.ps1 -SoloPulizia  # non pubblica: cancella solo le release oltre le ultime -Mantieni
 #>
 param(
   [switch]$SkipBuild,
   [switch]$Bozza,
+  [switch]$SoloPulizia,
+  [int]$Mantieni = 2,
   [string]$Repository = "brn78/WhoIs-Pro"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+# Cancella da GitHub (con il tag) le release oltre le ultime $Mantieni; le bozze non si toccano.
+function Remove-OldReleases {
+  $all = gh release list --repo $Repository --limit 100 --json tagName,isDraft,publishedAt | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0) { throw "Elenco delle release non riuscito." }
+  $published = @($all | Where-Object { -not $_.isDraft } | Sort-Object { [datetime]$_.publishedAt } -Descending)
+  $old = @($published | Select-Object -Skip $Mantieni)
+  if ($old.Count -eq 0) { Write-Host "Release su GitHub: $($published.Count), niente da cancellare." -ForegroundColor Cyan; return }
+  foreach ($r in $old) {
+    gh release delete $r.tagName --repo $Repository --yes --cleanup-tag
+    if ($LASTEXITCODE -ne 0) { throw "Cancellazione della release $($r.tagName) non riuscita." }
+    if (git tag --list $r.tagName) { git tag -d $r.tagName | Out-Null }
+    Write-Host "  cancellata $($r.tagName)"
+  }
+  Write-Host "Restano le ultime $Mantieni release: $(($published | Select-Object -First $Mantieni | ForEach-Object { $_.tagName }) -join ', ')" -ForegroundColor Cyan
+}
+
+if ($SoloPulizia) {
+  gh auth status 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "GitHub CLI non autenticata: esegui gh auth login." }
+  Remove-OldReleases
+  return
+}
 
 [xml]$proj = Get-Content (Join-Path $root "WhoIs Pro.vbproj")
 $version = ($proj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
@@ -66,3 +94,4 @@ gh @args
 if ($LASTEXITCODE -ne 0) { throw "Creazione della release non riuscita." }
 Write-Host ""
 Write-Host "Release $tag pubblicata: https://github.com/$Repository/releases/tag/$tag" -ForegroundColor Green
+if (-not $Bozza) { Remove-OldReleases }
