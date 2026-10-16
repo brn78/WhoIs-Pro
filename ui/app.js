@@ -14,6 +14,7 @@ import './pages/dns.js';
 import './pages/trace.js';
 import './pages/netstat.js';
 import './pages/computer.js';
+import './pages/perf.js';
 import { openPcNetwork } from './pages/settings.js';
 import { openSessionDrawer } from './pages/session.js';
 
@@ -107,6 +108,11 @@ function activityData() {
     const p = S.net && S.net.progress;
     sub = p ? `Rete · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} indirizzi · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
     pct = p ? p.percent : 0;
+  } else if (r.perf) {
+    const L = S.perf && S.perf.live;
+    title = 'Test delle prestazioni';
+    sub = L ? L.message : 'avvio…';
+    pct = L ? L.percent : 0;
   } else if (r.autoPorts) {
     const a = (S.net && S.net.auto) || S.st.autoPorts || { done: 0, total: 0 };
     title = 'Porte degli host trovati';
@@ -430,7 +436,7 @@ const ACTIONS = {
   },
   'monitor': () => {
     const r = S.st.running;
-    go(r.network || r.autoPorts ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
+    go(r.perf ? 'perf' : r.network || r.autoPorts ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
   },
   'check-internet': () => call('checkInternet').catch(() => {}),
   'session-menu': (el) => sessionMenu(el),
@@ -526,6 +532,8 @@ on('network.progress', updateChrome);
 on('ports.progress', updateChrome);
 on('autoports.progress', updateChrome);
 on('autoports.host', updateChrome);
+on('perf.progress', updateChrome);
+on('perf.done', updateChrome);
 // i messaggi di avanzamento passano da una coda: gli ultimi arrivano dopo la fine e non devono riaccendere l'attività
 on('oui.progress', () => { if (!ouiActive) return; S.st.running.oui = true; updateChrome(); });
 

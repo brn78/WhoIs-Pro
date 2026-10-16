@@ -175,6 +175,7 @@ const KIND = {
   trace: { ic: 'route', label: 'Traceroute', unit: ['salto', 'salti'] },
   host: { ic: 'refresh', label: 'Host', unit: ['risponde', 'risponde'] },
   autoports: { ic: 'plug', label: 'Porte di', unit: ['porta aperta', 'porte aperte'] },
+  perf: { ic: 'zap', label: 'Prestazioni', unit: ['Mbit/s', 'Mbit/s'] },
 };
 
 function stat(page, label, value, sub, tone = '') {
@@ -302,6 +303,7 @@ function scansCard() {
     const k = KIND[s.kind] || KIND.network;
     const result = s.error ? `<span class="tone-bad">errore: ${esc(s.error)}</span>`
       : s.kind === 'host' ? (s.found ? 'risponde' : '<span class="tone-bad">non risponde</span>')
+        : s.kind === 'perf' ? `${fmtNumber(s.found)} Mbit/s in download`
         : `${plural(s.found, k.unit[0], k.unit[1])}${s.cancelled ? ' · fermata' : ''}`;
     return `<li class="scan-item">
       <span class="scan-kind">${icon(k.ic, { size: 16 })}</span>
@@ -450,6 +452,7 @@ function scanAgain(index) {
   else if (s.kind === 'trace') navigate('trace', { target: s.target, start: true });
   else if (s.kind === 'host') navigate('network', { q: s.target });
   else if (s.kind === 'autoports') navigate('ports');
+  else if (s.kind === 'perf') navigate('perf');
   else navigate('network', { target: s.target });
 }
 
