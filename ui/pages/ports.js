@@ -11,6 +11,8 @@ S.ports = {
   host: '', preset: 'TOP20', ports: '', tcp: true, udp: false, banner: true, threads: 100, timeout: 1200,
   q: '', filterHost: '', sort: { key: 'portNumber', dir: 1 },
   progress: null, done: null, fresh: new Set(),
+  editing: false,      // modulo riaperto con «Modifica» dopo una scansione
+  last: null,          // parametri dell'ultima scansione avviata (per la riga di riepilogo)
 };
 
 const running = () => !!(S.st && S.st.running.ports);
@@ -23,34 +25,35 @@ function ensurePorts() {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Modulo di avvio: completo finché non c'è stata nessuna scansione, poi ripiegato in una riga di riepilogo
+// ---------------------------------------------------------------------------------------------------------------------
 function formCard() {
   const p = S.ports;
+  if (running() || (p.done && !p.editing)) return `<section class="card scan-summary" id="scan-card">${summaryInner()}</section>`;
   ensurePorts();
-  const dis = running() ? 'disabled' : '';
   const options = presets().map((x) => `<option value="${esc(x.key)}" ${p.preset === x.key ? 'selected' : ''}>${esc(x.name)}</option>`).join('')
     + `<option value="CUSTOM" ${p.preset === 'CUSTOM' ? 'selected' : ''}>Personalizzato</option>`;
   const count = fmtNumber(countPorts(p.ports));
-  return `<section class="card"><div class="card-body">
+  return `<section class="card" id="scan-card"><div class="card-body">
     <form data-form="scan" class="scan-form ports-form" autocomplete="off">
       <div class="field"><label for="f-host">Host</label>
-        <input class="input input-mono" id="f-host" data-field="host" value="${esc(p.host)}" placeholder="192.168.1.10 oppure nome.dominio" ${dis}></div>
+        <input class="input input-mono" id="f-host" data-field="host" value="${esc(p.host)}" placeholder="192.168.1.10 oppure nome.dominio"></div>
       <div class="field"><label for="f-preset">Gruppo di porte</label>
-        <select class="select" id="f-preset" data-field="preset" ${dis}>${options}</select></div>
-      <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="1000" data-field="threads" value="${p.threads}" ${dis}></div>
-      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${p.timeout}" ${dis}></div>
+        <select class="select" id="f-preset" data-field="preset">${options}</select></div>
+      <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="1000" data-field="threads" value="${p.threads}"></div>
+      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${p.timeout}"></div>
       <div class="field field-wide"><div class="field-label-row"><label for="f-ports">Porte</label><span class="hint" id="ports-count">${count} porte</span></div>
-        <textarea class="input ports" id="f-ports" data-field="ports" rows="2" placeholder="22, 80, 443, 8000-8100" ${dis}>${esc(p.ports)}</textarea></div>
+        <textarea class="input ports" id="f-ports" data-field="ports" rows="2" placeholder="22, 80, 443, 8000-8100">${esc(p.ports)}</textarea></div>
       <div class="field field-switches-row"><span class="field-label">Protocolli e opzioni</span><div class="field-switches">
-        <label class="switch"><input type="checkbox" data-field="tcp" ${p.tcp ? 'checked' : ''} ${dis}><span class="track"></span><span>TCP</span></label>
-        <label class="switch"><input type="checkbox" data-field="udp" ${p.udp ? 'checked' : ''} ${dis}><span class="track"></span><span>UDP</span></label>
-        <label class="switch"><input type="checkbox" data-field="banner" ${p.banner ? 'checked' : ''} ${dis}><span class="track"></span><span>Leggi il banner</span></label></div></div>
+        <label class="switch"><input type="checkbox" data-field="tcp" ${p.tcp ? 'checked' : ''}><span class="track"></span><span>TCP</span></label>
+        <label class="switch"><input type="checkbox" data-field="udp" ${p.udp ? 'checked' : ''}><span class="track"></span><span>UDP</span></label>
+        <label class="switch"><input type="checkbox" data-field="banner" ${p.banner ? 'checked' : ''}><span class="track"></span><span>Leggi il banner</span></label></div></div>
       <div class="field field-actions-end"><span class="field-label">&nbsp;</span><div class="field-actions">
-        ${running()
-          ? `<button type="button" class="btn btn-danger" data-action="scan-stop">${icon('stop')} Ferma</button>`
-          : `<button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>`}
+        ${p.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
+        <button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>
       </div></div>
     </form>
-    <div id="scan-bar">${scanBar()}</div>
   </div></section>`;
 }
 
@@ -71,27 +74,48 @@ function countPorts(text) {
   return seen.size;
 }
 
-function scanBar() {
+function runningStats() {
   const p = S.ports.progress;
-  const d = S.ports.done;
-  if (running() && p) {
-    return `<div class="scan-bar"><div class="meter"><span style="width:${p.percent}%"></span></div>
-      <span class="scan-stat"><span class="spinner"></span><b>${p.percent}%</b></span>
-      <span class="scan-stat">${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} porte</span>
-      <span class="scan-stat">${fmtSeconds(p.seconds)}</span>
-      <span class="scan-stat">porta ${p.currentPort || ''}</span></div>`;
-  }
-  if (running()) return `<div class="scan-bar"><span class="scan-stat"><span class="spinner"></span> Avvio della scansione…</span></div>`;
-  if (d) {
-    const text = d.error ? `Scansione interrotta per un errore: ${esc(d.error)}`
-      : d.cancelled ? `Scansione di ${esc(d.host)} fermata dopo ${fmtSeconds(d.seconds)}: ${plural(d.found, 'porta aperta', 'porte aperte')} fino a quel momento.`
-        : `Scansione di ${esc(d.host)} completata in ${fmtSeconds(d.seconds)}: ${plural(d.found, 'porta aperta', 'porte aperte')}.`;
-    const tone = d.error ? 'danger' : d.cancelled ? 'warning' : 'success';
-    return `<div class="scan-bar"><span class="scan-stat"><span class="pill ${tone} pill-dot">${text}</span></span></div>`;
-  }
-  return '';
+  if (!p) return 'avvio…';
+  return `${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} porte · ${fmtSeconds(p.seconds)}${p.currentPort ? ` · porta ${esc(String(p.currentPort))}` : ''}`;
 }
 
+/** Contenuto della riga di riepilogo: avanzamento e «Ferma» durante la scansione, esito e parametri dopo. */
+function summaryInner() {
+  const s = S.ports;
+  if (running()) {
+    const pct = s.progress ? s.progress.percent : 0;
+    return `<span class="scan-state is-busy"><span class="spinner"></span>In corso · <span data-pct>${pct}%</span></span><span class="vsep"></span>
+      <span class="chip" title="Host"><b>${esc((s.last || s).host)}</b></span>
+      <span class="meter"><span data-meter style="width:${pct}%"></span></span>
+      <span class="scan-stat mono" data-stats>${runningStats()}</span>
+      <span class="scan-actions"><button type="button" class="btn btn-danger" data-action="scan-stop">${icon('stop')} Ferma</button></span>`;
+  }
+  const d = s.done;
+  const p = s.last || s;
+  const text = d.error ? `Interrotta per un errore: ${esc(d.error)}`
+    : d.cancelled ? `Fermata dopo ${fmtSeconds(d.seconds)} · ${plural(d.found, 'porta aperta', 'porte aperte')}`
+      : `Completata in ${fmtSeconds(d.seconds)} · ${plural(d.found, 'porta aperta', 'porte aperte')}`;
+  const tone = d.error ? 'danger' : d.cancelled ? 'warning' : 'success';
+  const preset = presets().find((x) => x.key === p.preset);
+  const group = preset ? preset.name : 'Personalizzato';
+  const protos = [p.tcp ? 'TCP' : '', p.udp ? 'UDP' : ''].filter(Boolean).join(' + ') || 'nessun protocollo';
+  return `<span class="scan-state ${tone}"><span class="dot"></span>${text}</span><span class="vsep"></span>
+    <span class="chips">
+      <span class="chip" title="Host"><b>${esc(d.host || p.host)}</b></span>
+      <span class="chip" title="${esc(p.ports)}">${esc(group)} · ${fmtNumber(countPorts(p.ports))} porte · ${protos}</span>
+      <span class="chip" title="Thread in parallelo e timeout di connessione">${fmtNumber(p.threads)} thread · ${fmtNumber(p.timeout)} ms</span>
+      ${p.banner ? `<span class="chip" title="Banner letto dal server">${icon('check')} Banner</span>` : ''}
+    </span>
+    <span class="scan-actions">
+      <button type="button" class="btn" data-action="scan-edit">${icon('edit')} Modifica</button>
+      <button type="button" class="btn btn-primary" data-action="scan-restart">${icon('play')} Riavvia</button>
+    </span>`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tabella delle porte
+// ---------------------------------------------------------------------------------------------------------------------
 function hosts() { return Array.from(new Set(S.data.ports.map((p) => p.host))); }
 
 function filteredPorts() {
@@ -140,7 +164,7 @@ function tableCard() {
 }
 
 function render() {
-  return `${pageHead('plug', 'Scansione delle porte', 'Porte TCP e UDP aperte di un host, con il servizio e il banner letto dal server.')}
+  return `${pageHead('Porte TCP e UDP aperte di un host, con il servizio e il banner letto dal server.')}
     <div class="grid">${formCard()}${tableCard()}</div>`;
 }
 
@@ -168,23 +192,33 @@ function renderTableCard() {
 }
 
 function renderForm() {
-  const form = $('[data-form="scan"]');
-  if (form) form.closest('section.card').outerHTML = formCard();
+  const card = $('#scan-card');
+  if (card) card.outerHTML = formCard();
 }
 
+/** Avanzamento sul posto (percentuale, barra, contatori) senza ricreare la riga: niente sfarfallio sui pulsanti. */
 function updateBar() {
-  const bar = $('#scan-bar');
-  if (bar) bar.innerHTML = scanBar();
+  const card = $('#scan-card');
+  if (!card) return;
+  const meter = $('[data-meter]', card);
+  if (!running() || !meter) { renderForm(); return; }
+  const pct = S.ports.progress ? S.ports.progress.percent : 0;
+  meter.style.width = `${pct}%`;
+  $('[data-pct]', card).textContent = `${pct}%`;
+  $('[data-stats]', card).innerHTML = runningStats();
 }
 
 async function start() {
   const p = S.ports;
   if (running()) return;
+  ensurePorts();
   try {
     const res = await call('scanPorts', { host: p.host, ports: p.ports, tcp: p.tcp, udp: p.udp, banner: p.banner, threads: p.threads, timeout: p.timeout });
     adopt({ state: res.state });
+    p.last = { host: p.host, preset: p.preset, ports: p.ports, tcp: p.tcp, udp: p.udp, banner: p.banner, threads: p.threads, timeout: p.timeout };
     p.progress = { scanned: 0, total: res.total, percent: 0, seconds: 0, currentPort: '' };
     p.done = null;
+    p.editing = false;
     p.fresh.clear();
     renderForm();
     emit('state');
@@ -219,11 +253,22 @@ async function copy(text, done) {
   try { await call('setClipboard', { text }); toast(done, { tone: 'success' }); } catch (err) { toastError(err); }
 }
 
+/** Riapre il modulo completo (dopo una scansione) e porta il cursore sul campo dell'host. */
+function edit() {
+  S.ports.editing = true;
+  renderForm();
+  const f = $('#f-host');
+  if (f) { f.focus(); f.select(); }
+}
+
 const actions = {
   'scan-stop': async () => { try { await call('stopPorts'); } catch (err) { toastError(err); } },
+  'scan-edit': () => edit(),
+  'scan-collapse': () => { S.ports.editing = false; renderForm(); },
+  'scan-restart': () => start(),
   'clear-ports': async () => {
     if (!(await confirmDialog({ title: 'Svuotare l\'elenco delle porte?', message: `${plural(S.data.ports.length, 'porta', 'porte')} verranno tolte dalla sessione.`, confirmText: 'Svuota', tone: 'danger' }))) return;
-    try { adopt(await call('clearList', { list: 'ports' })); S.ports.done = null; S.ports.filterHost = ''; renderTableCard(); updateBar(); } catch (err) { toastError(err); }
+    try { adopt(await call('clearList', { list: 'ports' })); S.ports.done = null; S.ports.editing = false; S.ports.filterHost = ''; renderTableCard(); renderForm(); } catch (err) { toastError(err); }
   },
   'port-menu': (el) => portMenu(el, el.dataset.key),
 };
@@ -246,6 +291,7 @@ on('ports.progress', (d) => {
 on('ports.done', (d) => {
   S.ports.done = d;
   S.ports.progress = null;
+  S.ports.editing = false;
   adopt({ state: d.state });
   if (S.page === 'ports') { renderForm(); renderTableCard(); }
   if (d.error) toast(d.error, { tone: 'error', title: 'Scansione interrotta' });
@@ -254,17 +300,19 @@ on('ports.done', (d) => {
   setTimeout(() => { S.ports.fresh.clear(); }, 2000);
 });
 
-bus.addEventListener('session', () => { S.ports.done = null; S.ports.filterHost = ''; S.ports.fresh.clear(); if (S.page === 'ports') renderTableCard(); });
+bus.addEventListener('session', () => {
+  S.ports.done = null; S.ports.editing = false; S.ports.filterHost = ''; S.ports.fresh.clear();
+  if (S.page === 'ports') { renderTableCard(); renderForm(); }
+});
 
 definePage('ports', {
-  title: 'Porte', icon: 'plug', section: 'scan', badge: () => S.data.ports.length,
+  title: 'Porte', heading: 'Scansione delle porte', icon: 'plug', section: 'scan', badge: () => S.data.ports.length,
   render, after: updateInfo, actions,
   enter: (params) => {
     if (params.host) {
       S.ports.host = params.host;
-      renderForm();
       if (params.start && !running()) start();
-      else { const f = $('#f-host'); if (f) f.focus(); }
+      else if (!running()) edit();
     }
   },
   onInput: (el, field) => {
