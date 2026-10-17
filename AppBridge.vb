@@ -217,6 +217,7 @@ Namespace UI
 
         Private Function Start() As Object
             Dim unused = AutoCheckUpdateAsync()
+            Dim unusedOui = AutoUpdateOuiAsync()
             CheckInternet()
             _internetTimer.Start()
             ' il catalogo delle icone dei dispositivi si prepara subito, fuori dalla finestra: la scelta poi si apre già pronta
@@ -346,6 +347,9 @@ Namespace UI
                 If online AndAlso _updatePending Then
                     Dim unused = AutoCheckUpdateAsync(delay:=False)
                 End If
+                If online AndAlso _ouiPending Then
+                    Dim unusedOui = AutoUpdateOuiAsync(delay:=False)
+                End If
             End If
         End Sub
 
@@ -379,6 +383,7 @@ Namespace UI
                 .autoScan = _settings.AutoScan,
                 .autoScanDelay = _settings.AutoScanDelay,
                 .autoInstallUpdates = _settings.AutoInstallUpdates,
+                .autoUpdateOui = _settings.AutoUpdateOui,
                 .profiles = _settings.Profiles,
                 .dataFolder = MainWindow.LocalFolder,
                 .devices = _devices.Count,
@@ -403,6 +408,7 @@ Namespace UI
             If args.TryGetProperty("startMinimized", value) Then _settings.StartMinimized = value.ValueKind = JsonValueKind.True
             If args.TryGetProperty("autoScan", value) Then _settings.AutoScan = value.ValueKind = JsonValueKind.True
             If args.TryGetProperty("autoInstallUpdates", value) Then _settings.AutoInstallUpdates = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("autoUpdateOui", value) Then _settings.AutoUpdateOui = value.ValueKind = JsonValueKind.True
             Dim delay As Integer
             If args.TryGetProperty("autoScanDelay", value) AndAlso value.ValueKind = JsonValueKind.Number AndAlso value.TryGetInt32(delay) Then
                 _settings.AutoScanDelay = Math.Clamp(delay, 0, 600)
@@ -1619,6 +1625,36 @@ Namespace UI
 #End Region
 
 #Region "Database dei produttori"
+
+        Private _ouiPending As Boolean
+        Private _ouiAutoTried As Boolean
+
+        ''' <summary>
+        ''' Aggiornamento automatico del database dei produttori, come quello del programma: all'avvio (una volta per
+        ''' sessione del programma), qualche secondo dopo e solo con Internet (se manca, parte appena torna), quando il
+        ''' database non viene dall'IEEE o ha più di un giorno: i registri si aggiornano ogni giorno e pesano qualche MB.
+        ''' La pagina riceve «oui.auto» all'inizio e «oui.done» (o «oui.failed») alla fine.
+        ''' </summary>
+        Private Async Function AutoUpdateOuiAsync(Optional delay As Boolean = True) As Task
+            If Not _settings.AutoUpdateOui OrElse (_ouiAutoTried AndAlso Not _ouiPending) Then Return
+            _ouiAutoTried = True
+            Dim info = MacVendorLookup.DatabaseInfo()
+            If info.Source = "IEEE" AndAlso info.UpdatedAt.HasValue AndAlso (DateTime.Now - info.UpdatedAt.Value) < TimeSpan.FromDays(1) Then Return
+            Try
+                If delay Then Await Task.Delay(TimeSpan.FromSeconds(12))
+                If Not (_online.HasValue AndAlso _online.Value) Then
+                    _ouiPending = True
+                    Return
+                End If
+                _ouiPending = False
+                If _ouiBusy Then Return
+                _owner.PostEvent("oui.auto", New With {.message = "Connessione ai registri dell'IEEE…"})
+                Dim result = Await UpdateOuiAsync()
+                _owner.PostEvent("oui.done", result)
+            Catch ex As Exception
+                _owner.PostEvent("oui.failed", New With {.error = ex.Message, .state = State()})
+            End Try
+        End Function
 
         ''' <summary>
         ''' Scarica i registri dell'IEEE (o, se non rispondono, il manuf di Wireshark), li salva in %LOCALAPPDATA%\WhoIsPro e

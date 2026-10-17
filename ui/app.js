@@ -594,4 +594,30 @@ on('capture.done', updateChrome);
 // i messaggi di avanzamento passano da una coda: gli ultimi arrivano dopo la fine e non devono riaccendere l'attività
 on('oui.progress', () => { if (!ouiActive) return; S.st.running.oui = true; updateChrome(); });
 
+// aggiornamento automatico del database dei produttori all'avvio (Impostazioni → Produttori): stesso riquadro
+// «Aggiornamento in corso» e, alla fine, un avviso con quanti produttori e host riclassificati
+on('oui.auto', (d) => {
+  if (!S.st) return;
+  ouiActive = true;
+  S.st.running.oui = true;
+  S.settings.ouiMessage = d && d.message ? d.message : 'Aggiornamento in corso…';
+  updateChrome();
+  if (S.page === 'settings') renderPage();
+});
+on('oui.done', (res) => {
+  ouiActive = false;
+  const r = adopt(res);
+  S.st.running.oui = false;
+  updateChrome();
+  if (S.page === 'settings') renderPage();
+  toast(`${plural(r.count, 'produttore', 'produttori')}${r.changedHosts ? ` · ${plural(r.changedHosts, 'host riclassificato', 'host riclassificati')}` : ''}.`, { tone: 'success', title: 'Database dei produttori aggiornato da solo' });
+});
+on('oui.failed', (d) => {
+  ouiActive = false;
+  if (d && d.state) adopt({ state: d.state });
+  if (S.st) S.st.running.oui = false;
+  updateChrome();
+  if (S.page === 'settings') renderPage();
+});
+
 start();
