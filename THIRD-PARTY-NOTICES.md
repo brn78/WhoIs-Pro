@@ -104,6 +104,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Material Design Icons 7.4.47
+
+- Uso: le icone che si possono scegliere per i dispositivi (pagina Rete, pannello del dispositivo; catalogo in
+  `Core\Utils\IconCatalog.vb`). Opera: [Material Design Icons](https://pictogrammers.com/library/mdi/) 7.4.47,
+  © Pictogrammers (pacchetto `@mdi/svg`); le icone dei marchi e quelle deprecate non sono incluse.
+- File: `Assets\Icons\mdi-v7.4.47.mui.gz` (863.689 byte, SHA-256
+  `4cdf94eb19fffbe40e76f68ed33f4b1102ac11fd17aea316e5729f4a47d5cbc6`), incorporato nel programma; è lo stesso
+  catalogo di BlackHole Workspaces, dal progetto ModernFrameworkUI dello stesso autore.
+- Licenza: Apache License 2.0, testo in `Assets\Icons\LICENSE-mdi.txt`.
+
 ## Produttori dei dispositivi di rete
 
 - `manuf.txt`, accanto al programma, è il file «manuf» pubblicato dal progetto [Wireshark](https://www.wireshark.org/)

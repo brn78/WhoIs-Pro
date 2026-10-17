@@ -60,6 +60,29 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub Label_FollowsTheMac_InLaterScansAndSessions()
+            Dim reg As New DeviceRegistry(testDir)
+            Dim h = Host("192.168.1.40", "BC:AD:28:40:40:40", DateTime.Now)
+            reg.Observe(h)
+            reg.SetLabel(h, "  Telecamera ingresso ", "sopra il portone")
+            Assert.That(h.CustomName, Iz.EqualTo("Telecamera ingresso"))
+
+            ' un'altra sessione, un altro indirizzo: nome e note tornano dal registro
+            Dim later = Host("192.168.1.77", "BC:AD:28:40:40:40", DateTime.Now)
+            Dim again As New DeviceRegistry(testDir)
+            again.Observe(later)
+            Assert.That(later.CustomName, Iz.EqualTo("Telecamera ingresso"))
+            Assert.That(later.Notes, Iz.EqualTo("sopra il portone"))
+
+            ' una sessione con il nome, aperta su un PC che non lo conosce: il registro lo impara
+            Dim other As New DeviceRegistry(Path.Combine(testDir, "altro-pc"))
+            Dim fromFile = Host("192.168.1.50", "00:1C:B3:50:50:50", DateTime.Now)
+            fromFile.CustomName = "Centrale allarme"
+            other.Observe(fromFile)
+            Assert.That(other.Find(fromFile).Name, Iz.EqualTo("Centrale allarme"))
+        End Sub
+
+        <Test>
         Public Sub Clear_ForgetsEverything_AndCorruptFileStartsEmpty()
             Dim reg As New DeviceRegistry(testDir)
             reg.Observe(Host("192.168.1.40", "BC:AD:28:40:40:40", DateTime.Now))

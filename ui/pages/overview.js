@@ -88,16 +88,20 @@ function scope(hist) {
 }
 
 function ledClass(a) {
+  if (!a.connected) return 'led is-off';
   return a.rxBps + a.txBps > 2048 ? 'led is-act' : 'led is-link';
 }
+
+/** Chiave delle schede e del loro stato: se cambia (una scheda si collega o si stacca) il riquadro si ridisegna. */
+const portsKey = (list) => list.map((x) => `${x.id}${x.connected ? '' : ':off'}`).join('|');
 
 function portsHtml() {
   const d = S.overview.dash;
   const list = (d && d.traffic) || [];
   if (!list.length) return '';
-  return list.map((a) => `<button class="port ${a.id === S.overview.sel ? 'is-active' : ''}" data-action="link-select" data-id="${esc(a.id)}" title="${esc(a.description)}">
+  return list.map((a) => `<button class="port ${a.id === S.overview.sel ? 'is-active' : ''} ${a.connected ? '' : 'is-off'}" data-action="link-select" data-id="${esc(a.id)}" title="${esc(a.description)}${a.connected ? '' : ' · non collegata'}">
       <span class="${ledClass(a)}" data-led="${esc(a.id)}"></span>
-      <span class="port-text"><b>${esc(a.name)}</b><small>${esc([a.type, fmtLinkSpeed(a.speedMbps)].filter(Boolean).join(', '))}</small></span></button>`).join('');
+      <span class="port-text"><b>${esc(a.name)}</b><small>${esc([a.type, a.connected ? fmtLinkSpeed(a.speedMbps) : 'non collegata'].filter(Boolean).join(', '))}</small></span></button>`).join('');
 }
 
 function readout(cls, ic, label, bps, total, attr) {
@@ -139,8 +143,11 @@ function linkPanel() {
   let inner;
   if (o.error && !o.dash) inner = `<div class="link-empty">${emptyState('alert', 'Traffico non letto', esc(o.error))}</div>`;
   else if (!o.dash) inner = '<div class="loading-block"><span class="spinner"></span> Lettura delle schede di rete…</div>';
-  else if (!a) inner = `<div class="link-empty">${emptyState('wifiOff', 'Nessuna scheda collegata', 'Collega il cavo o la rete Wi-Fi: la scheda compare qui con il suo traffico.')}</div>`;
-  else {
+  else if (!a) inner = `<div class="link-empty">${emptyState('wifiOff', 'Nessuna scheda di rete', 'Collega il cavo o la rete Wi-Fi: la scheda compare qui con il suo traffico.')}</div>`;
+  else if (!a.connected) {
+    inner = `<div class="link-empty">${emptyState('wifiOff', `${a.name} non è collegata`,
+      `${esc(a.description)}${a.mac ? ` · MAC <span class="mono">${esc(a.mac)}</span>` : ''}. ${a.type === 'Wi-Fi' ? 'Collegati a una rete Wi-Fi' : 'Collega il cavo o attiva la scheda'}: il traffico compare qui.`)}</div>`;
+  } else {
     inner = `<div class="link-body">
         <div class="readouts">
           ${readout('rx', 'download', 'Ricezione', a.rxBps, a.rxTotal, 'rx')}
@@ -378,7 +385,12 @@ function arrivalsCard() {
 // ---------------------------------------------------------------------------------------------------------------------
 function headHtml() {
   const s = S.st.session;
-  const sub = `<span class="session-line">${icon('archive', { size: 15 })}<b>${esc(s.title)}</b>${s.file ? ` <span class="muted">${esc(s.fileName)}</span>` : ' <span class="muted">non ancora salvata</span>'}${s.dirty ? ' <span class="pill warning pill-dot">da salvare</span>' : ''}</span>`;
+  // sotto il titolo: la prima riga degli appunti della sessione, altrimenti il file
+  const note = String(s.notes || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+  const desc = note || (s.file ? s.fileName : 'non ancora salvata');
+  const sub = `<span class="session-line">${icon('archive', { size: 15 })}<span class="session-text">
+      <span class="session-title"><b>${esc(s.title)}</b>${s.dirty ? ' <span class="pill warning pill-dot">da salvare</span>' : ''}</span>
+      <small class="trunc" title="${esc(note ? s.notes : s.file || '')}">${esc(desc)}</small></span></span>`;
   return pageHead(sub,
     `<button class="btn" data-action="session-details">${icon('edit')} Dettagli</button>
      <button class="btn" data-action="new">${icon('filePlus')} Nuova</button>
@@ -400,8 +412,8 @@ function refreshLive() {
   const panel = $('#link-panel');
   if (!panel) return;
   const a = selected();
-  const ids = ((o.dash && o.dash.traffic) || []).map((x) => x.id).join('|');
-  if (!a || !$('#scope') || panel.dataset.ids !== ids) {
+  const ids = portsKey((o.dash && o.dash.traffic) || []);
+  if (!a || (a.connected && !$('#scope')) || panel.dataset.ids !== ids) {
     panel.outerHTML = linkPanel();
     const fresh = $('#link-panel');
     if (fresh) fresh.dataset.ids = ids;
@@ -410,16 +422,18 @@ function refreshLive() {
       const led = $(`[data-led="${CSS.escape(x.id)}"]`);
       if (led) led.className = ledClass(x);
     }
-    const rx = fmtRate(a.rxBps);
-    const tx = fmtRate(a.txBps);
-    $('[data-rx]').textContent = rx.value; $('[data-rx-unit]').textContent = rx.unit;
-    $('[data-tx]').textContent = tx.value; $('[data-tx-unit]').textContent = tx.unit;
-    $('[data-rx-total]').textContent = `${fmtBytes(a.rxTotal)} dall'avvio di Windows`;
-    $('[data-tx-total]').textContent = `${fmtBytes(a.txTotal)} dall'avvio di Windows`;
-    $('#scope').innerHTML = scope(o.hist.get(a.id) || []);
-    const facts = factsHtml(a);
-    const box = $('#link-facts');
-    if (box && box.dataset.html !== facts) { box.innerHTML = facts; box.dataset.html = facts; }
+    if (a.connected) {
+      const rx = fmtRate(a.rxBps);
+      const tx = fmtRate(a.txBps);
+      $('[data-rx]').textContent = rx.value; $('[data-rx-unit]').textContent = rx.unit;
+      $('[data-tx]').textContent = tx.value; $('[data-tx-unit]').textContent = tx.unit;
+      $('[data-rx-total]').textContent = `${fmtBytes(a.rxTotal)} dall'avvio di Windows`;
+      $('[data-tx-total]').textContent = `${fmtBytes(a.txTotal)} dall'avvio di Windows`;
+      $('#scope').innerHTML = scope(o.hist.get(a.id) || []);
+      const facts = factsHtml(a);
+      const box = $('#link-facts');
+      if (box && box.dataset.html !== facts) { box.innerHTML = facts; box.dataset.html = facts; }
+    }
   }
   const sys = $('#sys-body');
   if (sys) sys.innerHTML = systemInner();

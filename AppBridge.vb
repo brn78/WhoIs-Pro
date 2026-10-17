@@ -165,6 +165,10 @@ Namespace UI
                 Case "sessionInfo" : Return SessionInfo(ArgText(args, "title"), ArgText(args, "notes"))
                 Case "clearList" : Return ClearList(ArgText(args, "list"))
                 Case "removeHost" : Return RemoveHost(ArgText(args, "ip"))
+                Case "hostLabel" : Return HostLabel(args)
+                Case "iconsMeta" : Return Await Task.Run(Function() IconsMeta())
+                Case "iconsSearch" : Return Await Task.Run(Function() IconsSearch(args))
+                Case "iconPaths" : Return IconPaths(args)
                 Case "export" : Return Export(ArgText(args, "format"))
                 Case "updateOui"
                     RequireInternet("Aggiornamento del database dei produttori")
@@ -215,11 +219,24 @@ Namespace UI
             Dim unused = AutoCheckUpdateAsync()
             CheckInternet()
             _internetTimer.Start()
+            ' il catalogo delle icone dei dispositivi si prepara subito, fuori dalla finestra: la scelta poi si apre già pronta
+            Dim unusedIcons = Task.Run(Function() IconCatalog.Count)
             Dim reopened = ReopenLastSession()
-            Return New With {.state = State(), .session = SessionData(), .reopened = reopened}
+            Return New With {.state = State(), .session = SessionData(), .reopened = reopened, .autoScan = AutoScanOffer()}
         End Function
 
         Private _reopenTried As Boolean
+        Private _autoScanOffered As Boolean
+
+        ''' <summary>
+        ''' Una volta sola, all'avvio: i secondi prima della scansione della rete automatica, se è attiva nelle impostazioni
+        ''' (-1 = niente scansione). Se la pagina si ricarica non riparte.
+        ''' </summary>
+        Private Function AutoScanOffer() As Integer
+            If _autoScanOffered Then Return -1
+            _autoScanOffered = True
+            Return If(_settings.AutoScan, Math.Clamp(_settings.AutoScanDelay, 0, 600), -1)
+        End Function
 
         ''' <summary>
         ''' Una volta sola, all'avvio: riapre l'ultima sessione salvata o aperta, se il file c'è ancora; altrimenti resta la
@@ -359,6 +376,9 @@ Namespace UI
                 .closeToTray = _settings.CloseToTray,
                 .startMinimized = _settings.StartMinimized,
                 .theme = _settings.Theme,
+                .autoScan = _settings.AutoScan,
+                .autoScanDelay = _settings.AutoScanDelay,
+                .autoInstallUpdates = _settings.AutoInstallUpdates,
                 .profiles = _settings.Profiles,
                 .dataFolder = MainWindow.LocalFolder,
                 .devices = _devices.Count,
@@ -381,6 +401,12 @@ Namespace UI
             If args.TryGetProperty("trayIcon", value) Then _settings.TrayIcon = value.ValueKind = JsonValueKind.True
             If args.TryGetProperty("closeToTray", value) Then _settings.CloseToTray = value.ValueKind = JsonValueKind.True
             If args.TryGetProperty("startMinimized", value) Then _settings.StartMinimized = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("autoScan", value) Then _settings.AutoScan = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("autoInstallUpdates", value) Then _settings.AutoInstallUpdates = value.ValueKind = JsonValueKind.True
+            Dim delay As Integer
+            If args.TryGetProperty("autoScanDelay", value) AndAlso value.ValueKind = JsonValueKind.Number AndAlso value.TryGetInt32(delay) Then
+                _settings.AutoScanDelay = Math.Clamp(delay, 0, 600)
+            End If
             Dim theme = ArgText(args, "theme")
             If theme = "auto" OrElse theme = "light" OrElse theme = "dark" Then _settings.Theme = theme
             SettingsStore.Save(MainWindow.LocalFolder, _settings)
@@ -487,11 +513,11 @@ Namespace UI
         Private _updatePending As Boolean
 
         ''' <summary>
-        ''' Controllo automatico delle nuove versioni (una volta al giorno), qualche secondo dopo l'avvio, solo con Internet:
-        ''' se la connessione non c'è il controllo aspetta e parte appena torna (CheckInternet).
+        ''' Controllo delle nuove versioni a ogni avvio (anche il primo dopo l'installazione), qualche secondo dopo, solo con
+        ''' Internet: se la connessione non c'è il controllo aspetta e parte appena torna (CheckInternet). Con una versione
+        ''' nuova e l'aggiornamento automatico attivo la scarica e la installa: il setup chiude il programma e lo riapre.
         ''' </summary>
         Private Async Function AutoCheckUpdateAsync(Optional delay As Boolean = True) As Task
-            If Not _updates.IsDue Then Return
             Try
                 If delay Then Await Task.Delay(TimeSpan.FromSeconds(6))
                 If Not (_online.HasValue AndAlso _online.Value) Then
@@ -501,9 +527,25 @@ Namespace UI
                 _updatePending = False
                 Dim status = Await _updates.CheckAsync(manual:=False, CancellationToken.None)
                 _owner.PostEvent("update.status", status)
+                If CanAutoInstall(status) Then
+                    _owner.PostEvent("update.auto", New With {.version = status.Version})
+                    Await InstallUpdateAsync()
+                End If
             Catch ex As Exception
-                ' errore del servizio: si riprova al prossimo avvio
+                ' errore del servizio o dello scaricamento: resta l'avviso nella pagina, si riprova al prossimo avvio
             End Try
+        End Function
+
+        ''' <summary>
+        ''' Installazione automatica solo se è attiva, la copia è quella del setup (con il setup pubblicato e verificabile) e
+        ''' chiudere non fa perdere niente: nessun dato da salvare e nessuna scansione o test in corso. Altrimenti resta
+        ''' l'avviso con «Scarica e installa».
+        ''' </summary>
+        Private Function CanAutoInstall(status As ReleaseStatus) As Boolean
+            If Not (_settings.AutoInstallUpdates AndAlso status.Available AndAlso status.Installed AndAlso status.HasSetup) Then Return False
+            If _installing OrElse HasUnsavedData Then Return False
+            Return _netCts Is Nothing AndAlso _portCts Is Nothing AndAlso _traceCts Is Nothing AndAlso Not _ouiBusy AndAlso
+                   _autoCts Is Nothing AndAlso _perfCts Is Nothing AndAlso Not _captureActive
         End Function
 
         ''' <summary>«Scarica e installa»: alla fine il setup è partito e la finestra si chiude da sola.</summary>
@@ -809,6 +851,9 @@ Namespace UI
             If idx >= 0 Then
                 h.FirstSeen = _session.Hosts(idx).FirstSeen
                 h.Notes = _session.Hosts(idx).Notes
+                h.CustomName = _session.Hosts(idx).CustomName
+                h.Icon = _session.Hosts(idx).Icon
+                h.IconColor = _session.Hosts(idx).IconColor
                 If (h.Ipv6 Is Nothing OrElse h.Ipv6.Count = 0) AndAlso _session.Hosts(idx).Ipv6 IsNot Nothing Then h.Ipv6 = _session.Hosts(idx).Ipv6
                 _session.Hosts(idx) = h
             Else
@@ -1467,6 +1512,67 @@ Namespace UI
             If _session.Hosts.RemoveAll(Function(h) h.IPAddress = ip) > 0 Then Touch()
             Return WrapSession()
         End Function
+
+        ''' <summary>Nome e note di un dispositivo scelti dall'utente: nella sessione e nel registro dei dispositivi (per MAC).</summary>
+        Private Function HostLabel(args As JsonElement) As Object
+            Dim ip = ArgText(args, "ip")
+            Dim h = _session.Hosts.FirstOrDefault(Function(x) x.IPAddress = ip)
+            If h Is Nothing Then Throw New UserMessageException($"{ip} non è più nella sessione.")
+            Dim name = ArgText(args, "name").Trim()
+            If name.Length > 80 Then name = name.Substring(0, 80)
+            Dim notes = ArgText(args, "notes")
+            If notes.Length > 2000 Then notes = notes.Substring(0, 2000)
+            ' icona: assente = invariata, "" = tolta (torna quella del tipo); il nome si salva nella forma canonica
+            Dim icon As String = Nothing
+            Dim color As String = Nothing
+            Dim value As JsonElement
+            If args.TryGetProperty("icon", value) Then
+                Dim wanted = If(value.ValueKind = JsonValueKind.String, value.GetString(), "").Trim()
+                icon = If(wanted = "", "", IconCatalog.CanonicalName(wanted))
+                If wanted <> "" AndAlso icon = "" Then Throw New UserMessageException($"Icona «{wanted}» non trovata.")
+                color = ArgText(args, "iconColor").Trim().ToLowerInvariant()
+                If color <> "" AndAlso Not Text.RegularExpressions.Regex.IsMatch(color, "^#[0-9a-f]{6}$") Then color = ""
+            End If
+            _devices.SetLabel(h, name, notes, icon, color)
+            Touch()
+            Return New With {.host = h, .state = State()}
+        End Function
+
+#Region "Icone dei dispositivi (Material Design Icons)"
+
+        ''' <summary>Versione, numero di icone e categorie (prima le raccolte pensate per la rete e gli impianti).</summary>
+        Private Shared Function IconsMeta() As Object
+            Return New With {
+                .version = IconCatalog.Version, .count = IconCatalog.Count,
+                .categories = IconCatalog.Categories().Select(Function(c) New With {.key = c.Key, .label = c.Label, .count = c.Count, .curated = c.Curated}).ToList()
+            }
+        End Function
+
+        ''' <summary>Ricerca (parole italiane o inglesi), categoria e forma: { total, items: [{ name, path }] }.</summary>
+        Private Shared Function IconsSearch(args As JsonElement) As Object
+            Dim value As JsonElement
+            Dim offset = If(args.TryGetProperty("offset", value) AndAlso value.ValueKind = JsonValueKind.Number, value.GetInt32(), 0)
+            Dim limit = If(args.TryGetProperty("limit", value) AndAlso value.ValueKind = JsonValueKind.Number, value.GetInt32(), 200)
+            Dim found = IconCatalog.Search(ArgText(args, "q"), ArgText(args, "cat"), ArgText(args, "variant"), offset, limit)
+            Return New With {.total = found.Total, .items = found.Items.Select(Function(i) New With {.name = i.Name, .path = i.Path}).ToList()}
+        End Function
+
+        ''' <summary>I tracciati SVG delle icone chieste per nome (al massimo 300): { nome: tracciato }.</summary>
+        Private Shared Function IconPaths(args As JsonElement) As Object
+            Dim result As New Dictionary(Of String, String)(StringComparer.Ordinal)
+            Dim value As JsonElement
+            If args.TryGetProperty("names", value) AndAlso value.ValueKind = JsonValueKind.Array Then
+                For Each n In value.EnumerateArray().Take(300)
+                    If n.ValueKind <> JsonValueKind.String Then Continue For
+                    Dim name = n.GetString()
+                    Dim icon = IconCatalog.Find(name)
+                    If icon IsNot Nothing AndAlso Not result.ContainsKey(name) Then result(name) = icon.Path
+                Next
+            End If
+            Return result
+        End Function
+
+#End Region
 
         Private Function Export(format As String) As Object
             Dim filter As String

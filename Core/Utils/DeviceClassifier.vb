@@ -21,6 +21,9 @@ Namespace Utils
             ("brother", "Brother"), ("epson", "Epson"), ("canon", "Canon"), ("lexmark", "Lexmark"), ("kyocera", "Kyocera"),
             ("ricoh", "Ricoh"), ("xerox", "Xerox"), ("konica", "Konica Minolta"), ("sharp corporation", "Sharp"), ("oki electric", "OKI"),
             ("hp inc", "HP"), ("hewlett packard", "HP")}
+        Private ReadOnly PhoneBrands As (Key As String, Label As String)() = {
+            ("huawei device", "Huawei"), ("oppo", "Oppo"), ("vivo mobile", "Vivo"), ("oneplus", "OnePlus"), ("motorola mobility", "Motorola"),
+            ("realme", "Realme"), ("hmd global", "Nokia")}
         Private ReadOnly AutomationBrands As (Key As String, Label As String)() = {
             ("siemens", "Siemens"), ("schneider", "Schneider Electric"), ("abb", "ABB"), ("loxone", "Loxone"), ("nuki", "Nuki"),
             ("bticino", "BTicino"), ("vimar", "Vimar"), ("knx", "KNX"), ("wago", "WAGO"), ("phoenix contact", "Phoenix Contact")}
@@ -256,6 +259,37 @@ Namespace Utils
                 res.DeviceType = "Microcomputer Raspberry Pi (Server / Home Assistant)"
                 res.Category = "Domotica / IoT"
                 res.Icon = "🏠"
+                Return res
+            End If
+
+            ' Google: in casa sono quasi sempre altoparlanti e display Nest, Chromecast / Google TV o i punti Wi-Fi Nest
+            If v.Contains("google") Then
+                res.DeviceType = "Dispositivo Google (Nest / Chromecast / Google TV)"
+                res.Category = "Assistente Vocale"
+                res.Icon = "🔊"
+                Return res
+            End If
+
+            If v.Contains("sonos") Then
+                res.DeviceType = "Altoparlante Sonos"
+                res.Category = "Assistente Vocale"
+                res.Icon = "🔊"
+                Return res
+            End If
+
+            If v.Contains("roku") OrElse v.Contains("nvidia") Then
+                res.DeviceType = If(v.Contains("roku"), "Lettore Multimediale (Roku)", "Lettore Multimediale (NVIDIA Shield)")
+                res.Category = "Smart TV"
+                res.Icon = "📺"
+                Return res
+            End If
+
+            ' Produttori di telefoni Android (il nome del produttore del MAC)
+            Dim phone = BrandOf(v, PhoneBrands)
+            If phone <> "" Then
+                res.DeviceType = $"Smartphone Android ({phone})"
+                res.Category = "Smartphone / Tablet"
+                res.Icon = "📱"
                 Return res
             End If
 

@@ -160,6 +160,9 @@ Namespace WhoIsPro.Tests
             Assert.That(DeviceClassifier.Classify("Minimax GmbH & Co KG", "", Nothing, 64, "").Category, [Is].Not.EqualTo("Centrale d'allarme"))
             Assert.That(DeviceClassifier.Classify("Unknown", "plc-linea1", New Integer() {502}, 64, "").DeviceType, Does.Contain("Modbus"))
             Assert.That(DeviceClassifier.Classify("Kyocera Document Solutions Inc.", "", Nothing, 64, "").Category, [Is].EqualTo("Stampante"))
+            ' Google (Nest, Chromecast) e i telefoni Android: dal produttore, non più «Linux / Unix» dal TTL
+            Assert.That(DeviceClassifier.Classify("Google, Inc.", "", Nothing, 64, "").DeviceType, Does.Contain("Google"))
+            Assert.That(DeviceClassifier.Classify("Huawei Device Co., Ltd.", "", Nothing, 64, "").Category, [Is].EqualTo("Smartphone / Tablet"))
         End Sub
 
         <Test>

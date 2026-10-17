@@ -16,6 +16,28 @@ Namespace Network
         Public Property Message As String = ""
         Public Property Value As Double
         Public Property Percent As Integer
+        ''' <summary>Risultati delle fasi già finite, così la pagina li tiene a vista: latenza verso Internet (-1 = non ancora o nessuna risposta) e download (0 = non ancora).</summary>
+        Public Property LatencyMs As Double = -1
+        Public Property DownloadMbps As Double
+    End Class
+
+    ''' <summary>Aggiunge a ogni avanzamento i risultati delle fasi già concluse.</summary>
+    Friend NotInheritable Class StampedProgress
+        Implements IProgress(Of PerfProgress)
+        Private ReadOnly _inner As IProgress(Of PerfProgress)
+        Private ReadOnly _result As PerfResult
+
+        Public Sub New(inner As IProgress(Of PerfProgress), result As PerfResult)
+            _inner = inner
+            _result = result
+        End Sub
+
+        Public Sub Report(value As PerfProgress) Implements IProgress(Of PerfProgress).Report
+            Dim net = _result.Internet
+            If net IsNot Nothing AndAlso net.Received > 0 Then value.LatencyMs = Math.Round(net.AvgMs, 1)
+            value.DownloadMbps = Math.Round(_result.DownloadMbps, 1)
+            _inner.Report(value)
+        End Sub
     End Class
 
     ''' <summary>
@@ -45,6 +67,7 @@ Namespace Network
 
         Public Async Function RunAsync(gateway As IPAddress, progress As IProgress(Of PerfProgress), token As CancellationToken) As Task(Of PerfResult)
             Dim result As New PerfResult()
+            If progress IsNot Nothing Then progress = New StampedProgress(progress, result)
             Dim watch = Stopwatch.StartNew()
 
             ' 1. latenza: rete locale e Internet insieme (4 secondi)

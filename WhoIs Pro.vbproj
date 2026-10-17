@@ -50,6 +50,8 @@
     <Compile Remove="ui\**" />
     <EmbeddedResource Include="ui\**\*" Exclude="ui\**\*.vb" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="Assets\WhoIsPro.ico" LogicalName="WhoIsPro.ico" />
+    <!-- Icone Material Design Icons 7.4.47 per i dispositivi (Core\Utils\IconCatalog.vb; licenza in Assets\Icons\LICENSE-mdi.txt) -->
+    <EmbeddedResource Include="Assets\Icons\mdi-v7.4.47.mui.gz" LogicalName="WhoIsPro.Icons.mdi.mui.gz" />
   </ItemGroup>
 
   <!-- Database dei produttori (prefissi MAC, formato manuf di Wireshark) accanto al programma -->

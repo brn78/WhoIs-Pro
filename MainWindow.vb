@@ -86,12 +86,15 @@ Namespace UI
         End Sub
 
         ''' <summary>
-        ''' Menu dell'icona: Apri, i profili di rete (con la spunta su quello che la scheda ha adesso), Torna a DHCP per le
+        ''' Menu dell'icona: Apri (Riduci con la finestra aperta), i profili di rete (con la spunta su quello che la scheda ha adesso), Torna a DHCP per le
         ''' schede dei profili che hanno un indirizzo statico, Esci. Applicare chiede il consenso di Windows (UAC).
         ''' </summary>
         Private Sub BuildTrayMenu()
             _trayMenu.Items.Clear()
-            Dim openItem = New ToolStripMenuItem("Apri WhoIs Pro", Nothing, Sub() ShowFromTray())
+            ' Con la finestra aperta la prima voce la riduce nell'area di notifica, altrimenti la apre
+            Dim openItem = If(Visible AndAlso WindowState <> FormWindowState.Minimized,
+                              New ToolStripMenuItem("Riduci nell'area di notifica", Nothing, Sub() HideToTray()),
+                              New ToolStripMenuItem("Apri WhoIs Pro", Nothing, Sub() ShowFromTray()))
             openItem.Font = New Font(openItem.Font, FontStyle.Bold)
             _trayMenu.Items.Add(openItem)
             _trayMenu.Items.Add(New ToolStripSeparator())
@@ -167,6 +170,11 @@ Namespace UI
             Show()
             If WindowState = FormWindowState.Minimized Then WindowState = FormWindowState.Normal
             Activate()
+        End Sub
+
+        Private Sub HideToTray()
+            SavePlacement()
+            Hide()
         End Sub
 
         Private Sub ExitFromTray()

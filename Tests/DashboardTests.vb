@@ -74,7 +74,9 @@ Namespace WhoIsPro.Tests
             Using doc = JsonDocument.Parse(json)
                 For Each nic In doc.RootElement.EnumerateArray()
                     Assert.That(nic.GetProperty("id").GetString(), Iz.Not.Empty)
-                    Assert.That(nic.GetProperty("ip").GetString(), Iz.Not.Empty, "solo schede con un indirizzo IPv4")
+                    If nic.GetProperty("connected").GetBoolean() Then
+                        Assert.That(nic.GetProperty("ip").GetString() <> "" OrElse nic.GetProperty("ipv6").GetArrayLength() > 0, "una scheda collegata ha un indirizzo")
+                    End If
                     Assert.That(nic.GetProperty("rxBps").GetDouble(), Iz.GreaterThanOrEqualTo(0))
                     Assert.That(nic.GetProperty("txBps").GetDouble(), Iz.GreaterThanOrEqualTo(0))
                     Assert.That(nic.GetProperty("rxTotal").GetInt64(), Iz.GreaterThanOrEqualTo(0))
