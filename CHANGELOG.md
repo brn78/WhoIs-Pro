@@ -5,6 +5,11 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.5.4 · 17 ottobre 2026
+
+- **Profilo GitHub nel piè di pagina**: accanto al copyright il logo di GitHub con *brn78*; un clic apre il profilo
+  dell'autore nel browser.
+
 ## 2.5.3 · 17 ottobre 2026
 
 - **Panoramica più ordinata sui PC con tante schede**: le schede non collegate (modem mobili «Cellulare», switch
