@@ -38,6 +38,8 @@ Namespace Config
         Public Property AutoScanDelay As Integer = 10
         ''' <summary>All'avvio, se c'è una versione nuova, la scarica e la installa da sola (solo la copia installata col setup).</summary>
         Public Property AutoInstallUpdates As Boolean = True
+        ''' <summary>All'avvio, con Internet, aggiorna il database dei produttori dai registri dell'IEEE se ha più di un giorno.</summary>
+        Public Property AutoUpdateOui As Boolean = True
         Public Property Profiles As New List(Of NetworkProfile)()
         ''' <summary>Ultima sessione salvata o aperta: all'avvio si riapre se il file c'è ancora (vuoto dopo «Nuova sessione»).</summary>
         Public Property LastSession As String = ""

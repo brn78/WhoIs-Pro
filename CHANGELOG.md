@@ -5,6 +5,13 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.5.2 · 17 ottobre 2026
+
+- **Database dei produttori aggiornato da solo**, come il programma: all'avvio, con Internet (se manca, appena torna),
+  quando non viene dall'IEEE o ha più di un giorno, scarica i registri dell'IEEE (qualche MB) e riclassifica gli host
+  della sessione; nella barra in alto compare «Aggiornamento in corso» e alla fine un avviso con quanti produttori e
+  host riclassificati. Si spegne in *Impostazioni → Produttori*; *Aggiorna dall'IEEE* resta per farlo a mano.
+
 ## 2.5.1 · 17 ottobre 2026
 
 - **Rete: filtro Tutti / Online / Non rispondono** accanto alla ricerca, con quanti sono per ciascuno (i numeri

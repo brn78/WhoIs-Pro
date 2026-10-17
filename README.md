@@ -182,7 +182,8 @@ lavorano con un utente normale. <i>Termina il processo</i> chiude solo i process
 <br>
 Il MAC si legge con ARP, che funziona solo nella rete locale: per gli host dietro un router (altre reti, Internet) il
 MAC non è disponibile. Telefoni, tablet e PC recenti in Wi-Fi usano un <b>MAC privato</b> (casuale, diverso per ogni
-rete): il produttore non si può sapere e la tabella lo dice. Se il produttore manca, aggiorna il database da
+rete): il produttore non si può sapere e la tabella lo dice. Il database dei produttori si aggiorna da solo all'avvio,
+con Internet, quando ha più di un giorno; si può aggiornare anche a mano da
 <i>Impostazioni → Produttori → Aggiorna dall'IEEE</i>.
 </details>
 
