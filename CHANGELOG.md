@@ -5,6 +5,12 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.5.3 · 17 ottobre 2026
+
+- **Panoramica più ordinata sui PC con tante schede**: le schede non collegate (modem mobili «Cellulare», switch
+  virtuali, Wi-Fi spento…) stanno dietro un solo pulsante «N non collegate» che le mostra o le nasconde; le schede
+  collegate restano sempre a vista. Con una o due schede non collegate si vedono direttamente, come prima.
+
 ## 2.5.2 · 17 ottobre 2026
 
 - **Database dei produttori aggiornato da solo**, come il programma: all'avvio, con Internet (se manca, appena torna),
