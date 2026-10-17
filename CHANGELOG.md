@@ -5,6 +5,38 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.5.0 · 17 ottobre 2026
+
+- **Nome, note e icona dei dispositivi**: nel pannello di un dispositivo (pagina Rete) gli dai un nome («Router di
+  casa»), delle note e un'icona con il suo colore. Restano legati al MAC nel registro dei dispositivi di questo PC:
+  li ritrovi in ogni scansione e sessione, anche se il DHCP cambia l'indirizzo. Il nome compare in tabella e nelle
+  schede, e la ricerca trova anche nomi e note.
+- **7.188 icone Material Design Icons** incluse nel programma (funzionano senza Internet): la finestra di scelta cerca
+  in italiano o in inglese («telecamera» trova la telecamera), ha le categorie e le raccolte per rete, sicurezza,
+  energia, clima, edifici e attrezzi, icone piene o a contorno, le ultime usate e 16 colori più uno a scelta.
+- **Un'icona per ogni tipo di dispositivo**: router, access point, telecamere, NAS, stampanti, TV, Chromecast,
+  altoparlanti, Shelly, Raspberry Pi, PC, server… ognuno con la sua icona nel colore della categoria.
+- **Riconosciuti dal produttore** i dispositivi Google (Nest, Chromecast, Google TV), Sonos, Roku, NVIDIA Shield e i
+  telefoni Android di Huawei, Oppo, Vivo, OnePlus, Motorola, Realme e Nokia, che prima finivano in «Linux / Unix».
+- **Scansione della rete all'avvio** (*Impostazioni → Generale*): con un ritardo a scelta, un avviso arancione nella
+  barra in alto conta i secondi e permette di avviarla subito o di annullarla; poi si apre la pagina Rete.
+- **Aggiornamento automatico**: il controllo delle versioni parte a ogni avvio (non più una volta al giorno) e, se ce
+  n'è una nuova, il programma installato la scarica, ne verifica l'impronta SHA-256 e la installa chiudendosi e
+  riaprendosi da solo. Si spegne in *Impostazioni → Aggiornamenti*; non scatta con dati non salvati o con una
+  scansione in corso.
+- **Panoramica**: compaiono tutte le schede di rete del PC, anche quelle non collegate (il Wi-Fi spento, il cavo
+  staccato), in grigio; sotto il titolo della sessione c'è il primo appunto delle note (o il file); in alto il nome
+  della sessione senza l'estensione e il riquadro Internet con la stessa forma di quello della sessione.
+- **Menu dell'icona nell'area di notifica**: con la finestra aperta la prima voce è *Riduci nell'area di notifica*.
+- **✕ nei campi di testo** per svuotarli con un clic; **frecce, PagSu/PagGiù, Inizio e Fine** scorrono gli elenchi
+  (host, porte, connessioni…), che prima non rispondevano ai tasti.
+- **WHOIS a tutta larghezza**: le ricerche della sessione sono una riga sotto il modulo, riepilogo e risposta
+  completa affiancati. Anche le schede Aggiornamenti, Produttori e Dati delle Impostazioni usano tutta la larghezza.
+- **Prestazioni**: durante il test latenza e download già misurati restano a vista mentre si misura l'upload.
+- Rete: cambiare *Ripeti* mentre aspetta la prossima scansione vale subito, e *Una volta* la annulla.
+- Il «?» delle spiegazioni è centrato sul testo; la barra dei messaggi si ritira verso destra, dalla parte dove
+  stanno.
+
 ## 2.4.1 · 16 ottobre 2026
 
 - **Riapre l'ultima sessione**: all'avvio il programma riapre l'ultima sessione salvata o aperta, se il file c'è

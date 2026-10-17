@@ -151,13 +151,13 @@ Microsoft Edge WebView2 Runtime, già presente in Windows.
 
 ## 🔄 Aggiornamenti al volo
 
-Il programma installato con il setup controlla **una volta al giorno** (o con *Controlla ora*) qual è l'ultima
-versione pubblicata qui su GitHub. Quando ce n'è una nuova lo dice con un avviso e un pallino sull'ingranaggio in
-alto; in *Impostazioni → Aggiornamenti* ci sono le novità e il pulsante
-**Scarica e installa** fa tutto da solo: scarica il setup dalla release, ne controlla **dimensione, impronta SHA-256 e
-versione**, chiude il programma, lo aggiorna e lo riapre. Niente si installa senza il tuo clic e la richiesta a GitHub
-non porta nessun dato. Chi usa il pacchetto portabile riceve lo stesso avviso con il collegamento alla pagina dei
-download.
+Il programma installato con il setup controlla **a ogni avvio** (o con *Controlla ora*), se c'è Internet, qual è
+l'ultima versione pubblicata qui su GitHub. Con l'**aggiornamento automatico** (attivo di serie, *Impostazioni →
+Aggiornamenti*) la versione nuova si scarica dalla release, se ne controllano **dimensione, impronta SHA-256 e
+versione**, il programma si chiude, si aggiorna e si riapre da solo; non succede se ci sono dati non salvati o una
+scansione in corso. Spento l'aggiornamento automatico, la versione nuova si annuncia con un avviso e un pallino
+sull'ingranaggio in alto, e **Scarica e installa** fa lo stesso con un clic. La richiesta a GitHub non porta nessun
+dato. Chi usa il pacchetto portabile riceve solo l'avviso con il collegamento alla pagina dei download.
 
 ## ⌨️ Scorciatoie
 
