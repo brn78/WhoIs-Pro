@@ -131,6 +131,8 @@
         { ...configs[0], id: '{eth0}', connected: true, type: 'Ethernet', speedMbps: 1000, rxBps: eRx, txBps: eTx, rxTotal: totals.Ethernet.rx, txTotal: totals.Ethernet.tx },
         { ...configs[1], id: '{wifi0}', connected: true, type: 'Wi-Fi', speedMbps: 1201, rxBps: wRx, txBps: wTx, rxTotal: totals['Wi-Fi'].rx, txTotal: totals['Wi-Fi'].tx },
         { ...configs[configs.length - 1], id: '{eth2}', connected: false, type: 'Ethernet', speedMbps: 0, rxBps: 0, txBps: 0, rxTotal: 0, txTotal: 0 },
+        // modem mobili non collegati, come su alcuni portatili (finiscono dietro «N non collegate»)
+        ...[1, 2, 3, 4].map((n) => ({ ...configs[configs.length - 1], id: `{wwan${n}}`, name: n === 1 ? 'Cellulare' : `Cellulare ${n}`, description: 'Mobile Broadband', connected: false, type: 'Wwanpp', speedMbps: 0, rxBps: 0, txBps: 0, rxTotal: 0, txTotal: 0 })),
       ],
       system: {
         cpu: { usage: Math.round(cpuNow * 10) / 10, name: '13th Gen Intel(R) Core(TM) i7-1365U', logical: 12 },

@@ -93,15 +93,23 @@ function ledClass(a) {
 }
 
 /** Chiave delle schede e del loro stato: se cambia (una scheda si collega o si stacca) il riquadro si ridisegna. */
-const portsKey = (list) => list.map((x) => `${x.id}${x.connected ? '' : ':off'}`).join('|');
+const portsKey = (list) => `${S.overview.showOff ? 'all' : 'on'}#${list.map((x) => `${x.id}${x.connected ? '' : ':off'}`).join('|')}`;
 
 function portsHtml() {
   const d = S.overview.dash;
-  const list = (d && d.traffic) || [];
-  if (!list.length) return '';
+  const all = (d && d.traffic) || [];
+  if (!all.length) return '';
+  // le schede non collegate (Wi-Fi spento, modem mobili, switch virtuali…) stanno dietro «N non collegate»: su alcuni
+  // PC sono decine; si vedono quando le si apre, e quella scelta resta sempre a vista
+  const off = all.filter((a) => !a.connected);
+  const open = S.overview.showOff || off.length <= 2;
+  const list = all.filter((a) => a.connected || open || a.id === S.overview.sel);
+  const hidden = off.length - list.filter((a) => !a.connected).length;
+  const more = off.length > 2
+    ? `<button class="port port-more" data-action="ports-toggle" title="${open ? 'Nascondi le schede non collegate' : 'Mostra le schede non collegate'}">${icon(open ? 'chevronDown' : 'plus', { size: 14 })}<span class="port-text"><b>${open ? 'Nascondi' : `${hidden} non collegate`}</b><small>${open ? `${off.length} non collegate` : 'Wi-Fi, modem, virtuali…'}</small></span></button>` : '';
   return list.map((a) => `<button class="port ${a.id === S.overview.sel ? 'is-active' : ''} ${a.connected ? '' : 'is-off'}" data-action="link-select" data-id="${esc(a.id)}" title="${esc(a.description)}${a.connected ? '' : ' · non collegata'}">
       <span class="${ledClass(a)}" data-led="${esc(a.id)}"></span>
-      <span class="port-text"><b>${esc(a.name)}</b><small>${esc([a.type, a.connected ? fmtLinkSpeed(a.speedMbps) : 'non collegata'].filter(Boolean).join(', '))}</small></span></button>`).join('');
+      <span class="port-text"><b>${esc(a.name)}</b><small>${esc([a.type, a.connected ? fmtLinkSpeed(a.speedMbps) : 'non collegata'].filter(Boolean).join(', '))}</small></span></button>`).join('') + more;
 }
 
 function readout(cls, ic, label, bps, total, attr) {
@@ -473,6 +481,11 @@ function scanAgain(index) {
 }
 
 const actions = {
+  'ports-toggle': () => {
+    S.overview.showOff = !S.overview.showOff;
+    const panel = $('#link-panel');
+    if (panel) panel.outerHTML = linkPanel();
+  },
   'link-select': (el) => {
     S.overview.sel = el.dataset.id;
     $$('.port').forEach((p) => p.classList.toggle('is-active', p.dataset.id === el.dataset.id));

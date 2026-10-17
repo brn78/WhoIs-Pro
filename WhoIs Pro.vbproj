@@ -17,7 +17,7 @@
     <ApplicationIcon>Assets\WhoIsPro.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
 
-    <Version>2.5.2</Version>
+    <Version>2.5.3</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WhoIs Pro</Product>
     <AssemblyTitle>WhoIs Pro</AssemblyTitle>

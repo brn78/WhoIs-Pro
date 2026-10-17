@@ -1209,6 +1209,9 @@ table.dt thead th { text-transform: none; letter-spacing: 0; font-family: var(--
 .port:hover { border-color: var(--border-strong); }
 .port.is-active { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); color: var(--text); }
 .port.is-off:not(.is-active) { border-style: dashed; color: var(--muted); }
+.port.port-more { border-style: dashed; background: transparent; color: var(--muted); }
+.port.port-more:hover { color: var(--text); }
+.port.port-more b { color: var(--text-2); }
 .port.is-off:not(.is-active) b { color: var(--muted); }
 .port-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .port-text b { font-family: var(--font-display); font-weight: 600; font-size: 13.5px; white-space: nowrap; }
