@@ -1564,3 +1564,11 @@ button.chip.quick-pick:hover { background: var(--primary-soft); color: var(--pri
 /* campo dell'icona nel pannello del dispositivo */
 .host-icon-field { display: flex; align-items: center; gap: 10px; }
 .host-icon-field .muted { font-size: 12px; }
+
+/* Rete: filtro Tutti / Online / Non rispondono accanto alla ricerca */
+.status-filter button { gap: 6px; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.status-dot.is-on { background: var(--success); }
+.status-dot.is-off { background: var(--danger); }
+.seg-count { padding: 0 6px; border-radius: 9px; background: var(--neutral-soft); color: var(--muted); font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 17px; }
+.status-filter button.is-active .seg-count { background: var(--primary-soft); color: var(--primary-text); }

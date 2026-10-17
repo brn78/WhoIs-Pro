@@ -6,6 +6,7 @@ import { S, definePage, adopt, markDirty, bus, emit } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { replaceKeepingScroll, table, nextSort } from '../core/table.js';
 import { confirmDialog, emptyState, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { catIcon } from '../core/categories.js';
 
 S.ports = {
   host: '', preset: 'TOP20', ports: '', tcp: true, udp: false, banner: true, threads: 100, timeout: 1200,
@@ -118,10 +119,28 @@ function summaryInner() {
 // ---------------------------------------------------------------------------------------------------------------------
 function hosts() { return Array.from(new Set(S.data.ports.map((p) => p.host))); }
 
+/** Il dispositivo della pagina Rete con quell'indirizzo (per icona e nome), se c'è nella sessione. */
+const deviceOf = (ip) => S.data.hosts.find((h) => h.ipAddress === ip) || null;
+/** Il nome da mostrare: quello dato dall'utente, poi il nome DNS, poi il tipo; "" se l'host non è nella pagina Rete. */
+const deviceName = (d) => (d ? d.customName || d.hostname || d.deviceType || '' : '');
+
 function filteredPorts() {
   const q = S.ports.q.trim();
   const fh = S.ports.filterHost;
-  return S.data.ports.filter((p) => (!fh || p.host === fh) && matchesAll(q, [p.host, String(p.portNumber), p.protocol, p.serviceName, p.banner]));
+  return S.data.ports.filter((p) => {
+    if (fh && p.host !== fh) return false;
+    const d = deviceOf(p.host);
+    return matchesAll(q, [p.host, String(p.portNumber), p.protocol, p.serviceName, p.banner, d && d.customName, d && d.hostname, d && d.deviceType]);
+  });
+}
+
+/** Host come nella pagina Rete: icona del dispositivo (scelta o del tipo), nome e indirizzo sotto. */
+function hostCell(p) {
+  const d = deviceOf(p.host);
+  const name = deviceName(d);
+  return `<div class="cell-main">${catIcon(d || {})}<div class="cell-text">
+      <b class="trunc w-name" title="${esc(name || p.host)}">${esc(name || p.host)}</b>
+      ${name ? `<small class="mono">${esc(p.host)}</small>` : '<small class="muted">non nella pagina Rete</small>'}</div></div>`;
 }
 
 const statusPill = (p) => (p.status === 'Open'
@@ -129,7 +148,7 @@ const statusPill = (p) => (p.status === 'Open'
   : `<span class="pill warning pill-dot">${p.status === 'Open|Filtered' ? 'Aperta o filtrata' : esc(p.status)}</span>`);
 
 const columns = [
-  { key: 'host', label: 'Host', cls: 'mono' },
+  { key: 'host', label: 'Host', cell: hostCell },
   { key: 'portNumber', label: 'Porta', cls: 'num strong-cell' },
   { key: 'protocol', label: 'Protocollo', cell: (p) => `<span class="tag ${p.protocol === 'TCP' ? 'primary' : 'info'}">${esc(p.protocol)}</span>` },
   { key: 'status', label: 'Stato', cell: statusPill },
@@ -151,7 +170,7 @@ function tableHtml() {
 function tableCard() {
   const hs = hosts();
   const hostFilter = hs.length > 1 ? `<div class="field"><label>Host</label><select class="select input-sm" data-field="filterHost">
-      <option value="">Tutti (${hs.length})</option>${hs.map((h) => `<option value="${esc(h)}" ${S.ports.filterHost === h ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></div>` : '';
+      <option value="">Tutti (${hs.length})</option>${hs.map((h) => { const n = deviceName(deviceOf(h)); return `<option value="${esc(h)}" ${S.ports.filterHost === h ? 'selected' : ''}>${esc(h)}${n ? ` · ${esc(n)}` : ''}</option>`; }).join('')}</select></div>` : '';
   return `<section class="card table-card">
     <div class="toolbar">
       <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.ports.q)}" placeholder="Cerca per porta, servizio o banner" autocomplete="off"></div>
@@ -299,6 +318,9 @@ on('ports.done', (d) => {
   else toast(`${plural(d.found, 'porta aperta', 'porte aperte')} in ${fmtSeconds(d.seconds)}.`, { tone: 'success', title: `Porte di ${d.host}` });
   setTimeout(() => { S.ports.fresh.clear(); }, 2000);
 });
+
+// arrivate le icone dei dispositivi (core/mdi.js) o cambiati gli host (nomi, icone): la colonna Host si ridisegna
+bus.addEventListener('icons', () => { if (S.page === 'ports') renderTable(); });
 
 bus.addEventListener('session', () => {
   S.ports.done = null; S.ports.editing = false; S.ports.filterHost = ''; S.ports.fresh.clear();
