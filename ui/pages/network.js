@@ -130,9 +130,14 @@ function summaryInner() {
 // ---------------------------------------------------------------------------------------------------------------------
 // Tabella degli host
 // ---------------------------------------------------------------------------------------------------------------------
+/** Filtro per stato: tutti, solo quelli che rispondono, solo quelli che non rispondono. */
+const STATUS_FILTERS = [['all', 'Tutti', ''], ['online', 'Online', 'is-on'], ['offline', 'Non rispondono', 'is-off']];
+const byStatus = (h, s) => s === 'online' ? !isOffline(h) : s === 'offline' ? isOffline(h) : true;
+
 function filteredHosts() {
   const q = S.net.q.trim();
-  return S.data.hosts.filter((h) => matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
+  const status = S.net.status || 'all';
+  return S.data.hosts.filter((h) => byStatus(h, status) && matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
 }
 
 // forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
@@ -272,10 +277,11 @@ try {
   const v = JSON.parse(localStorage.getItem('net-view') || '{}');
   if (v.view === 'cards' || v.view === 'table') S.net.view = v.view;
   if (v.sort && SORTS.some((s) => s[0] === v.sort.key)) S.net.sort = v.sort;
+  if (['all', 'online', 'offline'].includes(v.status)) S.net.status = v.status;
 } catch { /* senza memoria locale */ }
 if (!S.net.view) S.net.view = 'cards';
 function saveView() {
-  try { localStorage.setItem('net-view', JSON.stringify({ view: S.net.view, sort: S.net.sort })); } catch { /* senza memoria locale */ }
+  try { localStorage.setItem('net-view', JSON.stringify({ view: S.net.view, sort: S.net.sort, status: S.net.status })); } catch { /* senza memoria locale */ }
 }
 
 /** Una voce della descrizione: etichetta piccola e valore. */
@@ -322,7 +328,14 @@ function tableHtml() {
   if (!S.data.hosts.length) {
     return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host attivi compaiono qui man mano che rispondono.');
   }
-  if (!filtered.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
+  if (!filtered.length) {
+    const st = S.net.status || 'all';
+    if (st !== 'all' && !S.net.q.trim()) {
+      return emptyState(st === 'online' ? 'wifiOff' : 'check', st === 'online' ? 'Nessun host risponde' : 'Rispondono tutti',
+        st === 'online' ? 'Nessun dispositivo della sessione ha risposto all\'ultima scansione.' : 'Nessun dispositivo della sessione è segnato come «non risponde».');
+    }
+    return emptyState('search', 'Nessun host corrisponde', st === 'all' ? 'Cambia le parole della ricerca.' : 'Cambia le parole della ricerca o il filtro Tutti / Online / Non rispondono.');
+  }
   const rows = sortRows(filtered, SORT_COLUMNS, S.net.sort);
   if (S.net.view === 'cards') return `<div class="table-wrap scan-h host-cards">${rows.map(hostCard).join('')}</div>`;
   return table({
@@ -332,9 +345,13 @@ function tableHtml() {
 }
 
 /** Ordina per, verso e Schede / Tabella, accanto alla ricerca. */
+function statusCount(key) { return S.data.hosts.filter((h) => byStatus(h, key)).length; }
+
 function viewControls() {
   const s = S.net.sort || { key: 'ipAddress', dir: 1 };
-  return `<div class="sort-box"><label for="f-sort">Ordina per</label>
+  const st = S.net.status || 'all';
+  return `<div class="segmented status-filter" role="group" aria-label="Stato">${STATUS_FILTERS.map(([key, label, dot]) => `<button type="button" class="${st === key ? 'is-active' : ''}" data-action="net-status" data-status="${key}" title="${key === 'all' ? 'Tutti i dispositivi della sessione' : key === 'online' ? 'Solo quelli che hanno risposto all\'ultima scansione' : 'Solo quelli che non hanno risposto'}">${dot ? `<span class="status-dot ${dot}"></span>` : ''}${label}<span class="seg-count" data-status-count="${key}">${statusCount(key)}</span></button>`).join('')}</div>
+    <div class="sort-box"><label for="f-sort">Ordina per</label>
       <select class="select input-sm" id="f-sort" data-field="sortKey">${SORTS.map(([k, label]) => `<option value="${k}" ${k === s.key ? 'selected' : ''}>${label}</option>`).join('')}</select>
       <button class="btn btn-sm btn-icon sort-dir ${s.dir < 0 ? 'is-desc' : ''}" data-action="sort-dir" title="${s.dir < 0 ? 'Decrescente: clic per crescente' : 'Crescente: clic per decrescente'}">${icon('chevronDown')}</button></div>
     <div class="view-box"><span class="view-label">Visualizza</span>
@@ -381,6 +398,11 @@ function renderTable() {
   if (!box) return;
   replaceKeepingScroll(box, tableHtml());
   updateInfo();
+  // i numeri del filtro Tutti / Online / Non rispondono seguono la scansione
+  for (const [key] of STATUS_FILTERS) {
+    const c = $(`[data-status-count="${key}"]`);
+    if (c) c.textContent = statusCount(key);
+  }
   const clear = $('[data-action="clear-hosts"]');
   if (clear) clear.disabled = !S.data.hosts.length;
 }
@@ -598,6 +620,7 @@ const actions = {
   'host-menu': (el) => hostMenu(el, el.dataset.ip),
   'host-rescan': (el) => rescan(el.dataset.ip),
   'sort-dir': () => { const s = S.net.sort || { key: 'ipAddress', dir: 1 }; S.net.sort = { key: s.key, dir: -s.dir }; saveView(); renderTable(); refreshControls(); },
+  'net-status': (el) => { S.net.status = el.dataset.status; saveView(); renderTable(); refreshControls(); },
   'net-view': (el) => { S.net.view = el.dataset.view; saveView(); renderTable(); refreshControls(); },
   'host-details': (el) => details(el.dataset.ip),
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),

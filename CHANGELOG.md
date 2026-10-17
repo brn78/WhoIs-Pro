@@ -5,6 +5,14 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.5.1 · 17 ottobre 2026
+
+- **Rete: filtro Tutti / Online / Non rispondono** accanto alla ricerca, con quanti sono per ciascuno (i numeri
+  seguono la scansione): si vede subito chi risponde e chi no. Si combina con ricerca e ordinamento e resta scelto al
+  prossimo avvio.
+- **Porte: host come nella pagina Rete**: icona del dispositivo (quella scelta o quella del tipo), nome e indirizzo
+  sotto; anche il menu *Host* mostra il nome e la ricerca trova le porte per nome del dispositivo.
+
 ## 2.5.0 · 17 ottobre 2026
 
 - **Nome, note e icona dei dispositivi**: nel pannello di un dispositivo (pagina Rete) gli dai un nome («Router di
