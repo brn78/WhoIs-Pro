@@ -7,6 +7,7 @@ import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/sto
 import { navigate } from '../core/nav.js';
 import { replaceKeepingScroll, sortRows, table, nextSort } from '../core/table.js';
 import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { pickIcon } from '../core/iconpicker.js';
 
 S.net = {
   target: '', threads: 80, timeout: 900, resolveDns: true,
@@ -131,7 +132,7 @@ function summaryInner() {
 // ---------------------------------------------------------------------------------------------------------------------
 function filteredHosts() {
   const q = S.net.q.trim();
-  return S.data.hosts.filter((h) => matchesAll(q, [h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
+  return S.data.hosts.filter((h) => matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
 }
 
 // forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
@@ -171,7 +172,7 @@ function latency(ms) {
 
 const columns = [
   { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
-      <b class="trunc" title="${esc(h.deviceType)}">${esc(h.deviceType)}</b>
+      <b class="trunc" title="${esc(h.customName ? `${h.customName} · ${h.deviceType}` : h.deviceType)}">${h.customName ? `<span class="custom-name">${esc(h.customName)}</span>` : esc(h.deviceType)}</b>
       <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}${openPorts(h.ipAddress) ? ` · <b class="ports-count">${plural(openPorts(h.ipAddress), 'porta', 'porte')}</b>` : ''}</small></div></div>` },
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
   { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
@@ -256,7 +257,7 @@ const timeOf = (iso) => new Date(iso).getTime() || 0;
 /** Ordinamenti possibili (anche dalla tabella): [chiave, etichetta, valore, verso predefinito]. */
 const SORTS = [
   ['ipAddress', 'Indirizzo IP', (h) => h.ipAddress, 1],
-  ['hostname', 'Nome', (h) => h.hostname || '￿', 1],
+  ['hostname', 'Nome', (h) => h.customName || h.hostname || '￿', 1],
   ['deviceType', 'Tipo di dispositivo', (h) => `${h.deviceCategory} ${h.deviceType}`, 1],
   ['macVendor', 'Produttore', (h) => shortVendor(h.macVendor), 1],
   ['responseTimeMs', 'Latenza', (h) => Number(h.responseTimeMs) || 0, 1],
@@ -285,7 +286,8 @@ function hostCard(h) {
   const lat = Number(h.responseTimeMs) || 0;
   const latTone = lat < 10 ? 'success' : lat < 100 ? 'warning' : 'danger';
   const vendor = h.macVendor === PRIVATE_MAC ? `<span title="${esc(PRIVATE_MAC_TIP)}">MAC privato, produttore non noto</span>` : esc(h.macVendor);
-  const name = h.hostname || h.deviceType;
+  const name = h.customName || h.hostname || h.deviceType;
+  const sub = h.customName ? (h.hostname || h.deviceType) : h.hostname ? h.deviceType : '';
   const v6 = h.ipv6 || [];
   const tags = `${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${isOffline(h) ? '<span class="tag danger">Non risponde</span>' : ''}${v6.length ? '<span class="tag v6">IPv6</span>' : ''}`;
   // al massimo 6 porte sulla riga (tutte nel tooltip e nel dettaglio): così ogni scheda ha la stessa altezza
@@ -298,7 +300,7 @@ function hostCard(h) {
   return `<article class="host-card ${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}" data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}">
     ${catIcon(h, true)}
     <div class="hc-main">
-      <div class="hc-line hc-title" title="${esc(name)}${h.hostname ? ` · ${esc(h.deviceType)}` : ''}"><b>${esc(name)}</b>${h.hostname ? `<span class="hc-type">${esc(h.deviceType)}</span>` : ''}${tags}</div>
+      <div class="hc-line hc-title" title="${esc(name)}${sub ? ` · ${esc(sub)}` : ''}${h.notes ? `\n${esc(h.notes)}` : ''}">${h.customName ? icon('tag', { size: 14 }) : ''}<b>${esc(name)}</b>${sub ? `<span class="hc-type">${esc(sub)}</span>` : ''}${tags}</div>
       <div class="hc-line">
         <span class="hc-ip mono">${esc(h.ipAddress)}</span>
         ${fact('Tipo', esc(tipo), '', tipo)}
@@ -414,7 +416,7 @@ function scheduleRepeat() {
   n.nextAt = 0;
   if (!n.repeat) return;
   n.nextAt = Date.now() + n.repeat * 60000;
-  n.repeatTimer = setTimeout(() => { n.nextAt = 0; if (!running()) start(); }, n.repeat * 60000);
+  n.repeatTimer = setTimeout(() => { n.nextAt = 0; if (n.repeat && !running()) start(); }, n.repeat * 60000);
 }
 
 function stopRepeat() {
@@ -426,6 +428,7 @@ async function start() {
   const n = S.net;
   if (running()) return;
   stopRepeat();
+  if (!n.target) n.target = (S.st.adapters.find((a) => a.cidr) || {}).cidr || '192.168.1.0/24';
   try {
     const preset = autoPreset();
     const res = await call('scanNetwork', {
@@ -501,6 +504,18 @@ function details(ip) {
   if (!h) return;
   const ports = S.data.ports.filter((p) => p.host === ip);
   const body = `<div class="fields">
+    <form class="host-label" id="host-label" autocomplete="off">
+      <div class="field"><label>Icona</label>
+        <div class="host-icon-field">${catIcon(h, true)}
+          <button type="button" class="btn btn-sm" data-host-icon>${icon('tag')} ${h.icon ? 'Cambia icona…' : 'Scegli un\'icona…'}</button>
+          <span class="muted">${h.icon ? esc(h.icon) : 'quella del tipo di dispositivo'}</span></div></div>
+      <div class="field"><label for="h-name">Nome del dispositivo</label>
+        <input class="input" id="h-name" maxlength="80" value="${esc(h.customName || '')}" placeholder="${esc(h.hostname || h.deviceType)} · es. Router di casa"></div>
+      <div class="field"><label for="h-notes">Note</label>
+        <textarea class="input" id="h-notes" rows="2" maxlength="2000" placeholder="Dove si trova, a chi appartiene, credenziali di accesso…">${esc(h.notes || '')}</textarea></div>
+      <div class="host-label-foot"><small class="muted">${h.macAddress ? 'Resta legato al MAC: lo ritrovi in ogni scansione e sessione su questo PC.' : 'Senza MAC resta legato all\'indirizzo IP.'}</small>
+        <button type="submit" class="btn btn-sm btn-primary">${icon('save')} Salva</button></div>
+    </form>
     <dl class="kv">
       <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
       <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
@@ -520,7 +535,7 @@ function details(ip) {
         : '<p class="card-text muted">Nessuna scansione delle porte per questo host.</p>'}</div>
   </div>`;
   const d = openDrawer({
-    ic: 'monitor', title: h.ipAddress, sub: `${h.deviceType}${h.hostname ? ` · ${h.hostname}` : ''}`, body,
+    ic: 'monitor', title: h.customName ? `${h.customName} · ${h.ipAddress}` : h.ipAddress, sub: `${h.deviceType}${h.hostname ? ` · ${h.hostname}` : ''}`, body,
     foot: `<div class="left">
         ${rescanButton(ip, true)}
         <button class="btn btn-primary" data-action="host-ports" data-ip="${esc(ip)}">${icon('plug')} Scansiona le porte</button>
@@ -531,6 +546,31 @@ function details(ip) {
   });
   const drawer = $('.drawer', d.wrap);
   if (drawer) drawer.dataset.host = ip;
+  $('#host-label', d.wrap).addEventListener('submit', (e) => { e.preventDefault(); saveLabel(ip, d.wrap); });
+  // l'icona si salva appena scelta, insieme a nome e note scritti nei campi
+  $('[data-host-icon]', d.wrap).addEventListener('click', async () => {
+    const choice = await pickIcon({ current: { icon: h.icon, color: h.iconColor }, fallback: catIcon({ deviceCategory: h.deviceCategory, deviceType: h.deviceType }, true).replace(/^<span[^>]*>|<\/span>$/g, '') });
+    if (choice) saveLabel(ip, d.wrap, choice);
+  });
+}
+
+/** Nome, note e (se scelta) icona del dispositivo: nella sessione e nel registro dei dispositivi di questo PC. */
+async function saveLabel(ip, wrap, choice = null) {
+  const name = $('#h-name', wrap).value.trim();
+  const notes = $('#h-notes', wrap).value.trim();
+  try {
+    const res = await call('hostLabel', { ip, name, notes, ...(choice ? { icon: choice.icon, iconColor: choice.color } : {}) });
+    adopt({ state: res.state });
+    const i = S.data.hosts.findIndex((x) => x.ipAddress === ip);
+    if (i >= 0) S.data.hosts[i] = res.host;
+    markDirty();
+    emit('data', { list: 'hosts' });
+    renderTable();
+    refreshDrawer(ip);
+    const what = choice ? (choice.icon ? `Icona di ${ip}: ${choice.icon}.` : `${ip} torna all'icona del tipo.`)
+      : name ? `${ip} ora si chiama «${name}».` : `Nome di ${ip} tolto.`;
+    toast(what, { tone: 'success', title: 'Dispositivo salvato' });
+  } catch (err) { toastError(err, 'Nome non salvato'); }
 }
 
 /** Riapre il modulo completo (dopo una scansione) e porta il cursore sul campo della rete. */
@@ -653,6 +693,9 @@ on('autoports.done', (d) => {
   }
 });
 
+// arrivate le icone scelte per i dispositivi (core/mdi.js): la tabella le mostra
+bus.addEventListener('icons', () => { if (S.page === 'network') renderTable(); });
+
 bus.addEventListener('session', () => {
   S.net.done = null; S.net.editing = false; S.net.fresh.clear();
   if (S.page === 'network') { renderTable(); renderForm(); }
@@ -663,6 +706,8 @@ definePage('network', {
   render, after, actions,
   enter: (params) => {
     if (params.target) { S.net.target = params.target; if (!running()) edit(); }
+    // scansione all'avvio del programma (impostazione): parte con le opzioni di sempre
+    if (params.start && !running()) start();
     // dalla Panoramica: un tipo di dispositivo o un indirizzo da cercare nella tabella
     if (params.q != null) {
       S.net.q = params.q;
@@ -688,7 +733,11 @@ definePage('network', {
       if (sel) sel.disabled = !el.checked;
     }
     if (field === 'autoPreset') n.autoPreset = el.value;
-    if (field === 'repeat') n.repeat = Number(el.value) || 0;
+    if (field === 'repeat') {
+      n.repeat = Number(el.value) || 0;
+      // in attesa della prossima: il nuovo intervallo vale da subito («Una volta» la annulla)
+      if (n.nextAt) { scheduleRepeat(); renderForm(); }
+    }
     if (field === 'sortKey') {
       const s = SORTS.find((x) => x[0] === el.value);
       n.sort = { key: el.value, dir: s ? s[3] : 1 };

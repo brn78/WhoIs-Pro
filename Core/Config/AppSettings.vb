@@ -32,6 +32,12 @@ Namespace Config
         Public Property StartMinimized As Boolean = True
         ''' <summary>Tema della finestra: "auto" (come Windows), "light" o "dark".</summary>
         Public Property Theme As String = "auto"
+        ''' <summary>All'apertura del programma parte la scansione della rete, dopo un avviso con il conto alla rovescia.</summary>
+        Public Property AutoScan As Boolean
+        ''' <summary>Secondi di attesa prima della scansione all'avvio (0-600): intanto l'avviso permette di annullarla.</summary>
+        Public Property AutoScanDelay As Integer = 10
+        ''' <summary>All'avvio, se c'è una versione nuova, la scarica e la installa da sola (solo la copia installata col setup).</summary>
+        Public Property AutoInstallUpdates As Boolean = True
         Public Property Profiles As New List(Of NetworkProfile)()
         ''' <summary>Ultima sessione salvata o aperta: all'avvio si riapre se il file c'è ancora (vuoto dopo «Nuova sessione»).</summary>
         Public Property LastSession As String = ""

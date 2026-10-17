@@ -85,7 +85,7 @@
     { name: 'Ethernet 2', description: 'Realtek USB GbE Family Controller', up: false, dhcp: true, ip: '', mask: '', gateway: '', dns: [], mac: '00:E0:4C:68:00:01' },
   ];
   const settings = {
-    autoStart: true, trayIcon: true, closeToTray: true, startMinimized: false, theme: 'auto',
+    autoStart: true, trayIcon: true, closeToTray: true, startMinimized: false, theme: 'auto', autoScan: false, autoScanDelay: 10,
     profiles: [
       { id: 'p1', name: 'Cantiere Rossi', adapter: 'Ethernet', dhcp: false, ip: '192.168.10.250', mask: '255.255.255.0', gateway: '192.168.10.1', dns1: '192.168.10.1', dns2: '' },
       { id: 'p2', name: 'Ufficio (DHCP)', adapter: 'Ethernet', dhcp: true, ip: '', mask: '', gateway: '', dns1: '', dns2: '' },
@@ -128,8 +128,9 @@
     return {
       at: new Date().toISOString(),
       traffic: [
-        { ...configs[0], id: '{eth0}', type: 'Ethernet', speedMbps: 1000, rxBps: eRx, txBps: eTx, rxTotal: totals.Ethernet.rx, txTotal: totals.Ethernet.tx },
-        { ...configs[1], id: '{wifi0}', type: 'Wi-Fi', speedMbps: 1201, rxBps: wRx, txBps: wTx, rxTotal: totals['Wi-Fi'].rx, txTotal: totals['Wi-Fi'].tx },
+        { ...configs[0], id: '{eth0}', connected: true, type: 'Ethernet', speedMbps: 1000, rxBps: eRx, txBps: eTx, rxTotal: totals.Ethernet.rx, txTotal: totals.Ethernet.tx },
+        { ...configs[1], id: '{wifi0}', connected: true, type: 'Wi-Fi', speedMbps: 1201, rxBps: wRx, txBps: wTx, rxTotal: totals['Wi-Fi'].rx, txTotal: totals['Wi-Fi'].tx },
+        { ...configs[configs.length - 1], id: '{eth2}', connected: false, type: 'Ethernet', speedMbps: 0, rxBps: 0, txBps: 0, rxTotal: 0, txTotal: 0 },
       ],
       system: {
         cpu: { usage: Math.round(cpuNow * 10) / 10, name: '13th Gen Intel(R) Core(TM) i7-1365U', logical: 12 },
@@ -150,9 +151,28 @@
   });
 
   const handlers = {
-    start: () => ({ state: state(), session }),
+    // ?autoscan=5 nell'indirizzo dell'anteprima: avviso della scansione all'avvio con 5 secondi
+    start: () => ({ state: state(), session, autoScan: Number(new URLSearchParams(location.search).get('autoscan') ?? -1) }),
     state, adapters: () => adapters, settings: () => settings, adapterConfigs: () => configs,
     computer, dashboard, netstat: () => netstat,
+    hostLabel: (a) => {
+      const h = hosts.find((x) => x.ipAddress === a.ip);
+      if (!h) throw new Error(`${a.ip} non è più nella sessione.`);
+      h.customName = a.name || ''; h.notes = a.notes || '';
+      if ('icon' in a) { h.icon = a.icon || ''; h.iconColor = h.icon ? a.iconColor || '' : ''; }
+      return { host: h, state: state() };
+    },
+    // icone: un campione del catalogo (dev\mdi-sample.js), cercato per nome
+    iconsMeta: () => ({ version: '7.4.47', count: (window.MDI_SAMPLE || []).length, categories: [
+      { key: '@rete', label: '★ Rete e informatica', count: 120, curated: true }, { key: 'Home Automation', label: 'Casa e domotica', count: 40, curated: false }] }),
+    iconsSearch: (a) => {
+      const words = String(a.q || '').toLowerCase().split(/\s+/).filter(Boolean);
+      const list = (window.MDI_SAMPLE || []).filter((i) => words.every((w) => i.name.includes(w))
+        && (a.variant === 'all' || (a.variant === 'outline') === i.name.includes('outline')));
+      const offset = a.offset || 0;
+      return { total: list.length, items: list.slice(offset, offset + (a.limit || 200)) };
+    },
+    iconPaths: (a) => Object.fromEntries((window.MDI_SAMPLE || []).filter((i) => (a.names || []).includes(i.name)).map((i) => [i.name, i.path])),
     rescanHost: (a) => {
       const h = hosts.find((x) => x.ipAddress === a.ip);
       if (h) { h.status = 'Online'; h.lastSeen = new Date().toISOString(); }

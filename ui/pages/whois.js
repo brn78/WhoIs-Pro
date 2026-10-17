@@ -27,15 +27,14 @@ function resultCard() {
   const r = current();
   if (!r) {
     if (!S.data.whois.length) return `<section class="card">${emptyState('globe', 'Nessuna ricerca WHOIS', 'Scrivi un dominio o un indirizzo IP e premi Interroga: registrar, intestatario, date e name server compaiono qui.')}</section>`;
-    return `<section class="card">${emptyState('history', 'Scegli una ricerca', 'Le ricerche della sessione sono nell\'elenco a destra.')}</section>`;
+    return `<section class="card">${emptyState('history', 'Scegli una ricerca', 'Le ricerche della sessione sono qui sopra.')}</section>`;
   }
   const kv = (label, value) => `<dt>${label}</dt><dd>${value && value !== 'N/D' ? esc(value) : '<span class="muted">—</span>'}</dd>`;
   const pills = (list, tone) => (list && list.length ? `<div class="pill-list">${list.map((x) => `<span class="pill ${tone}">${esc(x)}</span>`).join('')}</div>` : '<span class="muted">—</span>');
   return `<section class="card">
     <div class="card-head"><div class="card-title">${icon('globe')}<h2>${esc(r.queryTarget)}</h2><span class="count">${fmtMs(r.queryTimeMs)}</span></div>
       <div class="row"><span class="pill ${r.isSuccess ? 'success' : 'danger'} pill-dot">${r.isSuccess ? 'Risposta ricevuta' : 'Errore'}</span></div></div>
-    <div class="card-body"><div class="fields">
-      ${r.isSuccess ? '' : note('danger', 'alert', esc(r.errorMessage || 'Nessuna risposta.'))}
+    <div class="card-body">${r.isSuccess ? `` : `<div class="whois-error">${note('danger', 'alert', esc(r.errorMessage || 'Nessuna risposta.'))}</div>`}<div class="whois-body">
       <dl class="kv">
         <dt>Server</dt><dd class="mono">${esc(r.serverUsed || '—')}</dd>
         ${r.referralServer ? `<dt>Referral</dt><dd class="mono">${esc(r.referralServer)}</dd>` : ''}
@@ -49,26 +48,28 @@ function resultCard() {
         <dt>Stato</dt><dd>${pills(r.domainStatus, '')}</dd>
         <dt>Interrogato</dt><dd>${fmtDateTime(r.queriedAt)}</dd>
       </dl>
-      <div><div class="form-section-head"><div class="form-section-title">${icon('fileText')}Risposta completa</div>
+      <div class="whois-raw"><div class="form-section-head"><div class="form-section-title">${icon('fileText')}Risposta completa</div>
           <button class="btn btn-sm" data-action="copy-raw">${icon('copy')} Copia</button></div>
         <pre class="raw">${esc(r.rawText || '')}</pre></div>
     </div></div></section>`;
 }
 
+/** Ricerche della sessione: una riga di pulsanti sotto il modulo (la più recente per prima), così il risultato ha tutta la larghezza. */
 function historyCard() {
   const list = S.data.whois;
-  const items = list.map((r, i) => `<button class="history-item ${i === S.whois.current ? 'is-active' : ''}" data-action="show" data-index="${i}">
-      ${icon(r.isSuccess ? 'globe' : 'xCircle')}<span class="history-text"><b>${esc(r.queryTarget)}</b><small>${esc(r.serverUsed || r.errorMessage || '')} · ${fmtTime(r.queriedAt)}</small></span>
-      ${icon('chevronRight', { size: 14 })}</button>`).reverse().join('');
-  return `<section class="card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Ricerche della sessione</h2><span class="count">${list.length}</span></div>
-      <button class="btn btn-sm btn-ghost" data-action="clear-whois" ${list.length ? '' : 'disabled'} title="Svuota">${icon('trash')}</button></div>
-    <div class="card-body">${list.length ? `<div class="history">${items}</div>` : '<p class="card-text muted">Le ricerche fatte in questa sessione restano qui e nel file salvato.</p>'}</div></section>`;
+  if (!list.length) return '';
+  const items = list.map((r, i) => `<button class="history-chip ${i === S.whois.current ? 'is-active' : ''} ${r.isSuccess ? '' : 'is-error'}" data-action="show" data-index="${i}" title="${esc(r.serverUsed || r.errorMessage || '')}">
+      ${icon(r.isSuccess ? 'globe' : 'xCircle', { size: 14 })}<b>${esc(r.queryTarget)}</b><small>${fmtTime(r.queriedAt)}</small></button>`).reverse().join('');
+  return `<section class="card history-strip">
+    <span class="history-strip-title">${icon('history', { size: 15 })}Ricerche della sessione<span class="count">${list.length}</span></span>
+    <div class="history-strip-items">${items}</div>
+    <button class="btn btn-sm btn-ghost" data-action="clear-whois" title="Svuota le ricerche della sessione">${icon('trash')}</button></section>`;
 }
 
 function render() {
   if (S.whois.current < 0 && S.data.whois.length) S.whois.current = S.data.whois.length - 1;
   return `${pageHead('Chi ha registrato un dominio o a chi è assegnato un indirizzo IP: registrar, organizzazione, date e name server.')}
-    <div class="grid grid-side"><div class="grid">${formCard()}<div id="whois-result">${resultCard()}</div></div><div id="whois-history">${historyCard()}</div></div>`;
+    <div class="grid">${formCard()}<div id="whois-history">${historyCard()}</div><div id="whois-result">${resultCard()}</div></div>`;
 }
 
 function rerender() {

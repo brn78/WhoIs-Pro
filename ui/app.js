@@ -5,6 +5,8 @@ import { $, $$, esc, fmtNumber, fileName, plural } from './core/dom.js';
 import { icon } from './core/icons.js';
 import { S, PAGES, NAV, bus, setState, adopt, counts, isRunning } from './core/store.js';
 import { setNavigator } from './core/nav.js';
+import './core/clearable.js';
+import { offerAutoScan } from './core/autoscan.js';
 import { askDialog, closeMenu, closeOverlays, closeTopOverlay, confirmDialog, hasOverlay, openMenu, toast, toastError } from './core/ui.js';
 import './pages/overview.js';
 import './pages/network.js';
@@ -42,6 +44,7 @@ async function start() {
   render();
   announceReopen(res && res.reopened);
   announceUpdate(S.st.update);
+  offerAutoScan(res && res.autoScan);
 }
 
 /** Avvio: l'ultima sessione salvata è stata riaperta (o non c'è più, o non si legge). */
@@ -153,9 +156,14 @@ function updateActivity() {
   const middle = $('#topbar-middle');
   if (!middle) return;
   const d = activityData();
-  const chip = $('.activity-chip', middle);
+  // il riquadro arancione della scansione all'avvio (core/autoscan.js) sta qui accanto e non va toccato
+  const chip = $('.activity-chip:not(.autoscan-chip)', middle);
   if (!d) { if (chip) chip.remove(); return; }
-  if (!chip || !!$('.meter', chip) !== (d.pct != null)) { middle.innerHTML = activityChip(); return; }
+  if (!chip || !!$('.meter', chip) !== (d.pct != null)) {
+    if (chip) chip.remove();
+    middle.insertAdjacentHTML('beforeend', activityChip());
+    return;
+  }
   const title = $('b', chip);
   const sub = $('small', chip);
   if (title.textContent !== d.title) title.textContent = d.title;
@@ -165,18 +173,21 @@ function updateActivity() {
 }
 
 function internetPill() {
+  // stessa forma della sessione accanto: riquadro con bordo, icona colorata, descrizione breve sopra e stato sotto
   const online = S.st ? S.st.online : null;
-  if (online == null) return `<span class="net-pill" title="Controllo della connessione a Internet in corso">${icon('wifi')}<span>Internet</span></span>`;
+  const pill = (cls, ic, small, text, title) => `<span class="site-picker net-chip ${cls}" title="${title}">
+      <span class="site-icon">${icon(ic)}</span><span class="site-label"><small>${small}</small><b>${text}</b></span></span>`;
+  if (online == null) return pill('', 'wifi', 'Connessione a Internet', 'Controllo…', 'Controllo della connessione a Internet in corso');
   return online
-    ? `<span class="net-pill is-on" title="Connesso a Internet (controllo ogni 30 secondi)">${icon('wifi')}<span>Internet</span></span>`
-    : `<span class="net-pill is-off" title="Senza connessione a Internet: WHOIS, DNS pubblici e aggiornamenti non funzionano">${icon('wifiOff')}<span>Senza Internet</span></span>`;
+    ? pill('is-on', 'wifi', 'Connessione a Internet', 'Attiva', 'Connesso a Internet (controllo ogni 30 secondi)')
+    : pill('is-off', 'wifiOff', 'Connessione a Internet', 'Assente', 'Senza connessione a Internet: WHOIS, DNS pubblici e aggiornamenti non funzionano');
 }
 
 function topbarActions() {
   const st = S.st;
   const s = st.session;
   const dirty = s.dirty;
-  const label = s.file ? fileName(s.file) : 'Sessione non salvata';
+  const label = s.file ? fileName(s.file).replace(/\.whoispro$/i, '') : 'Sessione non salvata';
   return `${internetPill()}<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
       <span class="site-icon ${dirty ? 'is-dirty' : s.file ? 'is-saved' : ''}">${icon(dirty ? 'edit' : s.file ? 'check' : 'archive')}</span>
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
@@ -412,6 +423,12 @@ on('update.status', (u) => {
 // il programma chiede di aprire una pagina (per esempio «Crea un profilo…» dal menu dell'icona)
 on('navigate', (d) => { if (d && d.page && PAGES[d.page]) go(d.page, d.tab ? { tab: d.tab } : {}); });
 
+// aggiornamento automatico all'avvio: avviso prima che il setup chiuda la finestra
+on('update.auto', (d) => {
+  updateNotified = true;
+  toast(`Scaricamento e installazione della ${d.version}: il programma si chiude e si riapre aggiornato.`, { tone: 'info', title: 'Aggiornamento automatico', timeout: 30000, action: { label: 'Vedi', run: () => go('settings', { tab: 'updates' }) } });
+});
+
 on('update.progress', (d) => {
   if (!S.st || !S.st.update) return;
   S.st.update.download = d;
@@ -524,7 +541,39 @@ document.addEventListener('keydown', (e) => {
     if (k === 'o') { e.preventDefault(); openSession(); }
     if (k === 'n') { e.preventDefault(); newSession(); }
   }
+  scrollListByKey(e);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Frecce, PagSu/PagGiù, Inizio e Fine sugli elenchi: gli elenchi (host, porte, connessioni…) scorrono dentro il loro
+// riquadro (.table-wrap), che non prende il focus; senza questo i tasti muoverebbero solo la pagina. Vale per l'elenco
+// su cui si è cliccato l'ultima volta, altrimenti per il primo elenco della pagina che ha qualcosa da scorrere.
+// ---------------------------------------------------------------------------------------------------------------------
+const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End']);
+let lastScroller = null;
+const scrollable = (el) => el && el.isConnected && el.scrollHeight > el.clientHeight + 2;
+
+document.addEventListener('mousedown', (e) => {
+  const box = e.target.closest && e.target.closest('#content .table-wrap');
+  if (box) lastScroller = box;
+}, true);
+
+function scrollListByKey(e) {
+  if (!SCROLL_KEYS.has(e.key) || e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target;
+  if (t.closest && t.closest('input, textarea, select, [contenteditable="true"], .menu')) return;
+  const box = scrollable(lastScroller) ? lastScroller : [...$$('#content .table-wrap')].find(scrollable);
+  if (!box) return;
+  const page = Math.max(40, box.clientHeight - 60);
+  const delta = { ArrowDown: 48, ArrowUp: -48, PageDown: page, PageUp: -page }[e.key];
+  const atEdge = delta > 0 ? box.scrollTop + box.clientHeight >= box.scrollHeight - 1 : box.scrollTop <= 0;
+  // in fondo (o in cima) all'elenco le frecce tornano a muovere la pagina
+  if (delta != null && atEdge && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) return;
+  e.preventDefault();
+  if (e.key === 'Home') box.scrollTo({ top: 0, behavior: 'smooth' });
+  else if (e.key === 'End') box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  else box.scrollBy({ top: delta, behavior: e.repeat ? 'auto' : 'smooth' });
+}
 
 // file .whoispro trascinati sulla finestra: non si aprono da qui (serve la finestra di Windows), niente navigazione
 document.addEventListener('dragover', (e) => e.preventDefault());

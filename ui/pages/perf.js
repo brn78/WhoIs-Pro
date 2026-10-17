@@ -75,10 +75,13 @@ function heroInner() {
   if (running()) {
     const ph = (L && L.phase) || 'latency';
     const val = L ? L.value : 0;
+    // le fasi già finite restano a vista (latenza e download misurati), quella in corso si muove
+    const lat = L && L.latencyMs >= 0 ? n1(L.latencyMs) : ph === 'latency' ? '…' : '—';
+    const down = ph === 'download' ? n1(val) : L && L.downloadMbps > 0 ? n1(L.downloadMbps) : '—';
     return `<div class="perf-bigs">
-        ${big('Download', 'download', ph === 'download' ? n1(val) : r && r.downloadMbps && ph !== 'latency' && ph !== 'dns' ? '…' : '—', 'Mbit/s', 'rx', ph === 'download')}
+        ${big('Download', 'download', down, 'Mbit/s', 'rx', ph === 'download')}
         ${big('Upload', 'upload', ph === 'upload' ? n1(val) : '—', 'Mbit/s', 'tx', ph === 'upload')}
-        ${big('Latenza', 'activity', ph === 'latency' || ph === 'dns' ? '…' : '—', 'ms', '', ph === 'latency')}
+        ${big('Latenza', 'activity', lat, 'ms', '', ph === 'latency')}
       </div>
       <div class="perf-progress"><div class="meter"><span style="width:${L ? L.percent : 2}%"></span></div>
         <span class="scan-stat"><span class="spinner"></span>${esc((L && L.message) || 'Avvio del test…')}</span></div>`;

@@ -28,13 +28,15 @@ Namespace Machine
         Private Sub New()
         End Sub
 
-        ''' <summary>Le schede collegate con la loro configurazione IPv4, la velocità del collegamento e il traffico.</summary>
+        ''' <summary>
+        ''' Le schede di rete del PC con la loro configurazione IPv4, la velocità del collegamento e il traffico; anche quelle
+        ''' non collegate (connected = False: il Wi-Fi spento, il cavo staccato), dopo quelle collegate.
+        ''' </summary>
         Public Shared Function Read() As List(Of Object)
-            Dim rows As New List(Of (Gateway As Boolean, Total As Long, Row As Object))()
+            Dim rows As New List(Of (Connected As Boolean, Gateway As Boolean, Total As Long, Row As Object))()
             Dim nowTicks = Stopwatch.GetTimestamp()
             For Each nic In NetworkInterface.GetAllNetworkInterfaces()
                 If Not NetworkConfig.IsRealAdapter(nic) Then Continue For
-                If nic.OperationalStatus <> OperationalStatus.Up Then Continue For
                 Dim rx As Long
                 Dim tx As Long
                 Try
@@ -61,15 +63,19 @@ Namespace Machine
                 End SyncLock
 
                 Dim cfg = NetworkConfig.ReadConfig(nic)
-                ' anche una scheda solo IPv6 è una rete: basta un indirizzo utilizzabile
-                If cfg.Ip = "" AndAlso Not Network.Ipv6.HasPublic(cfg.Ipv6) Then Continue For
+                ' collegata: attiva e con un indirizzo utilizzabile (anche una scheda solo IPv6 è una rete)
+                Dim connected = nic.OperationalStatus = OperationalStatus.Up AndAlso
+                                (cfg.Ip <> "" OrElse Network.Ipv6.HasPublic(cfg.Ipv6))
                 Dim speed As Long = 0
-                Try
-                    speed = nic.Speed
-                Catch
-                End Try
-                rows.Add((cfg.Gateway <> "", rx + tx, New With {
+                If connected Then
+                    Try
+                        speed = nic.Speed
+                    Catch
+                    End Try
+                End If
+                rows.Add((connected, cfg.Gateway <> "", rx + tx, New With {
                     .id = nic.Id,
+                    .connected = connected,
                     .name = cfg.Name,
                     .description = cfg.Description,
                     .type = TypeName(nic.NetworkInterfaceType),
@@ -90,8 +96,9 @@ Namespace Machine
                     .txTotal = tx
                 }))
             Next
-            ' prima le schede con il gateway (la rete vera), poi quelle con più traffico
-            Return rows.OrderByDescending(Function(r) r.Gateway).ThenByDescending(Function(r) r.Total).Select(Function(r) r.Row).ToList()
+            ' prima le collegate, tra queste quelle con il gateway (la rete vera), poi quelle con più traffico
+            Return rows.OrderByDescending(Function(r) r.Connected).ThenByDescending(Function(r) r.Gateway).
+                ThenByDescending(Function(r) r.Total).Select(Function(r) r.Row).ToList()
         End Function
 
         Private Shared Function TypeName(t As NetworkInterfaceType) As String

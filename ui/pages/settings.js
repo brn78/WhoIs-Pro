@@ -31,6 +31,16 @@ function startupCard(d) {
     </div></div></section>`;
 }
 
+function autoScanCard(d) {
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('radar')}<h2>Scansione all'avvio</h2></div></div>
+    <div class="card-body"><div class="switch-list">
+      ${sw('autoScan', 'Scansiona la rete quando apri il programma', 'Prima compare un avviso con il conto alla rovescia, da cui puoi annullarla o avviarla subito; poi si apre la pagina Rete.', d.autoScan)}
+    </div>
+    <div class="field autoscan-delay"><label for="s-autoscan-delay">Ritardo prima della scansione</label>
+      <div class="input-suffix"><input class="input" id="s-autoscan-delay" type="number" min="0" max="600" step="1" data-field="autoScanDelay" value="${d.autoScanDelay ?? 10}" ${d.autoScan ? '' : 'disabled'}><span>secondi</span></div></div>
+    </div></section>`;
+}
+
 function themeCard(d) {
   const opt = (value, ic, label, text) => `<button class="choice-option theme-option ${d.theme === value ? 'is-active' : ''}" data-action="theme" data-theme="${value}">
       <span class="choice-icon">${icon(ic)}</span><span class="choice-text"><b>${label}</b><small>${text}</small></span>${d.theme === value ? icon('check') : ''}</button>`;
@@ -171,13 +181,17 @@ function updateCard() {
       : `<button class="btn btn-sm btn-primary" data-action="open-url" data-url="${esc(u.pageUrl)}">${icon('external')} Apri la pagina dei download</button>`;
   const latest = u.version
     ? `<span class="muted">· ${esc(u.version)}${u.publishedAt ? `, ${fmtDateTime(u.publishedAt).slice(0, 10)}` : ''}</span>` : '<span class="muted">· —</span>';
-  const checkHelp = help('Una volta al giorno il programma chiede a GitHub qual è l\'ultima versione pubblicata. Niente si installa da solo: quando c\'è una versione nuova compare qui «Scarica e installa».');
+  const checkHelp = help('A ogni avvio, con Internet, il programma chiede a GitHub qual è l\'ultima versione pubblicata. Con l\'aggiornamento automatico la versione nuova si scarica, se ne verifica l\'impronta SHA-256 e si installa; altrimenti compare qui «Scarica e installa».');
+  const auto = (S.settings.data || {}).autoInstallUpdates !== false;
   return `<section class="card"><div class="card-head"><div class="card-title">${icon('rotate')}<h2>Aggiornamenti</h2></div>${pill}</div>
     <div class="card-body"><div class="fields">
       <dl class="kv compact">
         <dt>In uso · ultima pubblicata</dt><dd><b>${esc(u.current)}</b>${u.installed ? '' : ' <span class="tag">copia portabile</span>'} ${latest}</dd>
         <dt>Ultimo controllo</dt><dd>${u.checkedAt ? fmtDateTime(u.checkedAt) : '<span class="muted">mai</span>'} ${checkHelp}</dd>
       </dl>
+      <div class="switch-list">${sw('autoInstallUpdates', 'Installa gli aggiornamenti da solo', u.installed
+        ? 'A ogni avvio, se c\'è una versione nuova: la scarica, ne verifica l\'impronta e la installa; il programma si chiude e si riapre. Non succede con dati non salvati o con una scansione in corso.'
+        : 'Vale per la copia installata con il setup: questa copia portabile mostra solo l\'avviso.', auto)}</div>
       ${u.error ? note('danger', 'alert', esc(u.error)) : ''}
       ${progress}
       ${u.available && !u.installed ? note('info', 'info', 'Questa copia non è stata installata con il setup: scarica il nuovo pacchetto dalla pagina delle release e sostituisci i file.') : ''}
@@ -235,7 +249,7 @@ function render() {
     case 'updates': body = `<div class="grid settings-narrow">${updateCard()}</div>`; break;
     case 'vendors': body = `<div class="grid settings-narrow">${ouiCard()}</div>`; break;
     case 'data': body = `<div class="grid settings-narrow">${dataCard(d)}</div>`; break;
-    default: body = `<div class="grid grid-2">${startupCard(d)}${themeCard(d)}</div>`;
+    default: body = `<div class="grid grid-2">${startupCard(d)}${themeCard(d)}${autoScanCard(d)}</div>`;
   }
   return `${head}${tabsHtml()}${body}`;
 }
@@ -523,6 +537,12 @@ definePage('settings', {
     if (['autoStart', 'trayIcon', 'closeToTray', 'startMinimized'].includes(field)) {
       const labels = { autoStart: 'Avvio con Windows', trayIcon: 'Icona nell\'area di notifica', closeToTray: 'Chiusura nell\'area di notifica', startMinimized: 'Avvio ridotto a icona' };
       save({ [field]: el.checked }, `${labels[field]}: ${el.checked ? 'attivo' : 'disattivato'}.`);
+    }
+    if (field === 'autoInstallUpdates') save({ autoInstallUpdates: el.checked }, `Aggiornamento automatico: ${el.checked ? 'attivo' : 'disattivato'}.`);
+    if (field === 'autoScan') save({ autoScan: el.checked }, `Scansione all'avvio: ${el.checked ? 'attiva' : 'disattivata'}.`);
+    if (field === 'autoScanDelay') {
+      const sec = Math.min(600, Math.max(0, Math.round(Number(el.value) || 0)));
+      save({ autoScanDelay: sec }, sec ? `La scansione partirà ${sec} secondi dopo l'apertura.` : 'La scansione partirà subito all\'apertura.');
     }
   },
 });

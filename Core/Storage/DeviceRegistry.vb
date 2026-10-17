@@ -17,6 +17,11 @@ Namespace Storage
         Public Property FirstSeen As DateTime = DateTime.Now
         Public Property LastSeen As DateTime = DateTime.Now
         Public Property TimesSeen As Integer
+        ''' <summary>Nome e note date dall'utente: tornano sull'host in ogni scansione e sessione successiva.</summary>
+        Public Property Name As String = ""
+        Public Property Notes As String = ""
+        Public Property Icon As String = ""
+        Public Property IconColor As String = ""
     End Class
 
     ''' <summary>
@@ -88,9 +93,49 @@ Namespace Storage
             d.DeviceType = h.DeviceType
             d.LastSeen = h.LastSeen
             d.TimesSeen += 1
+            SyncLabel(d, h)
             _dirty = True
             Return isNew
         End Function
+
+        ''' <summary>
+        ''' Nome e note: quelli del registro vanno sull'host; se il registro non li ha ma l'host sì (una sessione aperta da
+        ''' un altro PC), il registro li impara.
+        ''' </summary>
+        Private Shared Sub SyncLabel(d As KnownDevice, h As HostInfo)
+            If Not String.IsNullOrEmpty(d.Name) Then h.CustomName = d.Name Else d.Name = If(h.CustomName, "")
+            If Not String.IsNullOrEmpty(d.Notes) Then h.Notes = d.Notes Else d.Notes = If(h.Notes, "")
+            If Not String.IsNullOrEmpty(d.Icon) Then
+                h.Icon = d.Icon
+                h.IconColor = d.IconColor
+            Else
+                d.Icon = If(h.Icon, "")
+                d.IconColor = If(h.IconColor, "")
+            End If
+        End Sub
+
+        ''' <summary>Nome, note, icona e colore scelti dall'utente per il dispositivo (vuoti = tolti), sull'host e nel registro.</summary>
+        Public Sub SetLabel(h As HostInfo, name As String, notes As String, Optional icon As String = Nothing, Optional iconColor As String = Nothing)
+            h.CustomName = If(name, "").Trim()
+            h.Notes = If(notes, "").Trim()
+            If icon IsNot Nothing Then
+                h.Icon = icon.Trim()
+                h.IconColor = If(h.Icon = "", "", If(iconColor, "").Trim())
+            End If
+            Dim key = KeyOf(h)
+            Dim d As KnownDevice = Nothing
+            If Not _items.TryGetValue(key, d) Then
+                d = New KnownDevice With {.Key = key, .Mac = h.MacAddress, .LastIp = h.IPAddress, .Hostname = h.Hostname,
+                                          .Vendor = h.MacVendor, .DeviceType = h.DeviceType, .FirstSeen = h.FirstSeen, .LastSeen = h.LastSeen}
+                _items(key) = d
+            End If
+            d.Name = h.CustomName
+            d.Notes = h.Notes
+            d.Icon = h.Icon
+            d.IconColor = h.IconColor
+            _dirty = True
+            Save()
+        End Sub
 
         Public Sub Clear()
             _items.Clear()
