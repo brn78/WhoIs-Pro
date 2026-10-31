@@ -5,6 +5,41 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.6.0 · 31 ottobre 2026
+
+- **Archivio della rete nel tempo** (nuova pagina *Dispositivi*): il registro dei dispositivi diventa un archivio
+  SQLite (`archivio-rete.db`) che ogni scansione aggiorna, con chiave il MAC (un cambio di IP resta lo stesso
+  dispositivo); nome, note, icona e colore dati ai dispositivi restano gli stessi di prima (`dispositivi.json` viene
+  importato al primo avvio). Tre schede: *Dispositivi* (ricerca, «solo presenti», scheda con **alias**, **fiducia**
+  da classificare / affidabile / sospetto, **note**, porte aperte, storia, «Dimentica»), *Cambiamenti* (nuovo,
+  ricomparso, cambiato, assente, con «Segna tutto come visto») e *Scansioni* (storico con durata e differenze). Un
+  contatore «da vedere» sulla voce del menu.
+- **Confronto tra scansioni**: nuovo, ricomparso, cambiato (`IP a → b`, `nome x → y`, `porte aperte 22,80`, `porte
+  chiuse 445`), assente solo dopo **due scansioni consecutive** senza risposta (i dispositivi Wi-Fi in risparmio
+  energetico non oscillano). Si confrontano solo le porte provate in quella scansione: cambiare gruppo di porte non
+  «chiude» le altre. La prima scansione crea l'archivio senza avvisi; alla fine di ogni scansione dalla pagina *Rete*
+  l'esito riporta le differenze, con «Cambiamenti».
+- **Scansioni automatiche e avvisi** (*Impostazioni → Archivio della rete*): intervallo in minuti, rete da
+  scansionare, timeout per prova, avviso per i dispositivi nuovi. Le schedine in basso a destra (livello attenzione,
+  45 s; al massimo quattro visibili; un solo avviso aggregato oltre tre dispositivi nuovi; lo stesso dispositivo non
+  avvisa due volte in mezz'ora) hanno «Apri la scheda»; un dispositivo segnato sospetto che ricompare avvisa;
+  cambiamenti e assenze restano nello storico.
+- **Motore di scansione nuovo** anche per la pagina *Rete*: ping e ARP in parallelo (tabella dei vicini e SendARP
+  dalla scheda LAN, così le VPN non deviano le richieste), host presenti solo in ARP, **nomi NetBIOS** (UDP 137, con
+  gruppo di lavoro) oltre al DNS inverso; con *Porte degli host trovati* le porte TCP del gruppo scelto su ogni host,
+  nella stessa scansione (non più una coda a parte), con porte chiuse istantanee (SIO_TCP_INITIAL_RTO) e **banner**
+  HTTP (Server e titolo), SSH, FTP, posta e RTSP. Una /24 con 50 host, nomi, 20 porte e banner in meno di 10 secondi.
+  Gli host compaiono subito e si arricchiscono fase per fase; riscansione del singolo host (ora anche con le porte),
+  host «non risponde», *Ripeti* e IPv6 come prima.
+- **Classificazione rifatta**: router, firewall, hypervisor, stampanti (anche 3D), NAS, telecamere e NVR, centrali
+  d'allarme, automazione e PLC, console, TV e lettori, assistenti vocali, domotica, UPS, VoIP, Apple, Raspberry Pi,
+  telefoni, ruoli dei server (controller di dominio, database, posta, Docker…), Windows e Linux, macchine virtuali dal
+  MAC; stima del sistema dopo la classificazione (un modulo ESP con TTL 128 è «firmware embedded», non Windows).
+  Categorie: Rete, Server, Virtualizzazione, Postazione, Storage, Stampante, Telecamera, Centrale d'allarme, Smart TV,
+  Domotica, Mobile, Console, Altro.
+- **Porte sensibili in evidenza** nella scheda del dispositivo: Telnet, FTP, SMB, RDP, VNC, WinRM, Docker e Redis
+  esposti hanno il chip «da verificare».
+
 ## 2.5.4 · 17 ottobre 2026
 
 - **Profilo GitHub nel piè di pagina**: accanto al copyright il logo di GitHub con *brn78*; un clic apre il profilo

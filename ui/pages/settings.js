@@ -12,6 +12,7 @@ S.settings = { data: null, adapters: null, busy: false, loading: false, tab: 'ge
 
 const TABS = [
   { key: 'general', ic: 'settings', label: 'Generale' },
+  { key: 'archive', ic: 'history', label: 'Archivio della rete' },
   { key: 'network', ic: 'network', label: 'Rete del PC' },
   { key: 'updates', ic: 'rotate', label: 'Aggiornamenti' },
   { key: 'vendors', ic: 'database', label: 'Produttori' },
@@ -100,15 +101,43 @@ function dataCard(d) {
   return `<section class="card"><div class="card-head"><div class="card-title">${icon('folder')}<h2>Dati del programma</h2></div></div>
     <div class="card-body"><dl class="kv compact">
       <dt>Cartella dei dati</dt><dd><span class="mono" title="${esc(d.dataFolder)}">${esc(d.dataFolder)}</span></dd>
-      <dt>Contenuto</dt><dd>impostazioni, database dei produttori aggiornato, esito del controllo versioni, posizione della finestra, dati di WebView2</dd>
+      <dt>Contenuto</dt><dd>impostazioni, archivio della rete (archivio-rete.db), database dei produttori aggiornato, esito del controllo versioni, posizione della finestra, dati di WebView2</dd>
       <dt>Programma</dt><dd><span class="mono" title="${esc(d.exePath)}">${esc(shortPath(d.exePath))}</span></dd>
-    </dl></div></section>
-    <section class="card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Dispositivi conosciuti</h2></div>
+    </dl></div></section>`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Archivio della rete: scansioni automatiche con gli avvisi, e il database dei dispositivi conosciuti
+// ---------------------------------------------------------------------------------------------------------------------
+function networkCard(d) {
+  const nets = (d.networks || []).map((n) => `<option value="${esc(n.cidr)}">${esc(n.interfaceName)} · ${esc(n.cidr)}${n.isPrimary ? ' (principale)' : ''}</option>`).join('');
+  const w = (S.st && S.st.inventory) || {};
+  const next = d.networkWatchEnabled && w.nextScanAt ? `Prossima scansione automatica: ${fmtDateTime(w.nextScanAt)}.` : d.networkWatchEnabled ? 'Prossima scansione automatica: appena possibile.' : 'Le scansioni automatiche sono spente: l\'archivio si aggiorna con le scansioni della pagina Rete e con «Scansiona adesso» nella pagina Dispositivi.';
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('radar')}<h2>Scansioni automatiche</h2></div>
+      <button class="btn btn-sm" data-action="go" data-page="devices">${icon('external')} Apri l'archivio</button></div>
+    <div class="card-body"><div class="fields">
+      <div class="switch-list">
+        ${sw('networkWatchEnabled', 'Scansiona la rete a intervalli regolari', 'Il programma scansiona la rete da solo e aggiorna l\'archivio dei dispositivi, anche con la finestra nell\'area di notifica. Niente entra nella sessione.', d.networkWatchEnabled)}
+        ${sw('notifyNewDevices', 'Avvisa quando compare un dispositivo nuovo', 'Schedina in basso a destra (e avviso di Windows a finestra nascosta) per i dispositivi mai visti e per quelli segnati sospetti che ricompaiono. Mai alla prima scansione.', d.notifyNewDevices)}
+      </div>
+      <div class="form-grid">
+        <div class="field"><label for="s-interval">Ogni quanti minuti</label><input class="input" id="s-interval" type="number" min="5" max="1440" step="5" data-field="networkScanIntervalMinutes" value="${d.networkScanIntervalMinutes}" ${d.networkWatchEnabled ? '' : 'disabled'}></div>
+        <div class="field"><label for="s-timeout">Timeout per prova (ms)</label><input class="input" id="s-timeout" type="number" min="100" max="10000" step="100" data-field="networkScanTimeoutMs" value="${d.networkScanTimeoutMs}" title="Più alto se i dispositivi Wi-Fi in risparmio energetico oscillano tra presente e assente"></div>
+        <div class="field span-2"><label for="s-target">Rete da scansionare</label>
+          <input class="input input-mono" id="s-target" data-field="networkScanTarget" list="s-networks" value="${esc(d.networkScanTarget || '')}" placeholder="vuoto = rete principale (la scheda con il gateway)" autocomplete="off">
+          <datalist id="s-networks">${nets}</datalist></div>
+      </div>
+      ${note('info', 'info', next)}
+    </div></div></section>`;
+}
+
+function devicesCard(d) {
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Dispositivi conosciuti</h2></div>
       <span class="pill primary">${plural(d.devices || 0, 'dispositivo', 'dispositivi')}</span></div>
     <div class="card-body"><div class="fields">
-      <p class="card-text">Ogni dispositivo trovato resta in un registro di questo PC, per MAC, con la data in cui è comparso la prima volta. Serve a segnalare chi si collega per la prima volta, anche tra una sessione e l'altra: con <b>Ripeti</b> nella pagina Rete diventa un controllo continuo.</p>
-      <dl class="kv compact"><dt>File</dt><dd><span class="mono" title="${esc(d.devicesFile || '')}">${esc(shortPath(d.devicesFile || ''))}</span></dd></dl>
-      <div class="card-actions" style="margin-top:0"><button class="btn btn-sm" data-action="clear-devices" ${d.devices ? '' : 'disabled'}>${icon('trash')} Svuota il registro</button></div>
+      <p class="card-text">Ogni dispositivo trovato resta nell'archivio della rete di questo PC, per MAC: quando è comparso la prima volta, quando l'ultima, con che indirizzo e porte, più nome, note, icona e fiducia che gli dai. A ogni scansione l'archivio segna chi è nuovo, chi è cambiato, chi ricompare e chi manca da due scansioni; un dispositivo è «assente» solo dopo due scansioni senza risposta.</p>
+      <dl class="kv compact"><dt>Database</dt><dd><span class="mono" title="${esc(d.devicesFile || '')}">${esc(shortPath(d.devicesFile || ''))}</span></dd></dl>
+      <div class="card-actions" style="margin-top:0"><button class="btn btn-sm" data-action="clear-devices" ${d.devices ? '' : 'disabled'}>${icon('trash')} Svuota l'archivio</button></div>
     </div></div></section>`;
 }
 
@@ -242,10 +271,11 @@ function tabsHtml() {
 
 function render() {
   const d = S.settings.data;
-  const head = pageHead('Come si avvia il programma, il tema, la rete di questo PC e i profili di rete, gli aggiornamenti e il database dei produttori.');
+  const head = pageHead('Come si avvia il programma, il tema, l\'archivio della rete con le scansioni automatiche, la rete di questo PC e i profili di rete, gli aggiornamenti e il database dei produttori.');
   if (!d) return `${head}${tabsHtml()}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle impostazioni…</div></div>`;
   let body;
   switch (S.settings.tab) {
+    case 'archive': body = `<div class="grid grid-2">${networkCard(d)}${devicesCard(d)}</div>`; break;
     case 'network': body = `<div class="grid">${adaptersCard()}${profilesCard(d)}</div>`; break;
     case 'updates': body = `<div class="grid settings-narrow">${updateCard()}</div>`; break;
     case 'vendors': body = `<div class="grid settings-narrow">${ouiCard()}</div>`; break;
@@ -445,8 +475,8 @@ const actions = {
   'settings-tab': (el) => { S.settings.tab = el.dataset.tab; rerender(); },
   'clear-devices': async () => {
     const n = (S.settings.data || {}).devices || 0;
-    if (!(await confirmDialog({ title: 'Svuotare il registro dei dispositivi?', message: `${plural(n, 'dispositivo conosciuto', 'dispositivi conosciuti')} vengono dimenticati: alla prossima scansione tutti torneranno «nuovi». Le sessioni salvate non cambiano.`, confirmText: 'Svuota', tone: 'danger' }))) return;
-    try { S.settings.data = await call('clearDevices'); rerender(); toast('Registro dei dispositivi svuotato.', { tone: 'success' }); } catch (err) { toastError(err); }
+    if (!(await confirmDialog({ title: 'Svuotare l\'archivio della rete?', message: `${plural(n, 'dispositivo conosciuto', 'dispositivi conosciuti')}, con la loro storia, i cambiamenti e le scansioni registrate, vengono dimenticati: alla prossima scansione tutti torneranno «nuovi» (senza avvisi). Le sessioni salvate non cambiano.`, confirmText: 'Svuota', tone: 'danger' }))) return;
+    try { S.settings.data = await call('clearDevices'); rerender(); toast('Archivio della rete svuotato.', { tone: 'success' }); } catch (err) { toastError(err); }
   },
   'toggle-notes': () => { S.settings.notesOpen = !S.settings.notesOpen; rerender(); },
   'theme': (el) => {
@@ -535,10 +565,11 @@ definePage('settings', {
   },
   actions,
   onChange: (el, field) => {
-    if (['autoStart', 'trayIcon', 'closeToTray', 'startMinimized'].includes(field)) {
-      const labels = { autoStart: 'Avvio con Windows', trayIcon: 'Icona nell\'area di notifica', closeToTray: 'Chiusura nell\'area di notifica', startMinimized: 'Avvio ridotto a icona' };
-      save({ [field]: el.checked }, `${labels[field]}: ${el.checked ? 'attivo' : 'disattivato'}.`);
-    }
+    const switches = { autoStart: 'Avvio con Windows', trayIcon: 'Icona nell\'area di notifica', closeToTray: 'Chiusura nell\'area di notifica', startMinimized: 'Avvio ridotto a icona', networkWatchEnabled: 'Scansioni automatiche della rete', notifyNewDevices: 'Avviso per i dispositivi nuovi' };
+    if (field in switches) { save({ [field]: el.checked }, `${switches[field]}: ${el.checked ? 'attivo' : 'disattivato'}.`); return; }
+    if (field === 'networkScanIntervalMinutes') { const m = Math.min(1440, Math.max(5, Number(el.value) || 60)); save({ [field]: m }, `Scansione automatica ogni ${m} minuti.`); return; }
+    if (field === 'networkScanTimeoutMs') { save({ [field]: Math.min(10000, Math.max(100, Number(el.value) || 700)) }, 'Timeout della scansione automatica salvato.'); return; }
+    if (field === 'networkScanTarget') { const t = el.value.trim(); save({ [field]: t }, t ? `Scansione automatica su ${t}.` : 'Scansione automatica sulla rete principale.'); return; }
     if (field === 'autoUpdateOui') save({ autoUpdateOui: el.checked }, `Aggiornamento automatico dei produttori: ${el.checked ? 'attivo' : 'disattivato'}.`);
     if (field === 'autoInstallUpdates') save({ autoInstallUpdates: el.checked }, `Aggiornamento automatico: ${el.checked ? 'attivo' : 'disattivato'}.`);
     if (field === 'autoScan') save({ autoScan: el.checked }, `Scansione all'avvio: ${el.checked ? 'attiva' : 'disattivata'}.`);

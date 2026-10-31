@@ -37,7 +37,7 @@ function formCard() {
     + `<option value="CUSTOM" ${p.preset === 'CUSTOM' ? 'selected' : ''}>Personalizzato</option>`;
   const count = fmtNumber(countPorts(p.ports));
   return `<section class="card" id="scan-card"><div class="card-body">
-    <form data-form="scan" class="scan-form ports-form" autocomplete="off">
+    <form data-form="scan" class="scan-form" autocomplete="off">
       <div class="field"><label for="f-host">Host</label>
         <input class="input input-mono" id="f-host" data-field="host" value="${esc(p.host)}" placeholder="192.168.1.10 oppure nome.dominio"></div>
       <div class="field field-select"><label for="f-preset">Gruppo di porte</label>
@@ -328,7 +328,7 @@ bus.addEventListener('session', () => {
 });
 
 definePage('ports', {
-  title: 'Porte', heading: 'Scansione delle porte', icon: 'plug', section: 'scan', badge: () => S.data.ports.length,
+  title: 'Porte', heading: 'Scansione delle porte', icon: 'plug', section: 'scan', order: 2, badge: () => S.data.ports.length,
   render, after: updateInfo, actions,
   enter: (params) => {
     if (params.host) {

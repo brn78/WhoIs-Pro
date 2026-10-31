@@ -1,4 +1,6 @@
-// Scansione della rete: host attivi con MAC, produttore, nome e tipo di dispositivo.
+// Scansione della rete: host attivi con MAC, produttore, nomi (DNS e NetBIOS), porte e tipo di dispositivo. La scansione
+// la fa il motore DiscoveryScanner (Core\Network\Scan) tramite il servizio di sorveglianza: alla fine aggiorna anche
+// l'archivio della rete (pagina Dispositivi) e qui arrivano le differenze.
 import { call, on } from '../core/bridge.js';
 import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp } from '../core/dom.js';
 import { icon } from '../core/icons.js';
@@ -10,14 +12,13 @@ import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHea
 import { pickIcon } from '../core/iconpicker.js';
 
 S.net = {
-  target: '', threads: 80, timeout: 900, resolveDns: true,
+  target: '', threads: 128, timeout: 700, resolveDns: true,
   repeat: 0,           // minuti tra una scansione e la successiva (0 = una volta sola)
-  autoPorts: false,    // porte degli host trovati, man mano, cinque host alla volta
+  autoPorts: true,     // porte TCP degli host trovati, nella stessa scansione (servono anche a riconoscere il dispositivo)
   autoPreset: 'TOP20', // gruppo di porte per autoPorts
   q: '', sort: { key: 'ipAddress', dir: 1 },
   progress: null, done: null, fresh: new Set(),
   rescanning: new Set(), // indirizzi riscansionati uno per uno, in corso
-  auto: null,          // avanzamento delle porte degli host trovati { done, total, running, open }
   nextAt: 0, repeatTimer: 0,
   editing: false,      // modulo riaperto con «Modifica» dopo una scansione
   last: null,          // parametri dell'ultima scansione avviata (per la riga di riepilogo)
@@ -37,7 +38,6 @@ const portPresets = () => ((S.st && S.st.presets && S.st.presets.ports) || []).f
 const autoPreset = () => portPresets().find((p) => p.key === S.net.autoPreset) || portPresets()[0] || { key: '', name: '', ports: '' };
 
 const running = () => !!(S.st && S.st.running.network);
-const autoRunning = () => !!(S.st && S.st.running.autoPorts);
 const hhmm = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -56,13 +56,13 @@ function formCard() {
           <datalist id="adapter-list">${list}</datalist>
           <button type="button" class="btn btn-icon" data-action="detect-adapters" title="Rileva di nuovo le schede di rete">${icon('refresh')}</button>
         </div></div>
-      <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="500" data-field="threads" value="${n.threads}"></div>
-      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}"></div>
+      <div class="field"><label for="f-threads">Prove insieme</label><input class="input" id="f-threads" type="number" min="1" max="512" data-field="threads" value="${n.threads}" title="Ping, ARP e connessioni TCP contemporanee"></div>
+      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}" title="Per ogni prova: più alto su Wi-Fi lenti o con dispositivi in risparmio energetico"></div>
       <div class="field field-select"><label for="f-repeat">Ripeti</label>
         <select class="select" id="f-repeat" data-field="repeat">${REPEATS.map(([m, label]) => `<option value="${m}" ${n.repeat === m ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
       <div class="field field-auto"><span class="field-label">Opzioni</span><div class="field-switches">
-        <label class="switch"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Risolvi i nomi (DNS)</span></label>
-        <label class="switch" title="Ogni host trovato passa subito alla scansione delle porte, cinque host alla volta, mentre la rete continua"><input type="checkbox" data-field="autoPorts" ${n.autoPorts ? 'checked' : ''}><span class="track"></span><span>Porte degli host trovati</span></label>
+        <label class="switch" title="DNS inverso e NetBIOS (UDP 137)"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Nomi (DNS e NetBIOS)</span></label>
+        <label class="switch" title="Porte TCP del gruppo scelto su ogni host trovato, con i banner dei servizi, nella stessa scansione: servono anche a riconoscere il dispositivo"><input type="checkbox" data-field="autoPorts" ${n.autoPorts ? 'checked' : ''}><span class="track"></span><span>Porte degli host trovati</span></label>
         <select class="select input-sm auto-preset" data-field="autoPreset" ${n.autoPorts ? '' : 'disabled'} title="Porte da controllare su ogni host trovato">${portPresets().map((p) => `<option value="${esc(p.key)}" ${p.key === autoPreset().key ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div></div>
       <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${n.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
@@ -75,15 +75,8 @@ function formCard() {
 function runningStats() {
   const p = S.net.progress;
   if (!p) return 'avvio…';
-  return `${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ${plural(S.data.hosts.length, 'host', 'host')} · ${fmtSeconds(p.seconds)}${p.currentIp ? ` · ${esc(p.currentIp)}` : ''}`;
-}
-
-/** Porte degli host trovati: quanti host fatti su quanti, porte aperte finora. */
-function autoChip() {
-  const a = S.net.auto || (S.st && S.st.autoPorts);
-  if (!autoRunning() || !a) return '';
-  const text = a.total ? `Porte: ${fmtNumber(a.done)} di ${fmtNumber(a.total)} host · ${plural(a.open, 'aperta', 'aperte')}` : 'Porte: in attesa degli host';
-  return `<span class="chip chip-busy" data-auto title="Porte degli host trovati, cinque alla volta"><span class="spinner"></span>${text}</span>`;
+  const total = p.total ? `${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ` : '';
+  return `${esc(p.phaseLabel || '')} · ${total}${plural(S.data.hosts.length, 'host', 'host')} · ${fmtSeconds(p.seconds)}${p.currentIp ? ` · ${esc(p.currentIp)}` : ''}`;
 }
 
 /** Ripetizione: ogni quanto e quando parte la prossima. */
@@ -102,7 +95,6 @@ function summaryInner() {
     return `<span class="scan-state is-busy"><span class="spinner"></span>In corso · <span data-pct>${pct}%</span></span><span class="vsep"></span>
       <span class="meter"><span data-meter style="width:${pct}%"></span></span>
       <span class="scan-stat mono" data-stats>${runningStats()}</span>
-      <span class="chips" data-auto-box>${autoChip()}</span>
       <span class="scan-actions"><button type="button" class="btn btn-danger" data-action="scan-stop">${icon('stop')} Ferma</button></span>`;
   }
   const d = n.done;
@@ -114,13 +106,12 @@ function summaryInner() {
   return `<span class="scan-state ${tone}"><span class="dot"></span>${text}</span><span class="vsep"></span>
     <span class="chips">
       <span class="chip" title="Rete o intervallo"><b>${esc(p.target)}</b></span>
-      <span class="chip" title="Thread in parallelo e timeout del ping">${fmtNumber(p.threads)} thread · ${fmtNumber(p.timeout)} ms</span>
-      ${p.resolveDns ? `<span class="chip" title="Nomi risolti con il DNS">${icon('check')} Nomi DNS</span>` : '<span class="chip muted">Senza DNS</span>'}
+      <span class="chip" title="Prove in parallelo e timeout per prova">${fmtNumber(p.threads)} insieme · ${fmtNumber(p.timeout)} ms</span>
+      ${p.resolveDns ? `<span class="chip" title="DNS inverso e NetBIOS">${icon('check')} Nomi</span>` : '<span class="chip muted">Senza nomi</span>'}
+      ${p.autoPorts ? `<span class="chip" title="Porte TCP e banner dei servizi sugli host trovati">${icon('check')} Porte</span>` : '<span class="chip muted">Senza porte</span>'}
       ${repeatChip()}
-      <span data-auto-box>${autoChip()}</span>
     </span>
     <span class="scan-actions">
-      ${autoRunning() ? `<button type="button" class="btn" data-action="auto-stop">${icon('stop')} Ferma le porte</button>` : ''}
       ${n.repeat && n.nextAt ? `<button type="button" class="btn" data-action="repeat-stop" title="La scansione non si ripete più da sola">${icon('close')} Non ripetere</button>` : ''}
       <button type="button" class="btn" data-action="scan-edit">${icon('edit')} Modifica</button>
       <button type="button" class="btn btn-primary" data-action="scan-restart">${icon('play')} Riavvia</button>
@@ -137,8 +128,13 @@ const byStatus = (h, s) => s === 'online' ? !isOffline(h) : s === 'offline' ? is
 function filteredHosts() {
   const q = S.net.q.trim();
   const status = S.net.status || 'all';
-  return S.data.hosts.filter((h) => byStatus(h, status) && matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
+  return S.data.hosts.filter((h) => byStatus(h, status) && matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
 }
+
+/** Nome del dispositivo da mostrare: NetBIOS, poi DNS. */
+const hostName = (h) => h.netBiosName || h.hostname || '';
+/** Tutti i nomi conosciuti, per i tooltip. */
+const allNames = (h) => [h.netBiosName, h.hostname, h.workgroup].filter(Boolean).join(' · ');
 
 // forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
 const LEGAL = /[\s,.]+(gmbh|co\.?,?\s*ltd\.?|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|llc|l\.l\.c\.?|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?a\.?|a\.?g\.?|b\.?v\.?|n\.?v\.?|oy|ab|a\/s|kg|k\.?k\.?|co\.?|company|pty\.?|plc|technology\s+co\.?,?\s*ltd\.?)\s*$/i;
@@ -164,8 +160,10 @@ function vendorCell(h) {
   return `<span class="trunc w-vendor" title="${esc(h.macVendor)}">${esc(shortVendor(h.macVendor))}</span>`;
 }
 
-const OS_SHORT = { 'Linux / Android / iOS / macOS': 'Linux / Unix', 'Windows (PC / Server)': 'Windows', 'Cisco / Router / Network Device': 'Apparato di rete' };
-const osShort = (g) => OS_SHORT[g] || g || '';
+const OS_SHORT = { 'Linux / Android / iOS / macOS': 'Linux / Unix', 'Windows (PC / Server)': 'Windows', 'Cisco / Router / Network Device': 'Apparato di rete', 'Linux/Unix o dispositivo': 'Linux / Unix', 'Sconosciuto': '' };
+const osShort = (g) => (g in OS_SHORT ? OS_SHORT[g] : g || '');
+/** Latenza oppure «solo ARP» per chi non risponde al ping ma è nella tabella ARP. */
+const latencyOrArp = (h) => (h.respondsToPing === false ? '<span class="faint" title="Non risponde al ping: trovato nella tabella ARP">solo ARP</span>' : latency(h.responseTimeMs));
 
 /** Latenza con la barretta colorata: verde sotto i 10 ms, ambra sotto i 100, rossa oltre. */
 function latency(ms) {
@@ -178,11 +176,11 @@ function latency(ms) {
 const columns = [
   { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
       <b class="trunc" title="${esc(h.customName ? `${h.customName} · ${h.deviceType}` : h.deviceType)}">${h.customName ? `<span class="custom-name">${esc(h.customName)}</span>` : esc(h.deviceType)}</b>
-      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}${openPorts(h.ipAddress) ? ` · <b class="ports-count">${plural(openPorts(h.ipAddress), 'porta', 'porte')}</b>` : ''}</small></div></div>` },
+      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${osShort(h.osGuess) ? ` · ${esc(osShort(h.osGuess))}` : ''}${h.isGateway ? ' · gateway' : ''}${h.isLocalMachine ? ' · questo PC' : ''}${openPorts(h.ipAddress) ? ` · <b class="ports-count">${plural(openPorts(h.ipAddress), 'porta', 'porte')}</b>` : ''}</small></div></div>` },
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
-  { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
+  { key: 'hostname', label: 'Nome', value: hostName, cell: (h) => hostName(h) ? `<span class="trunc w-name" title="${esc(allNames(h))}">${esc(hostName(h))}</span>` : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore e MAC', cell: (h) => `<div class="cell-text">${vendorCell(h).replace('<span', '<b').replace(/<\/span>$/, '</b>')}<small class="mono">${h.macAddress ? esc(h.macAddress) : 'senza MAC'}</small></div>` },
-  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latency(h.responseTimeMs)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
+  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latencyOrArp(h)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
   { key: 'firstSeen', label: 'Rilevato', value: (h) => new Date(h.firstSeen).getTime() || 0, cell: seenCell },
   { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<div class="row-actions">${rescanButton(h.ipAddress)}<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button></div>` },
 ];
@@ -262,7 +260,7 @@ const timeOf = (iso) => new Date(iso).getTime() || 0;
 /** Ordinamenti possibili (anche dalla tabella): [chiave, etichetta, valore, verso predefinito]. */
 const SORTS = [
   ['ipAddress', 'Indirizzo IP', (h) => h.ipAddress, 1],
-  ['hostname', 'Nome', (h) => h.customName || h.hostname || '￿', 1],
+  ['hostname', 'Nome', (h) => h.customName || hostName(h) || '￿', 1],
   ['deviceType', 'Tipo di dispositivo', (h) => `${h.deviceCategory} ${h.deviceType}`, 1],
   ['macVendor', 'Produttore', (h) => shortVendor(h.macVendor), 1],
   ['responseTimeMs', 'Latenza', (h) => Number(h.responseTimeMs) || 0, 1],
@@ -292,10 +290,10 @@ function hostCard(h) {
   const lat = Number(h.responseTimeMs) || 0;
   const latTone = lat < 10 ? 'success' : lat < 100 ? 'warning' : 'danger';
   const vendor = h.macVendor === PRIVATE_MAC ? `<span title="${esc(PRIVATE_MAC_TIP)}">MAC privato, produttore non noto</span>` : esc(h.macVendor);
-  const name = h.customName || h.hostname || h.deviceType;
-  const sub = h.customName ? (h.hostname || h.deviceType) : h.hostname ? h.deviceType : '';
+  const name = h.customName || hostName(h) || h.deviceType;
+  const sub = h.customName ? (hostName(h) || h.deviceType) : hostName(h) ? h.deviceType : '';
   const v6 = h.ipv6 || [];
-  const tags = `${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${isOffline(h) ? '<span class="tag danger">Non risponde</span>' : ''}${v6.length ? '<span class="tag v6">IPv6</span>' : ''}`;
+  const tags = `${isNewHost(h) ? '<span class="tag new">Nuovo</span>' : ''}${h.isGateway ? '<span class="tag primary">gateway</span>' : ''}${h.isLocalMachine ? '<span class="tag">questo PC</span>' : ''}${isOffline(h) ? '<span class="tag danger">Non risponde</span>' : ''}${v6.length ? '<span class="tag v6">IPv6</span>' : ''}`;
   // al massimo 6 porte sulla riga (tutte nel tooltip e nel dettaglio): così ogni scheda ha la stessa altezza
   const portTip = ports.map((p) => `${p.portNumber}/${p.protocol} ${p.serviceName}`).join(', ');
   const portList = ports.slice(0, 6).map((p) => `<span class="hc-port">${p.portNumber}${p.protocol === 'UDP' ? '/udp' : ''} <em>${esc(p.serviceName)}</em></span>`).join('')
@@ -311,7 +309,7 @@ function hostCard(h) {
         <span class="hc-ip mono">${esc(h.ipAddress)}</span>
         ${fact('Tipo', esc(tipo), '', tipo)}
         ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile</span>', 'grow', macText)}
-        ${fact('Risposta', `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
+        ${fact('Risposta', `${h.respondsToPing === false ? '<span class="muted" title="Non risponde al ping: trovato nella tabella ARP">solo ARP</span>' : `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>`}${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
       </div>
       <div class="hc-line">
         ${fact('Porte', ports.length ? `<span class="hc-ports">${portList}</span>` : '<span class="muted">nessuna scansione</span>', 'grow', portTip)}
@@ -326,7 +324,7 @@ function hostCard(h) {
 function tableHtml() {
   const filtered = filteredHosts();
   if (!S.data.hosts.length) {
-    return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host attivi compaiono qui man mano che rispondono.');
+    return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host compaiono man mano che rispondono, poi arrivano nomi, porte e tipo di dispositivo. La scansione aggiorna anche l\'archivio della rete.');
   }
   if (!filtered.length) {
     const st = S.net.status || 'all';
@@ -379,7 +377,7 @@ function tableCard() {
 }
 
 function render() {
-  return `${pageHead('Host attivi della rete (ARP e ping), con produttore dal MAC, nome DNS, latenza e tipo di dispositivo.')}
+  return `${pageHead('Host della rete (ping e ARP), con produttore dal MAC, nomi DNS e NetBIOS, porte aperte, latenza e tipo di dispositivo.')}
     <div class="grid">${formCard()}${tableCard()}</div>`;
 }
 
@@ -422,13 +420,6 @@ function updateBar() {
   meter.style.width = `${pct}%`;
   $('[data-pct]', card).textContent = `${pct}%`;
   $('[data-stats]', card).innerHTML = runningStats();
-  updateAutoChip();
-}
-
-/** Il riquadro delle porte degli host trovati, sul posto. */
-function updateAutoChip() {
-  const box = $('#scan-card [data-auto-box]');
-  if (box) box.innerHTML = autoChip();
 }
 
 /** Prossima ripetizione, se è scelta: parte da sola all'ora indicata (se nel frattempo non ne gira già una). */
@@ -458,9 +449,8 @@ async function start() {
       autoPorts: n.autoPorts && !!preset.ports, autoPortsList: preset.ports,
     });
     adopt({ state: res.state });
-    if (n.autoPorts && !n.auto) n.auto = { done: 0, total: 0, running: 0, open: 0 };
-    n.last = { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns };
-    n.progress = { scanned: 0, total: res.total, percent: 0, seconds: 0, currentIp: '' };
+    n.last = { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns, autoPorts: n.autoPorts && !!preset.ports };
+    n.progress = { scanned: 0, total: res.total, percent: 0, seconds: 0, currentIp: '', phase: 'ping', phaseLabel: 'Avvio' };
     n.done = null;
     n.editing = false;
     n.fresh.clear();
@@ -539,15 +529,16 @@ function details(ip) {
         <button type="submit" class="btn btn-sm btn-primary">${icon('save')} Salva</button></div>
     </form>
     <dl class="kv">
-      <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
-      <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
+      <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}${h.isGateway ? ' <span class="tag primary">gateway</span>' : ''}${h.isLocalMachine ? ' <span class="tag">questo PC</span>' : ''}</dd>
+      <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : h.respondsToPing === false ? '<span class="pill warning pill-dot">Presente (solo ARP)</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
       <dt>IPv6</dt><dd>${(h.ipv6 || []).length ? `<div class="v6-list">${h.ipv6.map((a) => `<span class="mono">${esc(a)}</span> <span class="tag">${esc(v6Kind(a))}</span>`).join('<br>')}</div>` : '<span class="muted">nessuno visto (il dispositivo non usa IPv6, o non ha ancora risposto)</span>'}</dd>
-      <dt>Nome</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
+      <dt>Nome DNS</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
+      <dt>Nome NetBIOS</dt><dd>${h.netBiosName ? `${esc(h.netBiosName)}${h.workgroup ? ` <span class="tag">${esc(h.workgroup)}</span>` : ''}` : '<span class="muted">nessuna risposta (UDP 137)</span>'}</dd>
       <dt>MAC</dt><dd class="mono">${h.macAddress ? esc(h.macAddress) : '<span class="muted">non disponibile (host fuori dalla rete locale)</span>'}</dd>
       <dt>Produttore</dt><dd>${esc(h.macVendor)}${h.macVendor === PRIVATE_MAC ? `<br><small class="muted">${esc(PRIVATE_MAC_TIP)}</small>` : ''}</dd>
       <dt>Dispositivo</dt><dd>${esc(h.deviceType)} <span class="tag">${esc(h.deviceCategory || 'Altro')}</span></dd>
       <dt>Sistema stimato</dt><dd>${esc(h.osGuess)}</dd>
-      <dt>Latenza</dt><dd>${latency(h.responseTimeMs)}</dd>
+      <dt>Latenza</dt><dd>${h.respondsToPing === false ? '<span class="muted">non risponde al ping (presente nella tabella ARP)</span>' : latency(h.responseTimeMs)}</dd>
       <dt>TTL</dt><dd>${h.ttl || '—'}</dd>
       <dt>Visto la prima volta</dt><dd>${fmtDateTime(h.firstSeen)}${isNewHost(h) ? ' <span class="tag new">Nuovo</span>' : ''}</dd>
       <dt>Ultima volta</dt><dd>${fmtDateTime(h.lastSeen)}</dd>
@@ -557,7 +548,7 @@ function details(ip) {
         : '<p class="card-text muted">Nessuna scansione delle porte per questo host.</p>'}</div>
   </div>`;
   const d = openDrawer({
-    ic: 'monitor', title: h.customName ? `${h.customName} · ${h.ipAddress}` : h.ipAddress, sub: `${h.deviceType}${h.hostname ? ` · ${h.hostname}` : ''}`, body,
+    ic: 'monitor', title: h.customName ? `${h.customName} · ${h.ipAddress}` : h.ipAddress, sub: `${h.deviceType}${hostName(h) ? ` · ${hostName(h)}` : ''}`, body,
     foot: `<div class="left">
         ${rescanButton(ip, true)}
         <button class="btn btn-primary" data-action="host-ports" data-ip="${esc(ip)}">${icon('plug')} Scansiona le porte</button>
@@ -605,7 +596,6 @@ function edit() {
 
 const actions = {
   'scan-stop': () => { stopRepeat(); stop(); },
-  'auto-stop': () => call('stopAutoPorts').catch(toastError),
   'repeat-stop': () => { stopRepeat(); renderForm(); toast('La scansione non si ripete più da sola.', { tone: 'info' }); },
   'scan-edit': () => edit(),
   'scan-collapse': () => { S.net.editing = false; renderForm(); },
@@ -631,17 +621,28 @@ const actions = {
 
 on('network.progress', (d) => {
   S.net.progress = d;
+  // gli host arrivano più volte: trovati dal ping o dall'ARP, poi arricchiti con nomi, porte e tipo; si illuminano solo i nuovi
   if (d.hosts && d.hosts.length) {
     for (const h of d.hosts) {
       const i = S.data.hosts.findIndex((x) => x.ipAddress === h.ipAddress);
-      if (i >= 0) S.data.hosts[i] = h; else S.data.hosts.push(h);
-      S.net.fresh.add(h.ipAddress);
+      if (i >= 0) S.data.hosts[i] = h; else { S.data.hosts.push(h); S.net.fresh.add(h.ipAddress); }
     }
     markDirty();
     emit('data', { list: 'hosts' });
-    if (S.page === 'network') renderTable();
   }
-  if (S.page === 'network') updateBar();
+  // porte aperte trovate dalla scansione della rete: nell'elenco delle porte della sessione, come quelle della pagina Porte
+  if (d.ports && d.ports.length) {
+    for (const p of d.ports) {
+      const i = S.data.ports.findIndex((x) => x.host === p.host && x.portNumber === p.portNumber && x.protocol === p.protocol);
+      if (i >= 0) S.data.ports[i] = p; else S.data.ports.push(p);
+    }
+    markDirty();
+    emit('data', { list: 'ports' });
+  }
+  if (S.page === 'network') {
+    if ((d.hosts && d.hosts.length) || (d.ports && d.ports.length)) renderTable();
+    updateBar();
+  }
 });
 
 on('network.done', (d) => {
@@ -664,56 +665,21 @@ on('network.done', (d) => {
   if (S.page === 'network') { renderForm(); renderTable(); }
   emit('data', { list: 'hosts' });
   const gone = (d.offline || []).length ? ` · ${plural(d.offline.length, 'non risponde più', 'non rispondono più')}` : '';
+  // le differenze dell'archivio della rete (dispositivi nuovi, ricomparsi, cambiati, assenti): i nuovi arrivano anche come avviso
+  const diff = d.diff;
+  const changes = diff && !diff.isFirst ? diff.newCount + diff.goneCount + diff.changedCount + diff.returnedCount : 0;
+  const archive = diff ? (diff.isFirst ? ' Archivio della rete creato.' : ` Archivio: ${diff.summary}`) : '';
   if (d.error) toast(d.error, { tone: 'error', title: 'Scansione interrotta' });
-  else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento.`, { tone: 'warning', title: 'Scansione fermata' });
-  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}${gone}.`, { tone: 'success', title: 'Scansione della rete completata' });
+  else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento (l'archivio non viene aggiornato).`, { tone: 'warning', title: 'Scansione fermata' });
+  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}${gone}.${archive}`, {
+    tone: 'success', title: 'Scansione della rete completata', timeout: changes ? 10000 : 6000,
+    action: changes ? { label: 'Cambiamenti', run: () => navigate('devices', { tab: 'events' }) } : null,
+  });
   const fresh = d.newDevices || [];
   if (fresh.length && d.firstCensus) {
-    toast(`Da ora WhoIs Pro ricorda questi ${plural(fresh.length, 'dispositivo', 'dispositivi')}: alla prossima scansione segnala chi si collega per la prima volta.`, { tone: 'info', title: 'Dispositivi registrati', timeout: 10000 });
-  } else if (fresh.length) {
-    const names = fresh.slice(0, 4).map((h) => `${h.ipAddress} ${h.hostname || h.deviceType}`).join(', ');
-    toast(`${names}${fresh.length > 4 ? ` e altri ${fresh.length - 4}` : ''}.`, {
-      tone: 'warning', title: fresh.length === 1 ? 'Dispositivo nuovo nella rete' : `${fresh.length} dispositivi nuovi nella rete`, timeout: 15000,
-      action: { label: 'Mostra', run: () => navigate('network', { q: fresh.length === 1 ? fresh[0].ipAddress : '' }) },
-    });
+    toast(`Da ora WhoIs Pro ricorda questi ${plural(fresh.length, 'dispositivo', 'dispositivi')} nell'archivio della rete: alla prossima scansione segnala chi si collega per la prima volta.`, { tone: 'info', title: 'Archivio della rete creato', timeout: 10000, action: { label: 'Apri', run: () => navigate('devices') } });
   }
   setTimeout(() => { n.fresh.clear(); }, 2000);
-});
-
-/** Porte trovate sugli host della rete: nella sessione come quelle della pagina Porte. */
-on('autoports.progress', (d) => {
-  S.net.auto = { done: d.done, total: d.total, running: d.running, open: (S.net.auto ? S.net.auto.open : 0) };
-  for (const p of d.ports || []) {
-    const i = S.data.ports.findIndex((x) => x.host === p.host && x.portNumber === p.portNumber && x.protocol === p.protocol);
-    if (i >= 0) S.data.ports[i] = p; else S.data.ports.push(p);
-  }
-  S.net.auto.open += (d.ports || []).length;
-  markDirty();
-  emit('data', { list: 'ports' });
-  if (S.page === 'network') { renderTable(); updateAutoChip(); }
-});
-
-/** Un host finito: il tipo di dispositivo, che con le porte si riconosce meglio, e il conteggio. */
-on('autoports.host', (d) => {
-  if (d.host) {
-    const i = S.data.hosts.findIndex((x) => x.ipAddress === d.ip);
-    if (i >= 0) S.data.hosts[i] = d.host;
-  }
-  S.net.auto = { ...(S.net.auto || { open: 0 }), done: d.done, total: d.total, running: d.running };
-  emit('data', { list: 'hosts' });
-  if (S.page === 'network') { renderTable(); updateAutoChip(); }
-});
-
-on('autoports.done', (d) => {
-  S.net.auto = null;
-  adopt({ state: d.state });
-  addScan(d.scan);
-  emit('data', { list: 'scans' });
-  if (S.page === 'network') renderForm();
-  if (d.hosts) {
-    toast(`${plural(d.found, 'porta aperta', 'porte aperte')} su ${plural(d.hosts, 'host', 'host')} in ${fmtSeconds(d.seconds)}${d.cancelled ? ' (fermata)' : ''}.`,
-      { tone: d.cancelled ? 'warning' : 'success', title: 'Porte degli host trovati', action: { label: 'Vedi', run: () => navigate('ports') } });
-  }
 });
 
 // arrivate le icone scelte per i dispositivi (core/mdi.js): la tabella le mostra
@@ -725,7 +691,7 @@ bus.addEventListener('session', () => {
 });
 
 definePage('network', {
-  title: 'Rete', heading: 'Scansione della rete', icon: 'radar', section: 'scan', badge: () => S.data.hosts.length,
+  title: 'Rete', heading: 'Scansione della rete', icon: 'radar', section: 'scan', order: 0, badge: () => S.data.hosts.length,
   render, after, actions,
   enter: (params) => {
     if (params.target) { S.net.target = params.target; if (!running()) edit(); }
@@ -743,8 +709,8 @@ definePage('network', {
     const n = S.net;
     if (field === 'q') { n.q = el.value; renderTable(); return; }
     if (field === 'target') n.target = el.value;
-    if (field === 'threads') n.threads = Number(el.value) || 80;
-    if (field === 'timeout') n.timeout = Number(el.value) || 900;
+    if (field === 'threads') n.threads = Number(el.value) || 128;
+    if (field === 'timeout') n.timeout = Number(el.value) || 700;
     if (field === 'threads' || field === 'timeout') saveOptions();
   },
   onChange: (el, field) => {

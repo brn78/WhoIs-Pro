@@ -41,19 +41,21 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 <td width="50%" valign="top">
 
 **📡 Scansione della rete**<br>
-Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host attivi rispondono ad ARP e
-ping e compaiono man mano, in **Elenco** (tabella) o in **Schede** che descrivono ogni dispositivo per intero, con
-*Ordina per* accanto alla ricerca (un singolo host si **riscansiona** con un clic, anche durante la scansione), con MAC, **produttore** (registri IEEE MA-L, MA-M e MA-S con oltre 58.000 prefissi, il
-più preciso per ogni MAC, aggiornabili), nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS,
-Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere, centrali d'allarme, stampanti, moduli
-domotici e automazione. Con **Porte degli host trovati** ogni host passa subito alla scansione delle porte, cinque
-alla volta, mentre la rete continua; con **Ripeti** la scansione riparte da sola ogni 1, 5, 15, 30 o 60 minuti.
+Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host rispondono ad ARP e ping e
+compaiono man mano, poi arrivano nomi **DNS e NetBIOS**, le **porte** con i **banner** dei servizi e il **tipo di
+dispositivo** riconosciuto: router, NAS, Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere,
+centrali d'allarme, stampanti, moduli domotici, automazione, server e macchine virtuali. Produttore dai registri IEEE
+(MA-L, MA-M e MA-S, oltre 58.000 prefissi, il più preciso per ogni MAC). In **Elenco** (tabella) o in **Schede** che
+descrivono ogni dispositivo per intero, con *Ordina per* accanto alla ricerca; un singolo host si **riscansiona** con
+un clic; con **Ripeti** la scansione riparte da sola. Una /24 intera, con porte e banner, in una decina di secondi.
 
-**🆕 Chi si è collegato**<br>
-Ogni dispositivo trovato resta in un registro di questo PC, per MAC: la colonna **Rilevato** dice quando è comparso
-la prima volta, anche in una sessione di un mese fa, e chi è nuovo nelle ultime 24 ore. Quando compare un
-dispositivo mai visto WhoIs Pro lo segnala, anche con l'avviso di Windows se la finestra è nascosta; chi non
-risponde più resta in elenco, segnato *non risponde*.
+**🗂️ Archivio della rete nel tempo**<br>
+Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** di questo PC (chiave il MAC: un cambio di IP resta
+lo stesso dispositivo) e segna i **cambiamenti**: nuovo, ricomparso, cambiato, assente. A ogni dispositivo dai
+**nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**; la scheda mostra porte, storia e
+i servizi esposti **da verificare**; la colonna **Rilevato** della pagina Rete dice quando è comparso la prima volta.
+**Scansioni automatiche** a intervalli e **avvisi** in basso a destra quando compare un dispositivo nuovo o ne
+ricompare uno sospetto; chi non risponde più resta in elenco, segnato *non risponde*.
 
 **🔌 Porte TCP e UDP**<br>
 Gruppi di porte pronti (le 20 o le 100 più comuni, web, database, posta, accesso remoto, domotica) o elenco libero
@@ -190,9 +192,22 @@ con Internet, quando ha più di un giorno; si può aggiornare anche a mano da
 <details>
 <summary><b>Quanto è affidabile il tipo di dispositivo?</b></summary>
 <br>
-È una stima da produttore del MAC, nome DNS, TTL e porte aperte: Home Assistant, Shelly, Samsung, Apple, FRITZ!Box e
-così via si riconoscono bene, un PC con una scheda di rete generica resta "Computer". Nel dettaglio dell'host si vede da
-cosa deriva.
+È una stima da produttore del MAC, nomi DNS e NetBIOS, TTL, porte aperte e banner: Home Assistant, Shelly, Samsung,
+Apple, FRITZ!Box, NAS, stampanti, telecamere, controller di dominio e così via si riconoscono bene, un PC con una
+scheda di rete generica resta "Computer". Con le <i>Porte comuni</i> attive la stima migliora molto. Nell'archivio puoi
+dare un alias e correggere l'idea che il programma si è fatto.
+</details>
+
+<details>
+<summary><b>Come funzionano l'archivio e gli avvisi?</b></summary>
+<br>
+Ogni scansione (dalla pagina <i>Rete</i>, da <i>Dispositivi → Scansiona adesso</i> o automatica) aggiorna l'archivio
+in <code>%LOCALAPPDATA%\WhoIsPro\archivio-rete.db</code> e lo confronta con la precedente. La prima scansione crea
+l'archivio senza avvisi. Un dispositivo è <b>assente</b> solo dopo due scansioni consecutive senza risposta, così i
+telefoni e i sensori Wi-Fi in risparmio energetico non oscillano. In <i>Impostazioni → Rete</i> accendi le scansioni
+automatiche (intervallo, rete, timeout) e l'avviso per i dispositivi nuovi: se sono più di tre arriva un solo avviso
+aggregato, e lo stesso dispositivo non avvisa due volte in mezz'ora. <i>Dimentica</i> toglie un dispositivo
+dall'archivio: se ricompare torna «nuovo».
 </details>
 
 <details>
@@ -216,12 +231,13 @@ finestra accanto all'orologio; dal menu dell'icona si riapre, si chiude davvero 
 <summary><b>Dove finiscono i dati?</b></summary>
 <br>
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
-<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il registro dei dispositivi
-conosciuti (<code>dispositivi.json</code>, si svuota da <i>Impostazioni → Dati del programma</i>), il database dei produttori
-aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte la pagina
-di prova di Windows (msftconnecttest.com) per sapere se Internet c'è, GitHub per gli aggiornamenti e, a richiesta,
-l'IEEE (o Wireshark) per il database dei produttori, i server WHOIS, RDAP e DNS che interroghi e i server di prova di
-Cloudflare per il test delle prestazioni. Senza Internet questi servizi non vengono nemmeno chiamati.
+<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, l'archivio della rete
+(<code>archivio-rete.db</code>, SQLite: dispositivi conosciuti con nome, icona, fiducia e note, scansioni e
+cambiamenti; si svuota da <i>Impostazioni → Archivio della rete</i>), il database dei produttori aggiornato, la
+posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte la pagina di prova di
+Windows (msftconnecttest.com) per sapere se Internet c'è, GitHub per gli aggiornamenti e, a richiesta, l'IEEE (o
+Wireshark) per il database dei produttori, i server WHOIS, RDAP e DNS che interroghi e i server di prova di Cloudflare
+per il test delle prestazioni. Senza Internet questi servizi non vengono nemmeno chiamati.
 </details>
 
 <details>
@@ -240,12 +256,15 @@ grafica sua: barra laterale grafite, accento verde acqua, LED delle porte e Bahn
 WhoIs Pro.vbproj        progetto (la cartella ui\ è incorporata nell'exe)
 Program.vb              avvio
 MainWindow.vb           finestra: WebView2, pagina servita da https://whoispro.invalid, tema, posizione, chiusura
-AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, aggiornamenti
+AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, archivio, aggiornamenti
+NetworkWatchService.vb  scansioni periodiche e a richiesta, una alla volta; registra nell'archivio e produce gli avvisi
 Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanRecord, ScanSession
-Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
+Core\Network\Scan       DiscoveryScanner (ping, ARP, NetBIOS, porte, banner, fasi), NetBiosResolver, BannerGrabber, interop
+Core\Network            PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector, Ipv6, PacketCapture, PerfTester
+Core\Inventory          InventoryStore (SQLite) e NetworkInventory: dispositivi nel tempo, scansioni, cambiamenti
 Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo),
-                        DeviceRegistry (dispositivi conosciuti, prima rilevazione)
-Core\Utils              NetworkUtils, MacVendorLookup (registri IEEE / manuf di Wireshark), DeviceClassifier, PortDictionary
+                        DeviceRegistry (nome, note e icona dei dispositivi: la stessa tabella dell'archivio)
+Core\Utils              NetworkUtils, MacVendorLookup (registri IEEE / manuf di Wireshark), DeviceClassifier, PortDictionary, IconCatalog
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup
 Core\Config             AppSettings: impostazioni (impostazioni.json), avvio automatico, profili di rete
 Core\Machine            NetworkConfig (IP delle schede, netsh elevato), ComputerInfo (CPU, memoria, dischi, sistema),

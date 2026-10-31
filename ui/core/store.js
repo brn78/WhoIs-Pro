@@ -1,4 +1,4 @@
-// Stato della pagina condiviso tra app.js e le pagine, e registro delle pagine.
+﻿// Stato della pagina condiviso tra app.js e le pagine, e registro delle pagine.
 export const S = {
   st: null,                       // stato dal programma: sessione (senza elenchi), database OUI, schede di rete, modelli
   data: { hosts: [], ports: [], whois: [], dns: [], trace: [], scans: [], perf: [] },   // gli elenchi della sessione
@@ -8,7 +8,7 @@ export const S = {
 
 /**
  * Pagine: definePage(chiave, { title, icon, section, render, after, actions, onInput, onChange, onSubmit, onSort }).
- * render() restituisce l'HTML; after() gira dopo che è nel documento; actions sono i data-action propri della pagina.
+ * render() restituisce l'HTML; after() gira dopo che Ã¨ nel documento; actions sono i data-action propri della pagina.
  */
 export const PAGES = {};
 export const NAV = [];
@@ -66,5 +66,5 @@ export const counts = () => ({
 
 export const isRunning = () => {
   const r = (S.st && S.st.running) || {};
-  return !!(r.network || r.ports || r.trace || r.oui || r.autoPorts || r.perf || r.capture);
+  return !!(r.network || r.inventory || r.ports || r.trace || r.oui || r.perf || r.capture);
 };

@@ -1578,3 +1578,66 @@ button.chip.quick-pick:hover { background: var(--primary-soft); color: var(--pri
 .status-dot.is-off { background: var(--danger); }
 .seg-count { padding: 0 6px; border-radius: 9px; background: var(--neutral-soft); color: var(--muted); font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 17px; }
 .status-filter button.is-active .seg-count { background: var(--primary-soft); color: var(--primary-text); }
+/* =====================================================================
+   Archivio della rete (pagina Dispositivi) e avvisi
+   ===================================================================== */
+.nav-badge.is-warning { background: var(--warning); color: #fff; }
+.tab .count { margin-left: 2px; }
+.tab .count.is-warning { background: var(--warning-soft); color: var(--warning-text); }
+.page-foot { display: flex; align-items: flex-start; gap: 8px; margin: 14px 2px 0; font-size: 12.5px; line-height: 1.5; }
+.page-foot .icon { flex: 0 0 auto; margin-top: 3px; }
+/* «Scansiona adesso» mentre gira: fase, barra animata e Ferma */
+.scan-live { display: inline-flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px 0 12px; border: 1px solid var(--primary-soft-2); border-radius: 20px; background: var(--primary-soft); color: var(--primary-text); animation: pageIn .25s var(--ease); }
+.scan-live .spinner { width: 16px; height: 16px; border-width: 2px; }
+.scan-live .scan-live-text { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+.scan-live .scan-live-text b { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.scan-live .meter { height: 5px; background: var(--primary-soft-2); }
+.scan-live .meter > span { background-image: linear-gradient(90deg, transparent 0 40%, rgba(255, 255, 255, .35) 50%, transparent 60% 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* due colonne: elenco a sinistra (più largo), scheda a destra */
+.devices-grid { grid-template-columns: minmax(0, 1.15fr) minmax(360px, 1fr); }
+@media (max-width: 1180px) { .devices-grid { grid-template-columns: minmax(0, 1fr); } }
+.dev-list { display: flex; flex-direction: column; max-height: calc(100vh - 330px); min-height: 240px; overflow: auto; }
+.dev-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px; border: 0; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.dev-row:hover { background: var(--surface-hover); }
+.dev-row.is-active { background: var(--primary-soft); border-left-color: var(--primary); }
+.dev-row.is-off .cat-icon { opacity: .55; }
+.dev-row .dev-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
+.dev-row .dev-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dev-row .dev-name b { font-weight: 600; font-size: 13.5px; max-width: 260px; }
+.dev-row .dev-name .pill { height: 18px; padding: 0 7px; font-size: 10.5px; }
+.dev-row .dev-text small { color: var(--muted); font-size: 12px; max-width: 420px; }
+.dev-row .dev-state { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.dev-row .dev-state .state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dev-row .dev-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dev-row .dev-state .dot.on { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.dev-row .dev-state .mono { font-size: 12.5px; color: var(--text); }
+.dev-detail .card-title { min-width: 0; }
+.dev-detail .dev-title { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.dev-detail .dev-title h2 { max-width: 320px; }
+.dev-detail .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dev-detail .chips .chip .icon { color: var(--muted); }
+.trust-seg { display: flex; width: 100%; height: 36px; align-items: center; }
+.trust-seg button { flex: 1 1 0; min-width: 0; padding: 0 6px; height: 28px; overflow: hidden; text-overflow: ellipsis; }
+.trust-seg button.is-active:nth-child(2) { color: var(--success-text); }
+.trust-seg button.is-active:nth-child(3) { color: var(--danger-text); }
+.card-foot .spacer { flex: 1 1 auto; }
+/* cambiamenti: una riga per evento, pallino sui non visti */
+.ev-list { display: flex; flex-direction: column; max-height: calc(100vh - 340px); overflow: auto; }
+.ev-list.compact { max-height: 260px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ev-row { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px 9px 22px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ev-row:hover { background: var(--surface-hover); }
+.ev-row:last-child { border-bottom: 0; }
+.ev-row.is-unseen::before { content: ""; position: absolute; left: 9px; top: 50%; width: 7px; height: 7px; margin-top: -3px; border-radius: 50%; background: var(--primary); }
+.ev-row .pill { flex: 0 0 auto; width: 92px; justify-content: center; }
+.ev-list.compact .ev-row .pill { width: 84px; }
+.ev-row .ev-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.ev-row .ev-text b { font-weight: 600; font-size: 13.5px; max-width: 100%; }
+.ev-row .ev-text small { color: var(--muted); font-size: 12px; max-width: 100%; }
+.ev-row .ev-time { flex: 0 0 auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.dt .trunc.w-summary { --w: 420px; }
+/* schedine: livello «attenzione» con barra ambra e ora */
+.toast.attention { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+.toast.attention .toast-icon { background: var(--warning-soft); color: var(--warning-text); }
+.toast.attention .toast-bar { color: var(--warning); opacity: .6; }
+.toast .toast-time { flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 5px; }

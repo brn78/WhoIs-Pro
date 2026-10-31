@@ -134,7 +134,7 @@ Namespace WhoIsPro.Tests
             Assert.That(MacVendorLookup.GetVendor("52:54:00:12:34:56"), Does.Contain("QEMU"))
             Assert.That(MacVendorLookup.GetVendor("02:42:AC:11:00:02"), Does.Contain("Docker"))
             Dim c = DeviceClassifier.Classify(MacVendorLookup.RandomMacLabel, "", Nothing, 64, "7A:11:22:33:44:55")
-            Assert.That(c.Category, [Is].EqualTo("Smartphone / Tablet"))
+            Assert.That(c.Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
         End Sub
 
         <Test>
@@ -162,40 +162,47 @@ Namespace WhoIsPro.Tests
             Assert.That(DeviceClassifier.Classify("Kyocera Document Solutions Inc.", "", Nothing, 64, "").Category, [Is].EqualTo("Stampante"))
             ' Google (Nest, Chromecast) e i telefoni Android: dal produttore, non più «Linux / Unix» dal TTL
             Assert.That(DeviceClassifier.Classify("Google, Inc.", "", Nothing, 64, "").DeviceType, Does.Contain("Google"))
-            Assert.That(DeviceClassifier.Classify("Huawei Device Co., Ltd.", "", Nothing, 64, "").Category, [Is].EqualTo("Smartphone / Tablet"))
+            Assert.That(DeviceClassifier.Classify("Huawei Device Co., Ltd.", "", Nothing, 64, "").Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
         End Sub
 
         <Test>
         Public Sub DeviceClassifier_ShouldClassifyHomeAssistant()
             Dim c1 = DeviceClassifier.Classify("Espressif Inc.", "homeassistant", Nothing, 64, "")
-            Assert.That(c1.Category, [Is].EqualTo("Domotica / IoT"))
+            Assert.That(c1.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
             Assert.That(c1.DeviceType, Does.Contain("Home Assistant"))
 
             Dim c2 = DeviceClassifier.Classify("Unknown", "my-host", New Integer() {8123}, 64, "")
-            Assert.That(c2.Category, [Is].EqualTo("Domotica / IoT"))
+            Assert.That(c2.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
             Assert.That(c2.DeviceType, Does.Contain("Home Assistant"))
         End Sub
 
         <Test>
         Public Sub DeviceClassifier_ShouldClassifySamsungTv()
             Dim c1 = DeviceClassifier.Classify("Samsung Electronics (Smart TV)", "tv-living", Nothing, 64, "")
-            Assert.That(c1.Category, [Is].EqualTo("Smart TV"))
+            Assert.That(c1.Category, [Is].EqualTo(DeviceClassifier.CategoryTv))
             Assert.That(c1.DeviceType, Does.Contain("Samsung"))
 
             Dim c2 = DeviceClassifier.Classify("Samsung Electronics", "samsung-tizen", New Integer() {8001}, 64, "")
-            Assert.That(c2.Category, [Is].EqualTo("Smart TV"))
+            Assert.That(c2.Category, [Is].EqualTo(DeviceClassifier.CategoryTv))
             Assert.That(c2.DeviceType, Does.Contain("Tizen"))
         End Sub
 
         <Test>
         Public Sub DeviceClassifier_ShouldClassifySmartphones()
             Dim cApple = DeviceClassifier.Classify("Apple, Inc.", "iPhone-di-Marco", Nothing, 64, "")
-            Assert.That(cApple.Category, [Is].EqualTo("Smartphone / Tablet"))
+            Assert.That(cApple.Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
             Assert.That(cApple.DeviceType, Does.Contain("iPhone"))
 
             Dim cAndroid = DeviceClassifier.Classify("Xiaomi Communications", "redmi-note", Nothing, 64, "")
-            Assert.That(cAndroid.Category, [Is].EqualTo("Smartphone / Tablet"))
-            Assert.That(cAndroid.DeviceType, Does.Contain("Android"))
+            Assert.That(cAndroid.Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
+            Assert.That(cAndroid.DeviceType, Does.Contain("Android").And.Contain("Xiaomi"))
+
+            ' TTL 128 su un modulo domotico: firmware embedded, non Windows
+            Dim esp As New Network.Scan.DiscoveredHost With {.Ip = "192.168.50.40", .Mac = "24:0a:c4:11:22:33", .Vendor = "Espressif Inc.", .Ttl = 128}
+            Dim cEsp = DeviceClassifier.Classify(esp)
+            esp.Category = cEsp.Category
+            Assert.That(cEsp.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
+            Assert.That(DeviceClassifier.GuessOs(esp), [Is].EqualTo("Firmware embedded"))
         End Sub
 
         <Test>
