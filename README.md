@@ -41,10 +41,18 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 <td width="50%" valign="top">
 
 **📡 Scansione della rete**<br>
-Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host attivi rispondono ad ARP e
-ping e compaiono man mano, con MAC, **produttore** (database Wireshark/IEEE con oltre 58.000 prefissi, aggiornabile),
-nome DNS, latenza, TTL e **tipo di dispositivo** riconosciuto: router, NAS, Home Assistant, smart TV, telefoni,
-telecamere, stampanti, moduli domotici.
+Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host rispondono ad ARP e ping e
+compaiono man mano, poi arrivano nomi **DNS e NetBIOS**, **porte TCP comuni** con i **banner** dei servizi e il **tipo
+di dispositivo** riconosciuto: router, NAS, Home Assistant, smart TV, telefoni, telecamere, stampanti, moduli
+domotici, server e macchine virtuali. Produttore dal database Wireshark/IEEE (oltre 58.000 prefissi, aggiornabile).
+Una /24 intera, con porte e banner, in una decina di secondi.
+
+**🗂️ Archivio della rete nel tempo**<br>
+Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** (chiave il MAC: un cambio di IP resta lo stesso
+dispositivo) e segna i **cambiamenti**: nuovo, ricomparso, cambiato, assente. A ogni dispositivo dai **alias**,
+**fiducia** (da classificare, affidabile, sospetto) e **note**; la scheda mostra porte, storia e i servizi esposti
+**da verificare**. **Scansioni automatiche** a intervalli e **avvisi** in basso a destra quando compare un dispositivo
+nuovo o ne ricompare uno sospetto.
 
 **🔌 Porte TCP e UDP**<br>
 Gruppi di porte pronti (le 20 o le 100 più comuni, web, database, posta, accesso remoto, domotica) o elenco libero
@@ -161,9 +169,22 @@ Aggiorna da Wireshark</i>.
 <details>
 <summary><b>Quanto è affidabile il tipo di dispositivo?</b></summary>
 <br>
-È una stima da produttore del MAC, nome DNS, TTL e porte aperte: Home Assistant, Shelly, Samsung, Apple, FRITZ!Box e
-così via si riconoscono bene, un PC con una scheda di rete generica resta "Computer". Nel dettaglio dell'host si vede da
-cosa deriva.
+È una stima da produttore del MAC, nomi DNS e NetBIOS, TTL, porte aperte e banner: Home Assistant, Shelly, Samsung,
+Apple, FRITZ!Box, NAS, stampanti, telecamere, controller di dominio e così via si riconoscono bene, un PC con una
+scheda di rete generica resta "Computer". Con le <i>Porte comuni</i> attive la stima migliora molto. Nell'archivio puoi
+dare un alias e correggere l'idea che il programma si è fatto.
+</details>
+
+<details>
+<summary><b>Come funzionano l'archivio e gli avvisi?</b></summary>
+<br>
+Ogni scansione (dalla pagina <i>Rete</i>, da <i>Dispositivi → Scansiona adesso</i> o automatica) aggiorna l'archivio
+in <code>%LOCALAPPDATA%\WhoIsPro\archivio-rete.db</code> e lo confronta con la precedente. La prima scansione crea
+l'archivio senza avvisi. Un dispositivo è <b>assente</b> solo dopo due scansioni consecutive senza risposta, così i
+telefoni e i sensori Wi-Fi in risparmio energetico non oscillano. In <i>Impostazioni → Rete</i> accendi le scansioni
+automatiche (intervallo, rete, timeout) e l'avviso per i dispositivi nuovi: se sono più di tre arriva un solo avviso
+aggregato, e lo stesso dispositivo non avvisa due volte in mezz'ora. <i>Dimentica</i> toglie un dispositivo
+dall'archivio: se ricompare torna «nuovo».
 </details>
 
 <details>
@@ -186,8 +207,9 @@ finestra accanto all'orologio; dal menu dell'icona si riapre o si chiude davvero
 <summary><b>Dove finiscono i dati?</b></summary>
 <br>
 Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
-<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, il database dei produttori
-aggiornato, la posizione della finestra e i dati di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
+<code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, l'archivio della rete
+(<code>archivio-rete.db</code>, SQLite), il database dei produttori aggiornato, la posizione della finestra e i dati
+di WebView2. Il programma non contatta nessun server, a parte GitHub per gli aggiornamenti e, a richiesta,
 Wireshark per il database e i server WHOIS, RDAP e DNS che interroghi.
 </details>
 
@@ -207,9 +229,12 @@ stessa grafica delle console web di HikAccess Pro e BlackHole Workspaces.
 WhoIs Pro.vbproj        progetto (la cartella ui\ è incorporata nell'exe)
 Program.vb              avvio
 MainWindow.vb           finestra: WebView2, pagina servita da https://whoispro.invalid, tema, posizione, chiusura
-AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, aggiornamenti
+AppBridge.vb            comandi della pagina: scansioni, WHOIS, DNS, traceroute, netstat, sessione, archivio, aggiornamenti
+NetworkWatchService.vb  scansioni periodiche e a richiesta, una alla volta; registra nell'archivio e produce gli avvisi
 Core\Models             HostInfo, PortInfo, WhoisResult, DnsRecordInfo, TracerouteHop, ConnectionInfo, ScanSession
-Core\Network            NetworkScanner, PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
+Core\Network\Scan       DiscoveryScanner (ping, ARP, NetBIOS, porte, banner, fasi), NetBiosResolver, BannerGrabber, interop
+Core\Network            PortScanner, WhoisClient, DnsEngine, TracerouteEngine, NetstatInspector
+Core\Inventory          InventoryStore (SQLite) e NetworkInventory: dispositivi nel tempo, scansioni, cambiamenti
 Core\Storage            AtomicFileManager (salvataggio atomico), SessionExporter (HTML, CSV, testo)
 Core\Utils              NetworkUtils, MacVendorLookup (manuf di Wireshark), DeviceClassifier, PortDictionary
 Core\Update             UpdateService: release su GitHub, scaricamento e verifica del setup

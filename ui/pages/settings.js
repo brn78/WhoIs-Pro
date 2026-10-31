@@ -70,6 +70,26 @@ function adaptersCard() {
     ${table({ columns, rows, sort: null, empty: '<div class="empty"><h3>Nessuna scheda di rete</h3></div>' })}</section>`;
 }
 
+/** Archivio della rete: scansioni automatiche, intervallo, rete, timeout e avvisi. */
+function networkCard(d) {
+  const nets = (d.networks || []).map((n) => `<option value="${esc(n.cidr)}">${esc(n.interfaceName)} · ${esc(n.cidr)}${n.isPrimary ? ' (principale)' : ''}</option>`).join('');
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('server')}<h2>Rete</h2></div>
+      <button class="btn btn-sm" data-action="go" data-page="devices">${icon('external')} Archivio</button></div>
+    <div class="card-body"><div class="fields">
+      <div class="switch-list">
+        ${sw('networkWatchEnabled', 'Scansioni automatiche', 'A intervalli regolari il programma scansiona la rete e aggiorna l\'archivio dei dispositivi, anche con la finestra nell\'area di notifica.', d.networkWatchEnabled)}
+        ${sw('notifyNewDevices', 'Avvisa quando compare un dispositivo nuovo', 'Schedina in basso a destra per i dispositivi mai visti e per quelli segnati sospetti che ricompaiono. Mai alla prima scansione.', d.notifyNewDevices)}
+      </div>
+      <div class="form-grid">
+        <div class="field"><label for="s-interval">Ogni quanti minuti</label><input class="input" id="s-interval" type="number" min="5" max="1440" step="5" data-field="networkScanIntervalMinutes" value="${d.networkScanIntervalMinutes}" ${d.networkWatchEnabled ? '' : 'disabled'}></div>
+        <div class="field"><label for="s-timeout">Timeout per prova (ms)</label><input class="input" id="s-timeout" type="number" min="100" max="10000" step="100" data-field="networkScanTimeoutMs" value="${d.networkScanTimeoutMs}" title="Più alto se i dispositivi Wi-Fi in risparmio energetico oscillano tra presente e assente"></div>
+        <div class="field span-2"><label for="s-target">Rete da scansionare</label>
+          <input class="input input-mono" id="s-target" data-field="networkScanTarget" list="s-networks" value="${esc(d.networkScanTarget || '')}" placeholder="vuoto = rete principale (la scheda con il gateway)" autocomplete="off">
+          <datalist id="s-networks">${nets}</datalist></div>
+      </div>
+    </div></div></section>`;
+}
+
 function dataCard(d) {
   return `<section class="card"><div class="card-head"><div class="card-title">${icon('folder')}<h2>Dati del programma</h2></div></div>
     <div class="card-body"><dl class="kv compact">
@@ -81,10 +101,11 @@ function dataCard(d) {
 
 function render() {
   const d = S.settings.data;
-  const head = pageHead('Avvio con Windows, icona nell\'area di notifica, tema e profili di rete.');
+  const head = pageHead('Avvio con Windows, icona nell\'area di notifica, tema, archivio della rete e profili di rete.');
   if (!d) return `${head}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura delle impostazioni…</div></div>`;
   return `${head}<div class="grid grid-2">${startupCard(d)}${themeCard(d)}</div>
-    <div class="grid section-gap">${profilesCard(d)}${adaptersCard()}${dataCard(d)}</div>`;
+    <div class="grid grid-2 section-gap">${networkCard(d)}${dataCard(d)}</div>
+    <div class="grid section-gap">${profilesCard(d)}${adaptersCard()}</div>`;
 }
 
 function rerender() {
@@ -273,9 +294,10 @@ definePage('settings', {
   enter: (params) => { if (params.newProfile) setTimeout(() => actions['save-adapter']({ dataset: { adapter: params.newProfile } }), S.settings.adapters ? 0 : 1200); },
   actions,
   onChange: (el, field) => {
-    if (['autoStart', 'trayIcon', 'closeToTray', 'startMinimized'].includes(field)) {
-      const labels = { autoStart: 'Avvio con Windows', trayIcon: 'Icona nell\'area di notifica', closeToTray: 'Chiusura nell\'area di notifica', startMinimized: 'Avvio ridotto a icona' };
-      save({ [field]: el.checked }, `${labels[field]}: ${el.checked ? 'attivo' : 'disattivato'}.`);
-    }
+    const switches = { autoStart: 'Avvio con Windows', trayIcon: 'Icona nell\'area di notifica', closeToTray: 'Chiusura nell\'area di notifica', startMinimized: 'Avvio ridotto a icona', networkWatchEnabled: 'Scansioni automatiche della rete', notifyNewDevices: 'Avviso per i dispositivi nuovi' };
+    if (field in switches) { save({ [field]: el.checked }, `${switches[field]}: ${el.checked ? 'attivo' : 'disattivato'}.`); return; }
+    if (field === 'networkScanIntervalMinutes') save({ [field]: Math.min(1440, Math.max(5, Number(el.value) || 60)) }, `Scansione automatica ogni ${Math.min(1440, Math.max(5, Number(el.value) || 60))} minuti.`);
+    if (field === 'networkScanTimeoutMs') save({ [field]: Math.min(10000, Math.max(100, Number(el.value) || 700)) }, 'Timeout della scansione salvato.');
+    if (field === 'networkScanTarget') save({ [field]: el.value.trim() }, el.value.trim() ? `Scansione automatica su ${el.value.trim()}.` : 'Scansione automatica sulla rete principale.');
   },
 });

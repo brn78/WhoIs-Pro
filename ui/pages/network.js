@@ -9,7 +9,7 @@ import { table, nextSort } from '../core/table.js';
 import { closeOverlays, confirmDialog, emptyState, openDrawer, openMenu, pageHead, toast, toastError } from '../core/ui.js';
 
 S.net = {
-  target: '', threads: 80, timeout: 900, resolveDns: true,
+  target: '', threads: 128, timeout: 700, resolveDns: true, scanPorts: true, banner: true,
   q: '', sort: { key: 'ipAddress', dir: 1 },
   progress: null, done: null, fresh: new Set(),
   editing: false,      // modulo riaperto con «Modifica» dopo una scansione
@@ -34,10 +34,12 @@ function formCard() {
           <datalist id="adapter-list">${list}</datalist>
           <button type="button" class="btn btn-icon" data-action="detect-adapters" title="Rileva di nuovo le schede di rete">${icon('refresh')}</button>
         </div></div>
-      <div class="field"><label for="f-threads">Thread</label><input class="input" id="f-threads" type="number" min="1" max="500" data-field="threads" value="${n.threads}"></div>
-      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}"></div>
+      <div class="field"><label for="f-threads">Prove insieme</label><input class="input" id="f-threads" type="number" min="1" max="512" data-field="threads" value="${n.threads}" title="Ping, ARP e connessioni TCP contemporanee"></div>
+      <div class="field"><label for="f-timeout">Timeout (ms)</label><input class="input" id="f-timeout" type="number" min="100" max="10000" step="100" data-field="timeout" value="${n.timeout}" title="Per ogni prova: più alto su Wi-Fi lenti"></div>
       <div class="field field-auto"><span class="field-label">Opzioni</span><div class="field-switches">
-        <label class="switch"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Risolvi i nomi (DNS)</span></label></div></div>
+        <label class="switch" title="DNS inverso e NetBIOS (UDP 137)"><input type="checkbox" data-field="resolveDns" ${n.resolveDns ? 'checked' : ''}><span class="track"></span><span>Nomi</span></label>
+        <label class="switch" title="Porte TCP comuni su ogni host trovato: servono anche a riconoscere il dispositivo"><input type="checkbox" data-field="scanPorts" ${n.scanPorts ? 'checked' : ''}><span class="track"></span><span>Porte comuni</span></label>
+        <label class="switch" title="Server web, SSH, FTP, posta, RTSP: la riga di presentazione del servizio"><input type="checkbox" data-field="banner" ${n.banner ? 'checked' : ''} ${n.scanPorts ? '' : 'disabled'}><span class="track"></span><span>Banner</span></label></div></div>
       <div class="field field-end"><span class="field-label">&nbsp;</span><div class="field-actions">
         ${n.done ? `<button type="button" class="btn" data-action="scan-collapse" title="Torna al riepilogo dell'ultima scansione">${icon('close')} Annulla</button>` : ''}
         <button type="submit" class="btn btn-primary">${icon('play')} Avvia</button>
@@ -49,7 +51,7 @@ function formCard() {
 function runningStats() {
   const p = S.net.progress;
   if (!p) return 'avvio…';
-  return `${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ${plural(S.data.hosts.length, 'host', 'host')} · ${fmtSeconds(p.seconds)}${p.currentIp ? ` · ${esc(p.currentIp)}` : ''}`;
+  return `${esc(p.phaseLabel || '')} ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ${plural(S.data.hosts.length, 'host', 'host')} · ${fmtSeconds(p.seconds)}${p.currentIp ? ` · ${esc(p.currentIp)}` : ''}`;
 }
 
 /** Contenuto della riga di riepilogo: avanzamento e «Ferma» durante la scansione, esito e parametri dopo. */
@@ -71,8 +73,9 @@ function summaryInner() {
   return `<span class="scan-state ${tone}"><span class="dot"></span>${text}</span><span class="vsep"></span>
     <span class="chips">
       <span class="chip" title="Rete o intervallo"><b>${esc(p.target)}</b></span>
-      <span class="chip" title="Thread in parallelo e timeout del ping">${fmtNumber(p.threads)} thread · ${fmtNumber(p.timeout)} ms</span>
-      ${p.resolveDns ? `<span class="chip" title="Nomi risolti con il DNS">${icon('check')} Nomi DNS</span>` : '<span class="chip muted">Senza DNS</span>'}
+      <span class="chip" title="Prove in parallelo e timeout per prova">${fmtNumber(p.threads)} insieme · ${fmtNumber(p.timeout)} ms</span>
+      ${p.resolveDns ? `<span class="chip" title="DNS inverso e NetBIOS">${icon('check')} Nomi</span>` : '<span class="chip muted">Senza nomi</span>'}
+      ${p.scanPorts ? `<span class="chip" title="Porte TCP comuni${p.banner ? ' e banner dei servizi' : ''}">${icon('check')} Porte${p.banner ? ' e banner' : ''}</span>` : '<span class="chip muted">Senza porte</span>'}
     </span>
     <span class="scan-actions">
       <button type="button" class="btn" data-action="scan-edit">${icon('edit')} Modifica</button>
@@ -85,8 +88,11 @@ function summaryInner() {
 // ---------------------------------------------------------------------------------------------------------------------
 function filteredHosts() {
   const q = S.net.q.trim();
-  return S.data.hosts.filter((h) => matchesAll(q, [h.ipAddress, h.hostname, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess]));
+  return S.data.hosts.filter((h) => matchesAll(q, [h.ipAddress, h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess]));
 }
+
+/** Nome da mostrare: NetBIOS, poi DNS. */
+const hostName = (h) => h.netBiosName || h.hostname || '';
 
 // forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
 const LEGAL = /[\s,.]+(gmbh|co\.?,?\s*ltd\.?|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|llc|l\.l\.c\.?|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?a\.?|a\.?g\.?|b\.?v\.?|n\.?v\.?|oy|ab|a\/s|kg|k\.?k\.?|co\.?|company|pty\.?|plc|technology\s+co\.?,?\s*ltd\.?)\s*$/i;
@@ -102,8 +108,8 @@ export function shortVendor(name) {
   return s || String(name || '');
 }
 
-const OS_SHORT = { 'Linux / Android / iOS / macOS': 'Linux / Unix', 'Windows (PC / Server)': 'Windows', 'Cisco / Router / Network Device': 'Apparato di rete' };
-const osShort = (g) => OS_SHORT[g] || g || '';
+const OS_SHORT = { 'Linux / Android / iOS / macOS': 'Linux / Unix', 'Windows (PC / Server)': 'Windows', 'Cisco / Router / Network Device': 'Apparato di rete', 'Linux/Unix o dispositivo': 'Linux / Unix', 'Sconosciuto': '' };
+const osShort = (g) => (g in OS_SHORT ? OS_SHORT[g] : g || '');
 
 /** Latenza con la barretta colorata: verde sotto i 10 ms, ambra sotto i 100, rossa oltre. */
 function latency(ms) {
@@ -116,12 +122,13 @@ function latency(ms) {
 const columns = [
   { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
       <b class="trunc" title="${esc(h.deviceType)}">${esc(h.deviceType)}</b>
-      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(osShort(h.osGuess))}` : ''}</small></div></div>` },
+      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${esc(h.deviceCategory || 'Altro')}${osShort(h.osGuess) ? ` · ${esc(osShort(h.osGuess))}` : ''}${h.isGateway ? ' · gateway' : ''}${h.isLocalMachine ? ' · questo PC' : ''}</small></div></div>` },
   { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell' },
-  { key: 'hostname', label: 'Nome', cell: (h) => h.hostname ? `<span class="trunc w-name" title="${esc(h.hostname)}">${esc(h.hostname)}</span>` : '<span class="faint">—</span>' },
+  { key: 'hostname', label: 'Nome', value: hostName, cell: (h) => hostName(h) ? `<span class="trunc w-name" title="${esc([h.netBiosName, h.hostname, h.workgroup].filter(Boolean).join(' · '))}">${esc(hostName(h))}</span>` : '<span class="faint">—</span>' },
   { key: 'macAddress', label: 'MAC', cls: 'mono', cell: (h) => h.macAddress ? esc(h.macAddress) : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore', cell: (h) => `<span class="trunc w-vendor" title="${esc(h.macVendor)}">${esc(shortVendor(h.macVendor))}</span>` },
-  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => latency(h.responseTimeMs) },
+  { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => (h.respondsToPing === false ? '<span class="faint" title="Non risponde al ping: trovato nella tabella ARP">solo ARP</span>' : latency(h.responseTimeMs)) },
+  { key: 'openPortsCount', label: 'Porte', cls: 'num', cell: (h) => (h.openPortsCount ? `<span class="tag primary" title="${esc((h.openPorts || []).join(', '))}">${h.openPortsCount}</span>` : '<span class="faint">—</span>') },
   { key: 'ttl', label: 'TTL', cls: 'num muted', cell: (h) => h.ttl || '<span class="faint">—</span>' },
   { key: 'actions', label: '', cls: 'actions', sortable: false, cell: (h) => `<button class="row-menu-btn" data-action="host-menu" data-ip="${esc(h.ipAddress)}" title="Azioni">${icon('more')}</button>` },
 ];
@@ -129,7 +136,7 @@ const columns = [
 function tableHtml() {
   const rows = filteredHosts();
   if (!S.data.hosts.length) {
-    return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host attivi compaiono qui man mano che rispondono.');
+    return emptyState('radar', 'Nessun host nella sessione', 'Avvia una scansione della rete: gli host compaiono man mano che rispondono, poi arrivano nomi, porte e tipo di dispositivo. La scansione aggiorna anche l\'archivio dei dispositivi.');
   }
   if (!rows.length) return emptyState('search', 'Nessun host corrisponde', 'Cambia le parole della ricerca.');
   return table({
@@ -195,10 +202,10 @@ async function start() {
   const n = S.net;
   if (running()) return;
   try {
-    const res = await call('scanNetwork', { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns });
+    const res = await call('scanNetwork', { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns, scanPorts: n.scanPorts, banner: n.banner });
     adopt({ state: res.state });
-    n.last = { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns };
-    n.progress = { scanned: 0, total: res.total, percent: 0, seconds: 0, currentIp: '' };
+    n.last = { target: n.target, threads: n.threads, timeout: n.timeout, resolveDns: n.resolveDns, scanPorts: n.scanPorts, banner: n.banner };
+    n.progress = { scanned: 0, total: 0, percent: 0, seconds: 0, currentIp: '', phase: 'ping', phaseLabel: 'Avvio' };
     n.done = null;
     n.editing = false;
     n.fresh.clear();
@@ -264,13 +271,14 @@ function details(ip) {
   const ports = S.data.ports.filter((p) => p.host === ip);
   const body = `<div class="fields">
     <dl class="kv">
-      <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}</dd>
-      <dt>Nome</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
+      <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}${h.isGateway ? ' <span class="tag primary">gateway</span>' : ''}${h.isLocalMachine ? ' <span class="tag">questo PC</span>' : ''}</dd>
+      <dt>Nome DNS</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
+      <dt>Nome NetBIOS</dt><dd>${h.netBiosName ? `${esc(h.netBiosName)}${h.workgroup ? ` <span class="tag">${esc(h.workgroup)}</span>` : ''}` : '<span class="muted">nessuna risposta (UDP 137)</span>'}</dd>
       <dt>MAC</dt><dd class="mono">${h.macAddress ? esc(h.macAddress) : '<span class="muted">non disponibile (host fuori dalla rete locale)</span>'}</dd>
       <dt>Produttore</dt><dd>${esc(h.macVendor)}</dd>
       <dt>Dispositivo</dt><dd>${esc(h.deviceType)} <span class="tag">${esc(h.deviceCategory || 'Altro')}</span></dd>
       <dt>Sistema stimato</dt><dd>${esc(h.osGuess)}</dd>
-      <dt>Latenza</dt><dd>${latency(h.responseTimeMs)}</dd>
+      <dt>Latenza</dt><dd>${h.respondsToPing === false ? '<span class="muted">non risponde al ping (presente nella tabella ARP)</span>' : latency(h.responseTimeMs)}</dd>
       <dt>TTL</dt><dd>${h.ttl || '—'}</dd>
       <dt>Visto la prima volta</dt><dd>${fmtDateTime(h.firstSeen)}</dd>
       <dt>Ultima volta</dt><dd>${fmtDateTime(h.lastSeen)}</dd>
@@ -323,12 +331,20 @@ on('network.progress', (d) => {
   if (d.hosts && d.hosts.length) {
     for (const h of d.hosts) {
       const i = S.data.hosts.findIndex((x) => x.ipAddress === h.ipAddress);
-      if (i >= 0) S.data.hosts[i] = h; else S.data.hosts.push(h);
-      S.net.fresh.add(h.ipAddress);
+      if (i >= 0) S.data.hosts[i] = h; else { S.data.hosts.push(h); S.net.fresh.add(h.ipAddress); }
     }
     markDirty();
     emit('data', { list: 'hosts' });
     if (S.page === 'network') renderTable();
+  }
+  // porte aperte trovate dalla scansione della rete: entrano nell'elenco delle porte della sessione
+  if (d.ports && d.ports.length) {
+    for (const p of d.ports) {
+      const i = S.data.ports.findIndex((x) => x.host === p.host && x.portNumber === p.portNumber && x.protocol === p.protocol);
+      if (i >= 0) S.data.ports[i] = p; else S.data.ports.push(p);
+    }
+    markDirty();
+    emit('data', { list: 'ports' });
   }
   if (S.page === 'network') updateBar();
 });
@@ -339,9 +355,14 @@ on('network.done', (d) => {
   S.net.editing = false;
   adopt({ state: d.state });
   if (S.page === 'network') { renderForm(); renderTable(); }
+  const diff = d.diff;
+  const archive = diff ? (diff.isFirst ? ' Archivio della rete creato.' : ` Archivio: ${diff.summary}`) : '';
   if (d.error) toast(d.error, { tone: 'error', title: 'Scansione interrotta' });
-  else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento.`, { tone: 'warning', title: 'Scansione fermata' });
-  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}.`, { tone: 'success', title: 'Scansione della rete completata' });
+  else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento (l'archivio non viene aggiornato).`, { tone: 'warning', title: 'Scansione fermata' });
+  else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}.${archive}`, {
+    tone: 'success', title: 'Scansione della rete completata', timeout: diff && !diff.isFirst ? 10000 : 6000,
+    action: diff && !diff.isFirst && (diff.newCount + diff.goneCount + diff.changedCount + diff.returnedCount) ? { label: 'Cambiamenti', run: () => navigate('devices', { tab: 'events' }) } : null,
+  });
   setTimeout(() => { S.net.fresh.clear(); }, 2000);
 });
 
@@ -351,17 +372,21 @@ bus.addEventListener('session', () => {
 });
 
 definePage('network', {
-  title: 'Rete', heading: 'Scansione della rete', icon: 'radar', section: 'scan', badge: () => S.data.hosts.length,
+  title: 'Rete', heading: 'Scansione della rete', icon: 'radar', section: 'scan', order: 0, badge: () => S.data.hosts.length,
   render, after, actions,
   enter: (params) => { if (params.target) { S.net.target = params.target; if (!running()) edit(); } },
   onInput: (el, field) => {
     const n = S.net;
     if (field === 'q') { n.q = el.value; renderTable(); return; }
     if (field === 'target') n.target = el.value;
-    if (field === 'threads') n.threads = Number(el.value) || 80;
-    if (field === 'timeout') n.timeout = Number(el.value) || 900;
+    if (field === 'threads') n.threads = Number(el.value) || 128;
+    if (field === 'timeout') n.timeout = Number(el.value) || 700;
   },
-  onChange: (el, field) => { if (field === 'resolveDns') S.net.resolveDns = el.checked; },
+  onChange: (el, field) => {
+    if (field === 'resolveDns') S.net.resolveDns = el.checked;
+    if (field === 'banner') S.net.banner = el.checked;
+    if (field === 'scanPorts') { S.net.scanPorts = el.checked; const b = $('[data-field="banner"]'); if (b) b.disabled = !el.checked; }
+  },
   onSubmit: () => start(),
   onSort: (key) => { S.net.sort = nextSort(S.net.sort, key); renderTable(); },
   onContext: (row, point) => hostMenu(point, row.dataset.ip),

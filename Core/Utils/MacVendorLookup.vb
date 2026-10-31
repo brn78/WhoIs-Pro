@@ -188,6 +188,44 @@ Namespace Utils
             Return String.Join(":", macBytes.Select(Function(b) b.ToString("X2")))
         End Function
 
+        ''' <summary>Etichetta per gli indirizzi casuali (privacy dei telefoni): non c'è un produttore da cercare.</summary>
+        Public Const PrivateAddressLabel As String = "Indirizzo casuale (privacy)"
+
+        ''' <summary>MAC normalizzato "aa:bb:cc:dd:ee:ff" (minuscolo, due punti); Nothing se assente, non valido, tutto zeri o broadcast.</summary>
+        Public Function Normalize(mac As String) As String
+            If String.IsNullOrWhiteSpace(mac) Then Return Nothing
+            Dim hex = New String(mac.Where(Function(c) Uri.IsHexDigit(c)).ToArray()).ToLowerInvariant()
+            If hex.Length <> 12 OrElse hex = "000000000000" OrElse hex = "ffffffffffff" Then Return Nothing
+            Return String.Join(":", Enumerable.Range(0, 6).Select(Function(i) hex.Substring(i * 2, 2)))
+        End Function
+
+        ''' <summary>Sei byte che indicano una scheda vera: non tutti zeri, non broadcast, non multicast.</summary>
+        Public Function IsUsableUnicast(mac As Byte()) As Boolean
+            If mac Is Nothing OrElse mac.Length < 6 Then Return False
+            Dim allZero = True, allFf = True
+            For i = 0 To 5
+                If mac(i) <> 0 Then allZero = False
+                If mac(i) <> &HFF Then allFf = False
+            Next
+            Return Not allZero AndAlso Not allFf AndAlso (mac(0) And 1) = 0
+        End Function
+
+        ''' <summary>Bit "locally administered" acceso: indirizzo casuale (telefoni) o assegnato a mano, non un prefisso di produttore.</summary>
+        Public Function IsLocallyAdministered(mac As String) As Boolean
+            Dim n = Normalize(mac)
+            If n Is Nothing Then Return False
+            Return (Convert.ToInt32(n.Substring(0, 2), 16) And 2) <> 0
+        End Function
+
+        ''' <summary>Produttore dal prefisso, oppure Nothing se non catalogato; gli indirizzi casuali hanno PrivateAddressLabel.</summary>
+        Public Function Lookup(mac As String) As String
+            Dim n = Normalize(mac)
+            If n Is Nothing Then Return Nothing
+            Dim vendor = GetVendor(n)
+            If vendor <> "Produttore non catalogato" AndAlso vendor <> "Sconosciuto" Then Return vendor
+            Return If(IsLocallyAdministered(n), PrivateAddressLabel, Nothing)
+        End Function
+
         Private Sub LoadBuiltinFallbacks()
             ' Fallback immediati per vendor critici
             AddKey("000C29", "VMware, Inc.")

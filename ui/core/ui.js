@@ -158,18 +158,28 @@ export function closeMenu() {
   return open.length > 0;
 }
 
-const TOAST_ICONS = { success: 'checkCircle', error: 'xCircle', warning: 'alert', info: 'info' };
-export function toast(text, { tone = 'info', title = '', timeout = 6000, action = null } = {}) {
+const TOAST_ICONS = { success: 'checkCircle', error: 'xCircle', warning: 'alert', info: 'info', attention: 'alert' };
+/** Schedine visibili insieme: le più vecchie lasciano il posto (gli avvisi della rete restano comunque nei Cambiamenti). */
+const MAX_TOASTS = 4;
+
+/**
+ * Schedina in basso a destra. tone: info, success, warning, error, attention (barra colorata per livello);
+ * ic: icona al posto di quella del livello; time: ora mostrata in alto a destra; action: { label, run }.
+ */
+export function toast(text, { tone = 'info', title = '', timeout = 6000, action = null, ic = '', time = '' } = {}) {
   const el = document.createElement('div');
   el.className = `toast ${tone}`;
-  el.innerHTML = `<span class="toast-icon">${icon(TOAST_ICONS[tone] || 'info')}</span>
+  el.innerHTML = `<span class="toast-icon">${icon(ic || TOAST_ICONS[tone] || 'info')}</span>
     <div class="toast-text">${title ? `<b>${esc(title)}</b>` : ''}${esc(text)}${action ? `<div><button class="toast-action">${esc(action.label)}</button></div>` : ''}</div>
+    ${time ? `<span class="toast-time">${esc(time)}</span>` : ''}
     <button class="toast-close" title="Chiudi">${icon('close', { size: 15 })}</button>
     <span class="toast-bar" style="animation-duration:${timeout}ms"></span>`;
   const close = () => { el.classList.add('is-closing'); setTimeout(() => el.remove(), 200); };
   $('.toast-close', el).addEventListener('click', close);
   if (action) $('.toast-action', el).addEventListener('click', () => { action.run(); close(); });
-  $('#toasts').appendChild(el);
+  const stack = $('#toasts');
+  while (stack.children.length >= MAX_TOASTS) stack.firstElementChild.remove();
+  stack.appendChild(el);
   let timer = setTimeout(close, timeout);
   el.addEventListener('mouseenter', () => clearTimeout(timer));
   el.addEventListener('mouseleave', () => { timer = setTimeout(close, 2500); });

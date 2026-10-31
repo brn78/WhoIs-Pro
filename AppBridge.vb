@@ -6,9 +6,11 @@ Imports System.Threading
 Imports System.Windows.Forms
 Imports System.Net.Http
 Imports WhoIsPro.Config
+Imports WhoIsPro.Inventory
 Imports WhoIsPro.Machine
 Imports WhoIsPro.Models
 Imports WhoIsPro.Network
+Imports WhoIsPro.Network.Scan
 Imports WhoIsPro.Storage
 Imports WhoIsPro.Update
 Imports WhoIsPro.Utils
@@ -64,15 +66,21 @@ Namespace UI
         Private _dirty As Boolean
         Private _adapters As List(Of LocalAdapterInfo)
 
-        Private _netCts As CancellationTokenSource
+        ' archivio della rete nel tempo e sorveglianza (scansioni periodiche); la scansione della pagina Rete passa dallo stesso servizio
+        Private ReadOnly _store As New InventoryStore(Path.Combine(MainWindow.LocalFolder, "archivio-rete.db"))
+        Private ReadOnly _watch As NetworkWatchService
+        Private _sessionScan As Boolean
+        Private _netOptions As ScanOptions
+
         Private _portCts As CancellationTokenSource
         Private _traceCts As CancellationTokenSource
         Private _ouiBusy As Boolean
 
         ' avanzamento accumulato tra un invio e l'altro alla pagina
-        Private _netProgress As ScanProgress
+        Private _netProgress As ScanPhaseProgress
         Private _netWatch As Stopwatch
-        Private ReadOnly _netFound As New List(Of HostInfo)()
+        Private ReadOnly _netFound As New Dictionary(Of String, HostInfo)(StringComparer.Ordinal)
+        Private ReadOnly _netPorts As New List(Of PortInfo)()
         Private _portProgress As PortScanProgress
         Private _portWatch As Stopwatch
         Private ReadOnly _portFound As New List(Of PortInfo)()
@@ -81,6 +89,11 @@ Namespace UI
             _owner = owner
             AddHandler _flush.Tick, AddressOf FlushProgress
             AddHandler _internetTimer.Tick, Sub() CheckInternet()
+            _watch = New NetworkWatchService(_settings, _store, New DiscoveryScanner(), SynchronizationContext.Current)
+            AddHandler _watch.Progressed, AddressOf OnWatchProgress
+            AddHandler _watch.Finished, AddressOf OnWatchFinished
+            AddHandler _watch.AlertRaised, Sub(s, a) _owner.PostEvent("alert", a)
+            AddHandler _watch.StateChanged, Sub() _owner.PostEvent("inventory.state", _watch.View())
         End Sub
 
         Public Shared ReadOnly Property Version As String
@@ -105,7 +118,20 @@ Namespace UI
                     Return Adapters()
                 Case "scanNetwork" : Return StartNetworkScan(args)
                 Case "stopNetwork"
-                    _netCts?.Cancel()
+                    If _sessionScan Then _watch.CancelScan()
+                    Return Nothing
+                Case "inventory" : Return InventoryView(ArgText(args, "query"), ArgFlag(args, "onlyOnline"))
+                Case "inventoryHost" : Return InventoryHost(ArgLong(args, "id"))
+                Case "inventorySave" : Return InventorySave(args)
+                Case "inventoryForget"
+                    _store.Network.DeleteHost(ArgLong(args, "id"))
+                    Return InventoryView("", False)
+                Case "inventoryAck"
+                    If ArgFlag(args, "all") Then _store.Network.AcknowledgeAll() Else _store.Network.Acknowledge(ArgLong(args, "id"))
+                    Return New With {.unseen = _store.Network.UnacknowledgedCount(), .state = State()}
+                Case "inventoryScan" : Return StartInventoryScan(ArgText(args, "target"))
+                Case "inventoryStop"
+                    If _watch.IsScanning AndAlso Not _sessionScan Then _watch.CancelScan()
                     Return Nothing
                 Case "scanPorts" : Return StartPortScan(args)
                 Case "stopPorts"
@@ -168,6 +194,7 @@ Namespace UI
             Dim unused = AutoCheckUpdateAsync()
             CheckInternet()
             _internetTimer.Start()
+            _watch.Start()
             Return New With {.state = State(), .session = SessionData()}
         End Function
 
@@ -211,6 +238,12 @@ Namespace UI
                 .startMinimized = _settings.StartMinimized,
                 .theme = _settings.Theme,
                 .profiles = _settings.Profiles,
+                .networkWatchEnabled = _settings.NetworkWatchEnabled,
+                .networkScanIntervalMinutes = _settings.NetworkScanIntervalMinutes,
+                .networkScanTarget = _settings.NetworkScanTarget,
+                .networkScanTimeoutMs = _settings.NetworkScanTimeoutMs,
+                .notifyNewDevices = _settings.NotifyNewDevices,
+                .networks = _watch.Scanner.GetLocalNetworks(),
                 .dataFolder = MainWindow.LocalFolder,
                 .exePath = Environment.ProcessPath
             }
@@ -232,9 +265,16 @@ Namespace UI
             If args.TryGetProperty("startMinimized", value) Then _settings.StartMinimized = value.ValueKind = JsonValueKind.True
             Dim theme = ArgText(args, "theme")
             If theme = "auto" OrElse theme = "light" OrElse theme = "dark" Then _settings.Theme = theme
+            ' archivio della rete: scansioni automatiche
+            If args.TryGetProperty("networkWatchEnabled", value) Then _settings.NetworkWatchEnabled = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("notifyNewDevices", value) Then _settings.NotifyNewDevices = value.ValueKind = JsonValueKind.True
+            If args.TryGetProperty("networkScanIntervalMinutes", value) Then _settings.NetworkScanIntervalMinutes = Clamp(ArgNumber(args, "networkScanIntervalMinutes", 60), 5, 1440)
+            If args.TryGetProperty("networkScanTimeoutMs", value) Then _settings.NetworkScanTimeoutMs = Clamp(ArgNumber(args, "networkScanTimeoutMs", 700), 100, 10000)
+            If args.TryGetProperty("networkScanTarget", value) AndAlso value.ValueKind = JsonValueKind.String Then _settings.NetworkScanTarget = value.GetString().Trim()
             SettingsStore.Save(MainWindow.LocalFolder, _settings)
             _owner.ApplyTraySettings(_settings)
             _owner.ApplyTheme(_settings.Theme)
+            _watch.ApplySettings()
             Return SettingsView()
         End Function
 
@@ -338,7 +378,8 @@ Namespace UI
                     .ports = PortDictionary.GetPresets().Select(Function(p) New With {.key = p.Key, .name = p.Name, .ports = p.Text}).ToList(),
                     .whoisServers = WhoisServers
                 },
-                .running = New With {.network = _netCts IsNot Nothing, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy},
+                .running = New With {.network = _sessionScan, .inventory = _watch.IsScanning AndAlso Not _sessionScan, .ports = _portCts IsNot Nothing, .trace = _traceCts IsNot Nothing, .oui = _ouiBusy},
+                .inventory = _watch.View(),
                 .update = _updates.Status(),
                 .online = _online,
                 .theme = _settings.Theme,
@@ -422,54 +463,117 @@ Namespace UI
 
 #Region "Scansione della rete"
 
+        ''' <summary>
+        ''' Scansione dalla pagina Rete: il motore DiscoveryScanner tramite il servizio di sorveglianza (una scansione alla
+        ''' volta); gli host e le porte trovati entrano nella sessione man mano, e alla fine la scansione va nell'archivio.
+        ''' </summary>
         Private Function StartNetworkScan(args As JsonElement) As Object
-            If _netCts IsNot Nothing Then Throw New UserMessageException("Una scansione della rete è già in corso: fermala prima di avviarne un'altra.")
+            If _watch.IsScanning Then Throw New UserMessageException(If(_sessionScan, "Una scansione della rete è già in corso: fermala prima di avviarne un'altra.", "È in corso la scansione automatica dell'archivio: aspetta che finisca."))
             Dim target = ArgText(args, "target").Trim()
             If target = "" Then Throw New UserMessageException("Indica la rete da scansionare, per esempio 192.168.1.0/24 oppure 192.168.1.1-50.")
-            Dim targets = NetworkUtils.ParseTargets(target)
-            If targets.Count = 0 Then Throw New UserMessageException($"Nessun indirizzo IP valido in «{target}». Si accettano reti (192.168.1.0/24, al massimo /16), intervalli (192.168.1.1-50) e indirizzi singoli.")
-
-            Dim scanner As New NetworkScanner With {
-                .Concurrency = Clamp(ArgNumber(args, "threads", 80), 1, 500),
-                .TimeoutMs = Clamp(ArgNumber(args, "timeout", 900), 100, 10000),
-                .ResolveHostnames = ArgFlag(args, "resolveDns")
+            Dim options As New ScanOptions With {
+                .Target = target,
+                .Parallelism = Clamp(ArgNumber(args, "threads", 128), 1, 512),
+                .TimeoutMs = Clamp(ArgNumber(args, "timeout", 700), 100, 10000),
+                .ResolveNames = ArgFlag(args, "resolveDns"),
+                .ScanPorts = ArgFlag(args, "scanPorts"),
+                .GrabBanners = ArgFlag(args, "banner")
             }
-            _netCts = New CancellationTokenSource()
+            _sessionScan = True
+            _netOptions = options
             _netWatch = Stopwatch.StartNew()
             _netFound.Clear()
-            Dim progress As New Progress(Of ScanProgress)(Sub(p)
-                                                              _netProgress = p
-                                                              If p.DiscoveredHost IsNot Nothing Then
-                                                                  AddHost(p.DiscoveredHost)
-                                                                  _netFound.Add(p.DiscoveredHost)
-                                                              End If
-                                                              If Not _flush.Enabled Then _flush.Start()
-                                                          End Sub)
-            Dim unused = RunNetworkScanAsync(scanner, targets, progress, _netCts)
-            Return New With {.started = True, .total = targets.Count, .state = State()}
+            _netPorts.Clear()
+            Dim observer As New Progress(Of ScanPhaseProgress)(AddressOf OnSessionScanProgress)
+            Dim started = _watch.ScanAsync(automatic:=False, options:=options, observer:=observer)
+            If started Is Nothing Then
+                _sessionScan = False
+                Throw New UserMessageException("Una scansione è già in corso.")
+            End If
+            Return New With {.started = True, .state = State()}
         End Function
 
-        Private Async Function RunNetworkScanAsync(scanner As NetworkScanner, targets As List(Of Net.IPAddress),
-                                                   progress As IProgress(Of ScanProgress), cts As CancellationTokenSource) As Task
-            Dim found = 0
-            Dim cancelled = False
-            Dim failure As String = Nothing
-            Try
-                Dim list = Await scanner.ScanRangeAsync(targets, progress, cts.Token)
-                found = list.Count
-            Catch ex As OperationCanceledException
-                cancelled = True
-            Catch ex As Exception
-                failure = ex.Message
-            End Try
-            If cts.IsCancellationRequested Then cancelled = True
-            _netWatch.Stop()
-            cts.Dispose()
-            If ReferenceEquals(_netCts, cts) Then _netCts = Nothing
-            FlushProgress(Nothing, EventArgs.Empty)
-            _owner.PostEvent("network.done", New With {
-                .found = found, .seconds = _netWatch.Elapsed.TotalSeconds, .cancelled = cancelled, .error = failure, .state = State()
+        ''' <summary>Avanzamento della scansione della sessione: gli host (trovati o arricchiti) e le loro porte finiscono nella sessione.</summary>
+        Private Sub OnSessionScanProgress(p As ScanPhaseProgress)
+            _netProgress = p
+            If p.Host IsNot Nothing Then
+                Dim info = ToHostInfo(p.Host)
+                AddHost(info)
+                _netFound(info.IPAddress) = info
+                For Each port In p.Host.Ports
+                    Dim pi As New PortInfo With {.Host = p.Host.Ip, .PortNumber = port.Port, .Protocol = "TCP", .Status = "Open",
+                                                 .ServiceName = If(port.Service, PortDictionary.GetServiceName(port.Port)), .Banner = If(port.Banner, ""), .ResponseTimeMs = 0}
+                    AddPort(pi)
+                    _netPorts.RemoveAll(Function(x) x.Host = pi.Host AndAlso x.PortNumber = pi.PortNumber)
+                    _netPorts.Add(pi)
+                Next
+            End If
+            If Not _flush.Enabled Then _flush.Start()
+        End Sub
+
+        ''' <summary>Avanzamento di una scansione automatica (archivio): solo il testo di stato, niente nella sessione.</summary>
+        Private Sub OnWatchProgress(sender As Object, p As ScanPhaseProgress)
+            If _sessionScan Then Return
+            _owner.PostEvent("inventory.progress", New With {.phase = p.Phase, .label = ScanPhaseProgress.LabelOf(p.Phase), .done = p.Done, .total = p.Total,
+                                                             .percent = p.OverallPercent(If(_watch.Options, New ScanOptions())), .detail = p.Detail})
+        End Sub
+
+        ''' <summary>Fine di una scansione: alla pagina Rete (network.done) se era della sessione, alla pagina Dispositivi in ogni caso.</summary>
+        Private Sub OnWatchFinished(sender As Object, e As ScanFinishedEventArgs)
+            Dim diff = e.Outcome?.Diff
+            Dim diffView = If(diff Is Nothing, Nothing, New With {
+                .isFirst = diff.IsFirst, .summary = diff.Summarize(), .newCount = diff.NewHosts.Count, .returnedCount = diff.ReturnedHosts.Count,
+                .goneCount = diff.GoneHosts.Count, .changedCount = diff.ChangedHosts.Count
             })
+            If _sessionScan Then
+                _sessionScan = False
+                _netWatch?.Stop()
+                FlushProgress(Nothing, EventArgs.Empty)
+                _owner.PostEvent("network.done", New With {
+                    .found = e.HostsFound, .seconds = e.Seconds, .cancelled = e.Cancelled, .error = e.Error, .diff = diffView, .state = State()
+                })
+            End If
+            _owner.PostEvent("inventory.done", New With {
+                .automatic = e.Automatic, .found = e.HostsFound, .seconds = e.Seconds, .cancelled = e.Cancelled, .error = e.Error, .diff = diffView, .state = State()
+            })
+        End Sub
+
+        ''' <summary>
+        ''' Host della sessione da quello trovato dal motore (MAC in maiuscolo come nelle sessioni già salvate). Durante la
+        ''' scansione produttore e tipo sono provvisori (calcolati da quello che c'è già); alla fine arriva la classificazione del motore.
+        ''' </summary>
+        Private Shared Function ToHostInfo(h As DiscoveredHost) As HostInfo
+            Dim vendor = If(h.Vendor, MacVendorLookup.Lookup(h.Mac))
+            Dim deviceType = h.DeviceType
+            Dim category = h.Category
+            If deviceType = "Dispositivo" AndAlso category = DeviceClassifier.CategoryOther Then
+                Dim probe As New DiscoveredHost With {.Ip = h.Ip, .Mac = h.Mac, .Vendor = vendor, .HostName = h.HostName, .NetBiosName = h.NetBiosName, .Ttl = h.Ttl, .IsGateway = h.IsGateway, .IsLocalMachine = h.IsLocalMachine}
+                probe.Ports.AddRange(h.Ports)
+                Dim c = DeviceClassifier.Classify(probe)
+                deviceType = c.DeviceType
+                category = c.Category
+            End If
+            Dim info As New HostInfo With {
+                .IPAddress = h.Ip,
+                .Hostname = If(h.HostName, ""),
+                .NetBiosName = If(h.NetBiosName, ""),
+                .Workgroup = If(h.NetBiosWorkgroup, ""),
+                .MacAddress = If(h.Mac, "").ToUpperInvariant(),
+                .MacVendor = If(vendor, If(h.Mac Is Nothing, "N/D (Remoto / Routed)", "Produttore non catalogato")),
+                .DeviceType = deviceType,
+                .DeviceCategory = category,
+                .DeviceIcon = DeviceClassifier.IconFor(category),
+                .Status = "Online",
+                .RespondsToPing = h.RespondsToPing,
+                .ResponseTimeMs = CLng(If(h.LatencyMs, 0)),
+                .TTL = If(h.Ttl, 0),
+                .OSGuess = If(h.OsGuess, If(h.RespondsToPing, "Sconosciuto", "Host LAN (solo ARP)")),
+                .IsGateway = h.IsGateway,
+                .IsLocalMachine = h.IsLocalMachine,
+                .OpenPortsCount = h.Ports.Count
+            }
+            info.OpenPorts.AddRange(h.Ports.Select(Function(p) p.Port))
+            Return info
         End Function
 
         ''' <summary>Host nella sessione: aggiornato se c'è già lo stesso indirizzo, altrimenti aggiunto.</summary>
@@ -484,6 +588,67 @@ Namespace UI
             End If
             Touch()
         End Sub
+
+#End Region
+
+#Region "Archivio della rete"
+
+        ''' <summary>Tutto quello che serve alla pagina Dispositivi: elenco filtrato, cambiamenti, scansioni, digest e stato della sorveglianza.</summary>
+        Private Function InventoryView(query As String, onlyOnline As Boolean) As Object
+            Dim inv = _store.Network
+            Dim recentNew = inv.ListEvents(300, since:=DateTime.Now.AddHours(-24)).Where(Function(e) e.Kind = "nuovo" AndAlso e.HostId.HasValue).Select(Function(e) e.HostId.Value).ToHashSet()
+            Dim hosts = inv.ListHosts(query, onlyOnline).Select(Function(h) HostView(h, recentNew.Contains(h.Id))).ToList()
+            Return New With {
+                .hosts = hosts,
+                .total = inv.ListHosts().Count,
+                .events = inv.ListEvents(400),
+                .scans = inv.ListScans(100),
+                .digest = inv.Digest(),
+                .watch = _watch.View()
+            }
+        End Function
+
+        Private Shared Function HostView(h As NetHostRecord, isNew As Boolean) As Object
+            Return New With {
+                .id = h.Id, .hostKey = h.HostKey, .mac = If(h.Mac, "").ToUpperInvariant(), .ip = h.Ip, .hostName = h.HostName, .netBios = h.NetBios, .workgroup = h.Workgroup,
+                .vendor = h.Vendor, .deviceType = h.DeviceType, .category = h.Category, .osGuess = h.OsGuess, .isGateway = h.IsGateway, .isLocal = h.IsLocal,
+                .firstSeen = h.FirstSeen, .lastSeen = h.LastSeen, .seenCount = h.SeenCount, .missCount = h.MissCount, .ports = h.Ports, .latencyMs = h.LatencyMs,
+                .alias = h.[Alias], .trust = CInt(h.Trust), .notes = h.Notes, .isOnline = h.IsOnline, .displayName = h.DisplayName, .isNew = isNew,
+                .sensitivePorts = h.SensitivePorts
+            }
+        End Function
+
+        ''' <summary>Scheda di un dispositivo con la sua storia (ultimi 30 eventi).</summary>
+        Private Function InventoryHost(id As Long) As Object
+            Dim h = _store.Network.Get(id)
+            If h Is Nothing Then Throw New UserMessageException("Il dispositivo non è più nell'archivio.")
+            Dim isNew = _store.Network.ListEvents(50, since:=DateTime.Now.AddHours(-24), hostId:=id).Any(Function(e) e.Kind = "nuovo")
+            Return New With {.host = HostView(h, isNew), .history = _store.Network.ListEvents(30, hostId:=id)}
+        End Function
+
+        ''' <summary>Alias, fiducia e note scritti dall'utente nella scheda.</summary>
+        Private Function InventorySave(args As JsonElement) As Object
+            Dim id = ArgLong(args, "id")
+            Dim inv = _store.Network
+            If inv.Get(id) Is Nothing Then Throw New UserMessageException("Il dispositivo non è più nell'archivio.")
+            Dim value As JsonElement
+            If args.TryGetProperty("alias", value) Then inv.SetAlias(id, ArgText(args, "alias"))
+            If args.TryGetProperty("notes", value) Then inv.SetNotes(id, ArgText(args, "notes"))
+            If args.TryGetProperty("trust", value) Then inv.SetTrust(id, CType(Clamp(ArgNumber(args, "trust", 0), 0, 2), HostTrust))
+            Return InventoryHost(id)
+        End Function
+
+        ''' <summary>«Scansiona adesso» dalla pagina Dispositivi: scansione dell'archivio (non entra nella sessione).</summary>
+        Private Function StartInventoryScan(target As String) As Object
+            If _watch.IsScanning Then Throw New UserMessageException(If(_sessionScan, "C'è già una scansione della rete in corso dalla pagina Rete.", "La scansione è già in corso."))
+            Dim options As New ScanOptions With {
+                .Target = If(String.IsNullOrWhiteSpace(target), If(_settings.NetworkScanTarget, "").Trim(), target.Trim()),
+                .TimeoutMs = Clamp(_settings.NetworkScanTimeoutMs, 100, 10000)
+            }
+            Dim started = _watch.ScanAsync(automatic:=False, options:=options)
+            If started Is Nothing Then Throw New UserMessageException("La scansione è già in corso.")
+            Return New With {.started = True, .state = State()}
+        End Function
 
 #End Region
 
@@ -558,11 +723,14 @@ Namespace UI
             If _netProgress IsNot Nothing Then
                 Dim p = _netProgress
                 _netProgress = Nothing
-                Dim hosts = _netFound.ToList()
+                Dim hosts = _netFound.Values.ToList()
                 _netFound.Clear()
+                Dim ports = _netPorts.ToList()
+                _netPorts.Clear()
                 _owner.PostEvent("network.progress", New With {
-                    .scanned = p.ScannedCount, .total = p.TotalCount, .percent = p.PercentComplete, .currentIp = p.CurrentIp,
-                    .seconds = If(_netWatch Is Nothing, 0, _netWatch.Elapsed.TotalSeconds), .hosts = hosts
+                    .phase = p.Phase, .phaseLabel = ScanPhaseProgress.LabelOf(p.Phase), .scanned = p.Done, .total = p.Total,
+                    .percent = p.OverallPercent(If(_netOptions, New ScanOptions())), .currentIp = p.Detail,
+                    .seconds = If(_netWatch Is Nothing, 0, _netWatch.Elapsed.TotalSeconds), .hosts = hosts, .ports = ports
                 })
             End If
             If _portProgress IsNot Nothing Then
@@ -798,7 +966,7 @@ Namespace UI
         End Function
 
         Private Sub StopAll()
-            _netCts?.Cancel()
+            If _sessionScan Then _watch.CancelScan()
             _portCts?.Cancel()
             _traceCts?.Cancel()
         End Sub
@@ -877,15 +1045,27 @@ Namespace UI
             Return fallback
         End Function
 
+        Private Shared Function ArgLong(args As JsonElement, name As String) As Long
+            Dim value As JsonElement
+            Dim n As Long
+            If args.ValueKind = JsonValueKind.Object AndAlso args.TryGetProperty(name, value) Then
+                If value.ValueKind = JsonValueKind.Number AndAlso value.TryGetInt64(n) Then Return n
+                If value.ValueKind = JsonValueKind.String AndAlso Long.TryParse(value.GetString(), n) Then Return n
+            End If
+            Return 0
+        End Function
+
 #End Region
 
         Public Sub Dispose() Implements IDisposable.Dispose
             StopAll()
+            _watch.Dispose()
             _flush.Stop()
             _flush.Dispose()
             _internetTimer.Stop()
             _internetTimer.Dispose()
             _updates.Dispose()
+            _store.Dispose()
         End Sub
 
     End Class

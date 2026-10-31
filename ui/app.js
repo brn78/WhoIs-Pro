@@ -8,6 +8,7 @@ import { setNavigator } from './core/nav.js';
 import { askDialog, closeMenu, closeOverlays, closeTopOverlay, confirmDialog, hasOverlay, openMenu, toast, toastError } from './core/ui.js';
 import './pages/overview.js';
 import './pages/network.js';
+import './pages/devices.js';
 import './pages/ports.js';
 import './pages/whois.js';
 import './pages/dns.js';
@@ -89,8 +90,13 @@ function activityData() {
   let pct = null;
   if (r.network) {
     const p = S.net && S.net.progress;
-    sub = p ? `Rete · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} indirizzi · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
+    sub = p ? `Rete · ${p.phaseLabel || ''} ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)} · ${fmtNumber(S.data.hosts.length)} host` : 'Rete · avvio…';
     pct = p ? p.percent : 0;
+  } else if (r.inventory) {
+    const w = S.st.inventory || {};
+    title = w.automatic ? 'Scansione automatica' : 'Scansione dell\'archivio';
+    sub = w.status ? `Archivio · ${w.status}` : 'Archivio · avvio…';
+    pct = w.percent || 0;
   } else if (r.ports) {
     const p = S.ports && S.ports.progress;
     sub = p ? `Porte di ${S.ports.host} · ${fmtNumber(p.scanned)} / ${fmtNumber(p.total)}` : 'Porte · avvio…';
@@ -183,6 +189,9 @@ function updateChrome() {
   }
   const overview = $('.nav-item[data-page="overview"]');
   if (overview) overview.classList.toggle('has-notice', !!(S.st.update && S.st.update.available));
+  // i cambiamenti dell'archivio ancora da vedere: contatore ambra sulla voce Dispositivi
+  const devices = $('[data-badge="devices"]');
+  if (devices) devices.classList.toggle('is-warning', !!(S.st.inventory && S.st.inventory.unseen));
 }
 
 function go(page, params = {}, scrollTop = true) {
@@ -370,6 +379,23 @@ on('update.progress', (d) => {
   S.st.update.download = d;
   bus.dispatchEvent(new Event('state'));
 });
+// Avvisi dell'archivio della rete (dispositivo nuovo, sospetto ricomparso): schedine da 45 s con «Apri» sulla scheda
+on('alert', (a) => {
+  if (!a) return;
+  const attention = a.level === 'attention';
+  const at = a.at ? new Date(a.at) : new Date();
+  const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  toast(a.detail || '', {
+    tone: attention ? 'attention' : 'info', title: a.title, timeout: attention ? 45000 : 16000, ic: 'radar', time,
+    action: { label: a.hostId ? 'Apri la scheda' : 'Vedi i cambiamenti', run: () => go('devices', a.hostId ? { host: a.hostId } : { tab: 'events' }) },
+  });
+});
+on('inventory.state', (w) => {
+  if (!S.st) return;
+  S.st.inventory = w;
+  if (S.st.running) S.st.running.inventory = !!(w.scanning && !S.st.running.network);
+  updateChrome();
+});
 on('internet', (d) => {
   if (!S.st) return;
   const before = S.st.online;
@@ -395,7 +421,7 @@ const ACTIONS = {
   },
   'monitor': () => {
     const r = S.st.running;
-    go(r.network ? 'network' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
+    go(r.network ? 'network' : r.inventory ? 'devices' : r.ports ? 'ports' : r.trace ? 'trace' : 'overview');
   },
   'check-internet': () => call('checkInternet').catch(() => {}),
   'session-menu': (el) => sessionMenu(el),
@@ -487,6 +513,14 @@ bus.addEventListener('session', updateChrome);
 bus.addEventListener('data', updateChrome);
 on('network.progress', updateChrome);
 on('ports.progress', updateChrome);
+on('inventory.progress', (p) => {
+  if (!S.st || !S.st.inventory) return;
+  S.st.inventory.scanning = true;
+  S.st.inventory.status = p.total > 0 ? `${p.label} · ${fmtNumber(p.done)} / ${fmtNumber(p.total)}` : p.label;
+  S.st.inventory.percent = p.percent;
+  if (S.st.running && !S.st.running.network) S.st.running.inventory = true;
+  updateActivity();
+});
 on('oui.progress', () => { S.st.running.oui = true; updateChrome(); });
 
 start();

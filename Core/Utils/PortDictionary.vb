@@ -117,6 +117,28 @@
             Return "Sconosciuto"
         End Function
 
+        ''' <summary>Nome breve del servizio, oppure Nothing se la porta non è catalogata.</summary>
+        Public Function ServiceNameOrNull(port As Integer) As String
+            Return If(Ports.ContainsKey(port), Ports(port).ServiceName, Nothing)
+        End Function
+
+        ''' <summary>
+        ''' Porte provate dall'archivio della rete: servizi diffusi in casa e in ufficio, scelte anche per riconoscere i
+        ''' dispositivi (6053 ESPHome, 6668 Tuya, 7000 AirPlay, 8001/8002 TV Samsung, 8009 Google Cast, 8554 RTSP).
+        ''' </summary>
+        Public ReadOnly CommonPorts As IReadOnlyList(Of Integer) = Array.AsReadOnly(New Integer() {
+            21, 22, 23, 25, 53, 80, 81, 88, 110, 135, 139, 143, 389, 443, 445, 515, 548, 554, 587, 631, 636, 873, 902,
+            993, 995, 1433, 1521, 1883, 2049, 2179, 2375, 2376, 3268, 3306, 3389, 5000, 5001, 5060, 5432, 5900, 5985, 5986,
+            6053, 6379, 6668, 7000, 8000, 8001, 8002, 8006, 8009, 8080, 8081, 8123, 8291, 8443, 8554, 9000, 9100, 9200,
+            27017, 47808, 62078
+        })
+
+        ''' <summary>Porte da verificare se esposte in una rete: accessi remoti e condivisioni senza cifratura o con storia di abusi.</summary>
+        Public ReadOnly SensitivePorts As IReadOnlyDictionary(Of Integer, String) = New Dictionary(Of Integer, String) From {
+            {21, "FTP in chiaro"}, {23, "Telnet in chiaro"}, {445, "Condivisione SMB"}, {3389, "Desktop remoto"},
+            {5900, "VNC"}, {5985, "WinRM"}, {5986, "WinRM"}, {2375, "API Docker non protetta"}, {6379, "Redis senza password"}
+        }
+
         Public Function GetDescription(port As Integer) As String
             If Ports.ContainsKey(port) Then
                 Return Ports(port).Description

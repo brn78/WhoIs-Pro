@@ -1,0 +1,220 @@
+Option Strict On
+
+Imports System.Net
+Imports System.Text
+
+Namespace Network.Scan
+
+#Region "Opzioni e avanzamento"
+
+    ''' <summary>Opzioni di una scansione della rete locale.</summary>
+    Public Class ScanOptions
+        ''' <summary>Rete da scansionare: "192.168.1" (prefisso /24), "192.168.1.0/24", "192.168.1.10-60", un solo IP; vuoto = rete principale.</summary>
+        Public Property Target As String = ""
+        ''' <summary>Risoluzione dei nomi (DNS inverso e NetBIOS).</summary>
+        Public Property ResolveNames As Boolean = True
+        ''' <summary>Scansione TCP delle porte sugli host trovati.</summary>
+        Public Property ScanPorts As Boolean = True
+        ''' <summary>Porte da provare; vuoto = elenco comune di PortDictionary.CommonPorts.</summary>
+        Public Property Ports As IReadOnlyList(Of Integer)
+        ''' <summary>Lettura dei banner (HTTP, SSH, FTP, SMTP…) sulle porte aperte.</summary>
+        Public Property GrabBanners As Boolean = True
+        ''' <summary>Timeout per singola prova (ping, connessione TCP, DNS) in millisecondi.</summary>
+        Public Property TimeoutMs As Integer = 700
+        ''' <summary>Quante prove in parallelo.</summary>
+        Public Property Parallelism As Integer = 128
+    End Class
+
+    ''' <summary>Avanzamento: fase ("ping", "arp", "nomi", "porte", "banner", "fine"), fatti/totale, un dettaglio leggibile e l'host trovato o aggiornato.</summary>
+    Public Class ScanPhaseProgress
+        Public Sub New(phase As String, done As Integer, total As Integer, detail As String, Optional host As DiscoveredHost = Nothing)
+            Me.Phase = phase
+            Me.Done = done
+            Me.Total = total
+            Me.Detail = detail
+            Me.Host = host
+        End Sub
+
+        Public ReadOnly Property Phase As String
+        Public ReadOnly Property Done As Integer
+        Public ReadOnly Property Total As Integer
+        Public ReadOnly Property Detail As String
+        ''' <summary>Host appena trovato o arricchito in questa fase (nomi, porte, classificazione); Nothing per i soli conteggi.</summary>
+        Public ReadOnly Property Host As DiscoveredHost
+
+        ''' <summary>Nome della fase per chi legge.</summary>
+        Public Shared Function LabelOf(phase As String) As String
+            Select Case phase
+                Case "ping" : Return "Ping"
+                Case "arp" : Return "Tabella ARP"
+                Case "nomi" : Return "Nomi DNS e NetBIOS"
+                Case "porte" : Return "Porte TCP"
+                Case "banner" : Return "Banner dei servizi"
+                Case "fine" : Return "Classificazione"
+                Case Else : Return phase
+            End Select
+        End Function
+
+        ''' <summary>Percentuale complessiva della scansione: le fasi pesano in modo diverso (il ping e le porte sono le più lunghe).</summary>
+        Public Function OverallPercent(options As ScanOptions) As Integer
+            Dim weights As New List(Of (Phase As String, Weight As Double)) From {("ping", 0.4), ("arp", 0.05)}
+            If options.ResolveNames Then weights.Add(("nomi", 0.15))
+            If options.ScanPorts Then weights.Add(("porte", 0.3))
+            If options.ScanPorts AndAlso options.GrabBanners Then weights.Add(("banner", 0.1))
+            Dim sum = weights.Sum(Function(w) w.Weight)
+            Dim before = 0.0
+            For Each w In weights
+                If w.Phase = Phase Then
+                    Dim frac = If(Total > 0, Math.Min(1.0, Done / Total), 1.0)
+                    Return CInt(Math.Floor((before + w.Weight * frac) / sum * 100))
+                End If
+                before += w.Weight
+            Next
+            Return If(Phase = "fine", 100, 0)
+        End Function
+    End Class
+
+#End Region
+
+#Region "Risultati"
+
+    ''' <summary>Porta TCP aperta con servizio riconosciuto e banner, se letto.</summary>
+    Public Class OpenPort
+        Public Sub New()
+        End Sub
+
+        Public Sub New(port As Integer, protocol As String, service As String, banner As String)
+            Me.Port = port
+            Me.Protocol = protocol
+            Me.Service = service
+            Me.Banner = banner
+        End Sub
+
+        Public Property Port As Integer
+        Public Property Protocol As String = "TCP"
+        Public Property Service As String
+        Public Property Banner As String
+
+        Public Overrides Function ToString() As String
+            Return If(String.IsNullOrEmpty(Service), Port.ToString(), $"{Port}/{Service}")
+        End Function
+    End Class
+
+    ''' <summary>Un host trovato nella rete: tutto quello che la scansione ha raccolto, normalizzato.</summary>
+    Public Class DiscoveredHost
+        Public Property Ip As String = ""
+        ''' <summary>MAC normalizzato "aa:bb:cc:dd:ee:ff", oppure Nothing se non noto (host fuori dalla rete locale).</summary>
+        Public Property Mac As String
+        Public Property Vendor As String
+        Public Property HostName As String
+        Public Property NetBiosName As String
+        Public Property NetBiosWorkgroup As String
+        ''' <summary>Tipo riconosciuto (es. "Stampante di rete HP", "NAS Synology", "Host Hyper-V", "Router").</summary>
+        Public Property DeviceType As String = "Dispositivo"
+        ''' <summary>Categoria ampia (DeviceClassifier.Category*).</summary>
+        Public Property Category As String = "Altro"
+        Public Property RespondsToPing As Boolean
+        Public Property LatencyMs As Double?
+        Public Property Ttl As Integer?
+        ''' <summary>Stima del sistema dal TTL e dai banner ("Windows", "Linux/Unix o dispositivo", "Apparato di rete"…).</summary>
+        Public Property OsGuess As String
+        Public Property IsGateway As Boolean
+        Public Property IsLocalMachine As Boolean
+        Public ReadOnly Property Ports As New List(Of OpenPort)()
+        Public Property SeenAt As DateTime = DateTime.Now
+
+        ''' <summary>Nome migliore disponibile: NetBIOS, DNS, altrimenti IP.</summary>
+        Public ReadOnly Property DisplayName As String
+            Get
+                If Not String.IsNullOrWhiteSpace(NetBiosName) Then Return NetBiosName
+                If Not String.IsNullOrWhiteSpace(HostName) Then Return HostName
+                Return Ip
+            End Get
+        End Property
+    End Class
+
+    ''' <summary>Rete locale di una scheda attiva.</summary>
+    Public Class LocalNetwork
+        Public Property InterfaceName As String
+        Public Property LocalIp As String
+        Public Property PrefixLength As Integer
+        Public Property Gateway As String
+        Public Property Cidr As String
+        Public Property IsPrimary As Boolean
+    End Class
+
+    ''' <summary>Esito completo di una scansione.</summary>
+    Public Class ScanReport
+        Public Sub New(startedAt As DateTime, duration As TimeSpan, target As String, localIp As String, gateway As String, hosts As IReadOnlyList(Of DiscoveredHost))
+            Me.StartedAt = startedAt
+            Me.Duration = duration
+            Me.Target = target
+            Me.LocalIp = localIp
+            Me.Gateway = gateway
+            Me.Hosts = hosts
+        End Sub
+
+        Public ReadOnly Property StartedAt As DateTime
+        Public ReadOnly Property Duration As TimeSpan
+        Public ReadOnly Property Target As String
+        Public ReadOnly Property LocalIp As String
+        Public ReadOnly Property Gateway As String
+        Public ReadOnly Property Hosts As IReadOnlyList(Of DiscoveredHost)
+
+        ''' <summary>Testo leggibile del resoconto.</summary>
+        Public Function ToText() As String
+            Dim sb As New StringBuilder()
+            sb.AppendLine($"Scansione di {Target} del {StartedAt:dd/MM/yyyy HH:mm} ({Duration.TotalSeconds:N0} s): {Hosts.Count} host")
+            For Each h In Hosts.OrderBy(Function(x) x.Ip, IpComparer.Instance)
+                sb.Append($"- {h.Ip}")
+                If h.DisplayName <> h.Ip Then sb.Append($" {h.DisplayName}")
+                If h.Mac IsNot Nothing Then sb.Append($" [{h.Mac}{If(h.Vendor Is Nothing, "", " " & h.Vendor)}]")
+                sb.Append($" · {h.DeviceType}")
+                If h.IsGateway Then sb.Append(" · gateway")
+                If h.IsLocalMachine Then sb.Append(" · questa macchina")
+                If h.OsGuess IsNot Nothing Then sb.Append($" · {h.OsGuess}")
+                If h.Ports.Count > 0 Then sb.Append(" · porte " & String.Join(",", h.Ports.Select(Function(p) p.ToString())))
+                sb.AppendLine()
+            Next
+            Return sb.ToString().TrimEnd()
+        End Function
+    End Class
+
+#End Region
+
+#Region "Contratto del motore"
+
+    ''' <summary>Motore di scansione della rete locale (DiscoveryScanner); sostituibile o simulabile nei test.</summary>
+    Public Interface INetworkScanner
+        ''' <summary>Reti locali delle schede attive; la principale è quella con il gateway predefinito.</summary>
+        Function GetLocalNetworks() As IReadOnlyList(Of LocalNetwork)
+        Function ScanAsync(options As ScanOptions, progress As IProgress(Of ScanPhaseProgress), ct As Threading.CancellationToken) As Task(Of ScanReport)
+    End Interface
+
+#End Region
+
+#Region "Supporto"
+
+    ''' <summary>Ordina indirizzi IPv4 in modo numerico.</summary>
+    Public NotInheritable Class IpComparer
+        Implements IComparer(Of String)
+
+        Public Shared ReadOnly Instance As New IpComparer()
+
+        Public Function Compare(x As String, y As String) As Integer Implements IComparer(Of String).Compare
+            Dim a As IPAddress = Nothing
+            Dim b As IPAddress = Nothing
+            If Not IPAddress.TryParse(x, a) OrElse Not IPAddress.TryParse(y, b) Then Return String.CompareOrdinal(x, y)
+            Dim ba = a.GetAddressBytes()
+            Dim bb = b.GetAddressBytes()
+            For i = 0 To Math.Min(ba.Length, bb.Length) - 1
+                Dim c = ba(i).CompareTo(bb(i))
+                If c <> 0 Then Return c
+            Next
+            Return ba.Length.CompareTo(bb.Length)
+        End Function
+    End Class
+
+#End Region
+
+End Namespace

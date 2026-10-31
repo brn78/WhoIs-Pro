@@ -127,34 +127,41 @@ Namespace WhoIsPro.Tests
         <Test>
         Public Sub DeviceClassifier_ShouldClassifyHomeAssistant()
             Dim c1 = DeviceClassifier.Classify("Espressif Inc.", "homeassistant", Nothing, 64, "")
-            Assert.That(c1.Category, [Is].EqualTo("Domotica / IoT"))
+            Assert.That(c1.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
             Assert.That(c1.DeviceType, Does.Contain("Home Assistant"))
 
             Dim c2 = DeviceClassifier.Classify("Unknown", "my-host", New Integer() {8123}, 64, "")
-            Assert.That(c2.Category, [Is].EqualTo("Domotica / IoT"))
+            Assert.That(c2.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
             Assert.That(c2.DeviceType, Does.Contain("Home Assistant"))
         End Sub
 
         <Test>
         Public Sub DeviceClassifier_ShouldClassifySamsungTv()
             Dim c1 = DeviceClassifier.Classify("Samsung Electronics (Smart TV)", "tv-living", Nothing, 64, "")
-            Assert.That(c1.Category, [Is].EqualTo("Smart TV"))
+            Assert.That(c1.Category, [Is].EqualTo(DeviceClassifier.CategoryTv))
             Assert.That(c1.DeviceType, Does.Contain("Samsung"))
 
             Dim c2 = DeviceClassifier.Classify("Samsung Electronics", "samsung-tizen", New Integer() {8001}, 64, "")
-            Assert.That(c2.Category, [Is].EqualTo("Smart TV"))
+            Assert.That(c2.Category, [Is].EqualTo(DeviceClassifier.CategoryTv))
             Assert.That(c2.DeviceType, Does.Contain("Tizen"))
         End Sub
 
         <Test>
         Public Sub DeviceClassifier_ShouldClassifySmartphones()
             Dim cApple = DeviceClassifier.Classify("Apple, Inc.", "iPhone-di-Marco", Nothing, 64, "")
-            Assert.That(cApple.Category, [Is].EqualTo("Smartphone / Tablet"))
+            Assert.That(cApple.Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
             Assert.That(cApple.DeviceType, Does.Contain("iPhone"))
 
             Dim cAndroid = DeviceClassifier.Classify("Xiaomi Communications", "redmi-note", Nothing, 64, "")
-            Assert.That(cAndroid.Category, [Is].EqualTo("Smartphone / Tablet"))
-            Assert.That(cAndroid.DeviceType, Does.Contain("Android"))
+            Assert.That(cAndroid.Category, [Is].EqualTo(DeviceClassifier.CategoryMobile))
+            Assert.That(cAndroid.DeviceType, Does.Contain("Android").And.Contain("Xiaomi"))
+
+            ' TTL 128 su un modulo domotico: firmware embedded, non Windows
+            Dim esp As New Network.Scan.DiscoveredHost With {.Ip = "192.168.50.40", .Mac = "24:0a:c4:11:22:33", .Vendor = "Espressif Inc.", .Ttl = 128}
+            Dim cEsp = DeviceClassifier.Classify(esp)
+            esp.Category = cEsp.Category
+            Assert.That(cEsp.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
+            Assert.That(DeviceClassifier.GuessOs(esp), [Is].EqualTo("Firmware embedded"))
         End Sub
 
         <Test>

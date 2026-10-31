@@ -33,6 +33,17 @@ Namespace Config
         ''' <summary>Tema della finestra: "auto" (come Windows), "light" o "dark".</summary>
         Public Property Theme As String = "auto"
         Public Property Profiles As New List(Of NetworkProfile)()
+
+        ''' <summary>Archivio della rete: scansioni automatiche a intervalli.</summary>
+        Public Property NetworkWatchEnabled As Boolean
+        ''' <summary>Minuti tra una scansione automatica e l'altra (5…1440).</summary>
+        Public Property NetworkScanIntervalMinutes As Integer = 60
+        ''' <summary>Rete da scansionare in automatico; vuoto = rete principale (la scheda con il gateway).</summary>
+        Public Property NetworkScanTarget As String = ""
+        ''' <summary>Timeout per prova (ping, TCP) in millisecondi: più alto per reti Wi-Fi lente.</summary>
+        Public Property NetworkScanTimeoutMs As Integer = 700
+        ''' <summary>Avviso quando compare un dispositivo nuovo o ricompare uno segnato sospetto.</summary>
+        Public Property NotifyNewDevices As Boolean = True
     End Class
 
     ''' <summary>Lettura e salvataggio delle impostazioni, e voce di avvio automatico nel registro.</summary>

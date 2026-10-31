@@ -17,7 +17,7 @@
     <ApplicationIcon>Assets\WhoIsPro.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
 
-    <Version>2.2.1</Version>
+    <Version>2.3.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WhoIs Pro</Product>
     <AssemblyTitle>WhoIs Pro</AssemblyTitle>
@@ -34,6 +34,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+    <!-- Archivio della rete nel tempo (Core\Inventory): database SQLite in %LOCALAPPDATA%\WhoIsPro\archivio-rete.db -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
   </ItemGroup>
 
   <!-- Il pacchetto aggiunge anche il controllo per WPF: qui basta quello per Windows Forms -->
