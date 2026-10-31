@@ -133,6 +133,69 @@ Namespace Network.Scan
         End Property
     End Class
 
+    ''' <summary>
+    ''' Identità di una rete, per tenere separati gli archivi delle sedi: la stessa 192.168.1.0/24 esiste in mille posti, il
+    ''' MAC del router no. Chiave "gw:" più il MAC del gateway; senza un gateway raggiungibile (bersaglio instradato, vecchio
+    ''' registro) "net:" più la sottorete.
+    ''' </summary>
+    Public Class NetworkIdentity
+        Public Property Key As String = ""
+        Public Property Cidr As String = ""
+        Public Property GatewayIp As String
+        Public Property GatewayMac As String
+        Public Property GatewayVendor As String
+        Public Property InterfaceName As String
+
+        ''' <summary>Vero se la rete è riconosciuta dal router (chiave "gw:"), falso se solo dalla sottorete.</summary>
+        Public ReadOnly Property HasGateway As Boolean
+            Get
+                Return Key.StartsWith("gw:", StringComparison.Ordinal)
+            End Get
+        End Property
+
+        ''' <summary>«192.168.1.0/24 · Keenetic» oppure «192.168.1.0/24».</summary>
+        Public ReadOnly Property Label As String
+            Get
+                Dim who = ShortVendor(GatewayVendor)
+                Return If(who Is Nothing, Cidr, $"{Cidr} · {who}")
+            End Get
+        End Property
+
+        ''' <summary>Rete riconosciuta solo dalla sottorete (chiave "net:").</summary>
+        Public Shared Function ForSubnet(cidr As String, Optional interfaceName As String = Nothing, Optional gatewayIp As String = Nothing) As NetworkIdentity
+            Dim text = If(String.IsNullOrWhiteSpace(cidr), "sconosciuta", cidr.Trim())
+            Return New NetworkIdentity With {.Key = "net:" & text, .Cidr = text, .InterfaceName = interfaceName, .GatewayIp = gatewayIp}
+        End Function
+
+        ''' <summary>La /24 di un indirizzo IPv4 ("192.168.1.0/24"), come sottorete; per tutto il resto l'indirizzo com'è.</summary>
+        Public Shared Function ForIp(ip As String) As NetworkIdentity
+            Dim value As UInteger
+            If Ipv4.TryParse(If(ip, "").Trim(), value) Then Return ForSubnet($"{Ipv4.Format(value And &HFFFFFF00UI)}/24")
+            Return ForSubnet(ip)
+        End Function
+
+        Private Shared ReadOnly LegalForms As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
+            "gmbh", "co", "ltd", "limited", "inc", "incorporated", "corp", "corporation", "llc", "spa", "s.p.a", "srl", "s.r.l", "sas", "sa", "s.a",
+            "ag", "bv", "b.v", "nv", "n.v", "oy", "ab", "a/s", "plc", "kg", "pte", "pty", "technology", "technologies", "digital", "electronics",
+            "electronic", "communications", "communication", "networks", "network", "international", "industrial", "industries", "systems",
+            "system", "company", "computer", "corporate", "group", "holdings", "broadband", "&", "und", "and"
+        }
+
+        ''' <summary>Nome breve di un produttore: «Keenetic Limited» → «Keenetic», «Hangzhou Hikvision Digital Technology Co.,Ltd.» → «Hangzhou Hikvision».</summary>
+        Public Shared Function ShortVendor(vendor As String) As String
+            If String.IsNullOrWhiteSpace(vendor) Then Return Nothing
+            Dim words As New List(Of String)()
+            For Each raw In vendor.Split({" "c, ","c}, StringSplitOptions.RemoveEmptyEntries)
+                Dim w = raw.Trim().TrimEnd("."c)
+                If w.Length = 0 Then Continue For
+                If LegalForms.Contains(w) Then Exit For
+                words.Add(w)
+                If words.Count = 2 Then Exit For
+            Next
+            Return If(words.Count = 0, vendor.Trim(), String.Join(" ", words))
+        End Function
+    End Class
+
     ''' <summary>Rete locale di una scheda attiva.</summary>
     Public Class LocalNetwork
         Public Property InterfaceName As String
@@ -162,6 +225,8 @@ Namespace Network.Scan
         Public ReadOnly Property Hosts As IReadOnlyList(Of DiscoveredHost)
         ''' <summary>Porte TCP provate su ogni host (vuoto = scansione senza porte); Nothing se non si sa (rapporti costruiti a mano).</summary>
         Public Property ProbedPorts As IReadOnlyCollection(Of Integer)
+        ''' <summary>La rete scansionata (router o sottorete); Nothing nei rapporti costruiti a mano.</summary>
+        Public Property Network As NetworkIdentity
 
         ''' <summary>Testo leggibile del resoconto.</summary>
         Public Function ToText() As String
@@ -190,6 +255,8 @@ Namespace Network.Scan
     Public Interface INetworkScanner
         ''' <summary>Reti locali delle schede attive; la principale è quella con il gateway predefinito.</summary>
         Function GetLocalNetworks() As IReadOnlyList(Of LocalNetwork)
+        ''' <summary>La rete a cui appartiene una scansione del bersaglio (vuoto = rete principale): router o sottorete.</summary>
+        Function IdentifyNetwork(target As String) As NetworkIdentity
         Function ScanAsync(options As ScanOptions, progress As IProgress(Of ScanPhaseProgress), ct As Threading.CancellationToken) As Task(Of ScanReport)
     End Interface
 

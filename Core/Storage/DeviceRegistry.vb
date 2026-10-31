@@ -114,10 +114,23 @@ Namespace Storage
             Return If(MacVendorLookup.Normalize(h.MacAddress), "ip:" & h.IPAddress)
         End Function
 
-        Public Function Find(h As HostInfo) As KnownDevice
-            Dim r = Inventory.GetByKey(StoreKey(h))
-            If r Is Nothing AndAlso Not String.IsNullOrWhiteSpace(h.MacAddress) Then r = Inventory.GetByKey("ip:" & h.IPAddress)
+        ''' <summary>Il dispositivo in archivio: prima nella rete indicata, poi in qualunque rete (il visto più di recente).</summary>
+        Public Function Find(h As HostInfo, Optional networkKey As String = Nothing) As KnownDevice
+            Dim r = FindRecord(h, networkKey)
             Return If(r Is Nothing, Nothing, ToKnown(r))
+        End Function
+
+        Private Function FindRecord(h As HostInfo, networkKey As String) As NetHostRecord
+            Dim key = StoreKey(h)
+            Dim hasMac = Not String.IsNullOrWhiteSpace(h.MacAddress)
+            Dim r As NetHostRecord = Nothing
+            If Not String.IsNullOrEmpty(networkKey) Then
+                r = Inventory.GetByKey(networkKey, key)
+                If r Is Nothing AndAlso hasMac Then r = Inventory.GetByKey(networkKey, "ip:" & h.IPAddress)
+            End If
+            If r Is Nothing Then r = Inventory.FindAnywhere(key)
+            If r Is Nothing AndAlso hasMac Then r = Inventory.FindAnywhere("ip:" & h.IPAddress)
+            Return r
         End Function
 
         Private Shared Function ToKnown(r As NetHostRecord) As KnownDevice
@@ -134,11 +147,12 @@ Namespace Storage
 #Region "Osservazione ed etichette"
 
         ''' <summary>
-        ''' L'host è stato visto adesso: aggiorna l'archivio e riporta sull'host la prima rilevazione più vecchia che si
-        ''' conosce, il nome, le note e l'icona. Vero se il dispositivo non era mai stato visto da questo PC.
+        ''' L'host è stato visto adesso nella rete indicata (senza, la sottorete /24 dell'indirizzo): aggiorna l'archivio e
+        ''' riporta sull'host la prima rilevazione più vecchia che si conosce, il nome, le note e l'icona. Vero se il
+        ''' dispositivo non era mai stato visto da questo PC in quella rete.
         ''' </summary>
-        Public Function Observe(h As HostInfo) As Boolean
-            Dim result = Inventory.Observe(ToDiscovered(h), h.LastSeen)
+        Public Function Observe(h As HostInfo, Optional network As NetworkIdentity = Nothing) As Boolean
+            Dim result = Inventory.Observe(ToDiscovered(h), h.LastSeen, network)
             Dim r = result.Record
             If Not result.IsNew AndAlso r.FirstSeen < h.FirstSeen Then h.FirstSeen = r.FirstSeen
             SyncLabel(r, h)
@@ -168,15 +182,19 @@ Namespace Storage
             End If
         End Sub
 
-        ''' <summary>Nome, note, icona e colore scelti dall'utente per il dispositivo (vuoti = tolti), sull'host e nell'archivio.</summary>
-        Public Sub SetLabel(h As HostInfo, name As String, notes As String, Optional icon As String = Nothing, Optional iconColor As String = Nothing)
+        ''' <summary>
+        ''' Nome, note, icona e colore scelti dall'utente per il dispositivo (vuoti = tolti), sull'host e nell'archivio: nel
+        ''' record della rete indicata, altrimenti in quello che c'è (una sessione di un altro cliente aperta altrove), altrimenti
+        ''' ne nasce uno nella rete indicata.
+        ''' </summary>
+        Public Sub SetLabel(h As HostInfo, name As String, notes As String, Optional icon As String = Nothing, Optional iconColor As String = Nothing, Optional network As NetworkIdentity = Nothing)
             h.CustomName = If(name, "").Trim()
             h.Notes = If(notes, "").Trim()
             If icon IsNot Nothing Then
                 h.Icon = icon.Trim()
                 h.IconColor = If(h.Icon = "", "", If(iconColor, "").Trim())
             End If
-            Dim r = Inventory.Observe(ToDiscovered(h), h.LastSeen).Record
+            Dim r = If(FindRecord(h, network?.Key), Inventory.Observe(ToDiscovered(h), h.LastSeen, network).Record)
             Inventory.SetAlias(r.Id, h.CustomName)
             Inventory.SetNotes(r.Id, h.Notes)
             If icon IsNot Nothing Then Inventory.SetIcon(r.Id, h.Icon, h.IconColor)

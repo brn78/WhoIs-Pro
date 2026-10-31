@@ -42,6 +42,16 @@ function autoScanCard(d) {
     </div></section>`;
 }
 
+/** Sessione salvata da sola, una per rete: per chi gira tra i clienti e per chi sta sempre nella stessa rete. */
+function sessionCard(d) {
+  return `<section class="card"><div class="card-head"><div class="card-title">${icon('save')}<h2>Sessione</h2></div></div>
+    <div class="card-body"><div class="fields">
+      <div class="switch-list">${sw('autoSaveSession', 'Salva la sessione da sola, una per rete', 'Pochi secondi dopo ogni modifica, in Documenti\\WhoIs Pro\\Sessioni, con il nome della rete (il cliente, la sede). All\'avvio, o quando ti colleghi a un\'altra rete, si riapre la sessione di quella rete. «Salva con nome» e «Apri» restano per i casi particolari.', d.autoSaveSession !== false)}</div>
+      <dl class="kv compact"><dt>Cartella</dt><dd><span class="mono" title="${esc(d.sessionsFolder || '')}">${esc(shortPath(d.sessionsFolder || ''))}</span></dd></dl>
+      <div class="card-actions" style="margin-top:0"><button class="btn btn-sm" data-action="open-sessions-folder">${icon('folderOpen')} Apri la cartella</button></div>
+    </div></div></section>`;
+}
+
 function themeCard(d) {
   const opt = (value, ic, label, text) => `<button class="choice-option theme-option ${d.theme === value ? 'is-active' : ''}" data-action="theme" data-theme="${value}">
       <span class="choice-icon">${icon(ic)}</span><span class="choice-text"><b>${label}</b><small>${text}</small></span>${d.theme === value ? icon('check') : ''}</button>`;
@@ -280,7 +290,7 @@ function render() {
     case 'updates': body = `<div class="grid settings-narrow">${updateCard()}</div>`; break;
     case 'vendors': body = `<div class="grid settings-narrow">${ouiCard()}</div>`; break;
     case 'data': body = `<div class="grid settings-narrow">${dataCard(d)}</div>`; break;
-    default: body = `<div class="grid grid-2">${startupCard(d)}${themeCard(d)}${autoScanCard(d)}</div>`;
+    default: body = `<div class="grid grid-2">${startupCard(d)}${sessionCard(d)}${themeCard(d)}${autoScanCard(d)}</div>`;
   }
   return `${head}${tabsHtml()}${body}`;
 }
@@ -479,6 +489,7 @@ const actions = {
     try { S.settings.data = await call('clearDevices'); rerender(); toast('Archivio della rete svuotato.', { tone: 'success' }); } catch (err) { toastError(err); }
   },
   'toggle-notes': () => { S.settings.notesOpen = !S.settings.notesOpen; rerender(); },
+  'open-sessions-folder': () => call('openSessionsFolder').catch((e) => toastError(e)),
   'theme': (el) => {
     const theme = el.dataset.theme;
     if (window.setTheme) window.setTheme(theme);
@@ -570,6 +581,7 @@ definePage('settings', {
     if (field === 'networkScanIntervalMinutes') { const m = Math.min(1440, Math.max(5, Number(el.value) || 60)); save({ [field]: m }, `Scansione automatica ogni ${m} minuti.`); return; }
     if (field === 'networkScanTimeoutMs') { save({ [field]: Math.min(10000, Math.max(100, Number(el.value) || 700)) }, 'Timeout della scansione automatica salvato.'); return; }
     if (field === 'networkScanTarget') { const t = el.value.trim(); save({ [field]: t }, t ? `Scansione automatica su ${t}.` : 'Scansione automatica sulla rete principale.'); return; }
+    if (field === 'autoSaveSession') save({ autoSaveSession: el.checked }, `Salvataggio automatico della sessione: ${el.checked ? 'attivo' : 'disattivato'}.`).then(() => { if (S.st) { S.st.session.autoSave = el.checked; emit('state'); } });
     if (field === 'autoUpdateOui') save({ autoUpdateOui: el.checked }, `Aggiornamento automatico dei produttori: ${el.checked ? 'attivo' : 'disattivato'}.`);
     if (field === 'autoInstallUpdates') save({ autoInstallUpdates: el.checked }, `Aggiornamento automatico: ${el.checked ? 'attivo' : 'disattivato'}.`);
     if (field === 'autoScan') save({ autoScan: el.checked }, `Scansione all'avvio: ${el.checked ? 'attiva' : 'disattivata'}.`);

@@ -148,6 +148,102 @@ Namespace WhoIsPro.Tests
             Assert.That(store.Network.UnacknowledgedCount(), [Is].EqualTo(0))
         End Sub
 
+#Region "Una rete per sede"
+
+        Private Shared Function Site(mac As String, cidr As String) As NetworkIdentity
+            Return New NetworkIdentity With {.Key = "gw:" & mac, .Cidr = cidr, .GatewayIp = cidr.Replace(".0/24", ".1"), .GatewayMac = mac, .GatewayVendor = "Prova Networks Ltd."}
+        End Function
+
+        <Test>
+        Public Sub Networks_TwoSites_DoNotMixAndNeverMarkEachOtherAbsent()
+            Dim home = Site("aa:00:00:00:00:01", "192.168.50.0/24")
+            Dim client = Site("bb:00:00:00:00:02", "192.168.50.0/24")
+            store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)), home)
+            ' dal cliente: stessa sottorete 192.168.50.0/24 ma un altro router, dispositivi diversi; due scansioni
+            Dim atClient = Report(New DateTime(2026, 10, 2, 9, 0, 0), Host("192.168.50.10", "cc:dd:ee:00:00:10", "server-cliente", 445), Host("192.168.50.40", "cc:dd:ee:00:00:40", "nvr-cliente", 554))
+            Dim first = store.Network.RecordScan(atClient, client)
+            Dim second = store.Network.RecordScan(Report(New DateTime(2026, 10, 2, 10, 0, 0), Host("192.168.50.10", "cc:dd:ee:00:00:10", "server-cliente", 445), Host("192.168.50.40", "cc:dd:ee:00:00:40", "nvr-cliente", 554)), client)
+
+            Assert.That(first.IsFirst, [Is].True, "la prima scansione di una rete nuova è un primo censimento, anche se l'archivio ha già un'altra rete")
+            Assert.That(second.GoneHosts, [Is].Empty, "i dispositivi di casa non c'entrano con il cliente: nessun «assente»")
+            Assert.That(store.Network.ListHosts(networkKey:=home.Key).Count, [Is].EqualTo(3))
+            Assert.That(store.Network.ListHosts(networkKey:=client.Key).Count, [Is].EqualTo(2))
+            Assert.That(store.Network.ListHosts(networkKey:=home.Key).All(Function(h) h.MissCount = 0), [Is].True)
+            Assert.That(store.Network.ListHosts(networkKey:=home.Key).All(Function(h) h.IsOnline), [Is].True, "«presente» si giudica sull'ultima scansione della sua rete")
+            Dim networks = store.Network.ListNetworks()
+            Assert.That(networks.Count, [Is].EqualTo(2))
+            Assert.That(networks.First().Key, [Is].EqualTo(client.Key), "la più recente per prima")
+            Assert.That(networks.First().Label, [Is].EqualTo("192.168.50.0/24 · Prova"))
+            Assert.That(networks.First().HostsCount, [Is].EqualTo(2))
+            Assert.That(store.Network.UnacknowledgedCount(client.Key), [Is].EqualTo(2))
+            Assert.That(store.Network.Digest(home.Key), Does.Contain("3 dispositivi conosciuti"))
+
+            store.Network.SetNetworkAlias(client.Key, "Cliente Rossi")
+            Assert.That(store.Network.GetNetwork(client.Key).DisplayName, [Is].EqualTo("Cliente Rossi"))
+            store.Network.DeleteNetwork(client.Key)
+            Assert.That(store.Network.ListNetworks().Select(Function(n) n.Key), [Is].EqualTo({home.Key}))
+            Assert.That(store.Network.ListHosts().Count, [Is].EqualTo(3))
+        End Sub
+
+        <Test>
+        Public Sub Networks_LegacyImportedDevice_IsAdoptedByTheRealNetwork()
+            Dim imported = store.Network.ImportKnownDevices({New ImportedDevice With {.Mac = "AA:BB:CC:00:00:10", .Ip = "192.168.50.10", .Hostname = "nas-prova", .Name = "NAS ufficio", .FirstSeen = New DateTime(2026, 1, 5), .LastSeen = New DateTime(2026, 1, 6), .TimesSeen = 4}})
+            Assert.That(imported, [Is].EqualTo(1))
+            Assert.That(store.Network.ListNetworks().Single().Key, [Is].EqualTo("net:192.168.50.0/24"), "dal vecchio registro si conosce solo la sottorete")
+
+            Dim home = Site("aa:00:00:00:00:01", "192.168.50.0/24")
+            Dim diff = store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)), home)
+            Assert.That(diff.NewHosts.Select(Function(h) h.HostName), [Is].EquivalentTo({"pc-prova", "stampante-prova"}), "il NAS era già conosciuto: passa alla rete del router, non è nuovo")
+            Dim nas = store.Network.Find("NAS ufficio")
+            Assert.That(nas.NetworkKey, [Is].EqualTo(home.Key))
+            Assert.That(nas.FirstSeen, [Is].EqualTo(New DateTime(2026, 1, 5)).Within(TimeSpan.FromSeconds(1)))
+            Assert.That(nas.SeenCount, [Is].EqualTo(5))
+            Assert.That(store.Network.ListNetworks().First(Function(n) n.Key = "net:192.168.50.0/24").HostsCount, [Is].EqualTo(0), "la rete «solo sottorete» si è svuotata")
+        End Sub
+
+        <Test>
+        Public Sub Networks_DatabaseOfVersion260_IsMigratedWithoutLosingAnything()
+            store.Dispose()
+            Dim path = IO.Path.Combine(testDir, "archivio-260.db")
+            ' lo schema della 2.6.0: un solo archivio, chiave unica sul solo dispositivo
+            Using old As New Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}")
+                old.Open()
+                Using cmd = old.CreateCommand()
+                    cmd.CommandText = "CREATE TABLE net_hosts (id INTEGER PRIMARY KEY AUTOINCREMENT, host_key TEXT NOT NULL UNIQUE, mac TEXT, ip TEXT NOT NULL, hostname TEXT, netbios TEXT, workgroup TEXT,
+                        vendor TEXT, device_type TEXT, category TEXT, glyph TEXT, os_guess TEXT, is_gateway INTEGER NOT NULL DEFAULT 0, is_local INTEGER NOT NULL DEFAULT 0, first_seen TEXT NOT NULL,
+                        last_seen TEXT NOT NULL, seen_count INTEGER NOT NULL DEFAULT 1, miss_count INTEGER NOT NULL DEFAULT 0, last_scan_id INTEGER, ports_json TEXT, latency_ms REAL, alias TEXT,
+                        trust INTEGER NOT NULL DEFAULT 0, notes TEXT, icon TEXT, icon_color TEXT);
+                        CREATE TABLE net_scans (id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, duration_ms INTEGER NOT NULL, target TEXT NOT NULL, hosts_count INTEGER NOT NULL,
+                        new_count INTEGER NOT NULL, gone_count INTEGER NOT NULL, changed_count INTEGER NOT NULL, summary TEXT NOT NULL);
+                        CREATE TABLE net_events (id INTEGER PRIMARY KEY AUTOINCREMENT, scan_id INTEGER, host_id INTEGER, at TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, details TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0);
+                        INSERT INTO net_scans(started_at, duration_ms, target, hosts_count, new_count, gone_count, changed_count, summary) VALUES ('2026-10-30T10:00:00.0000000Z', 8000, '192.168.50.0/24', 1, 1, 0, 0, '1 nuovo');
+                        INSERT INTO net_hosts(host_key, mac, ip, hostname, first_seen, last_seen, seen_count, last_scan_id, alias) VALUES ('aa:bb:cc:00:00:10', 'aa:bb:cc:00:00:10', '192.168.50.10', 'nas-prova', '2026-10-30T10:00:00.0000000Z', '2026-10-30T10:00:00.0000000Z', 1, 1, 'NAS ufficio');
+                        INSERT INTO net_hosts(host_key, mac, ip, hostname, first_seen, last_seen, seen_count) VALUES ('dd:ee:ff:00:00:07', 'dd:ee:ff:00:00:07', '172.16.20.7', 'cam-cliente', '2026-10-22T15:59:00.0000000Z', '2026-10-22T15:59:00.0000000Z', 2);
+                        INSERT INTO net_events(scan_id, host_id, at, kind, title, details) VALUES (1, 1, '2026-10-30T10:00:00.0000000Z', 'nuovo', 'Nuovo dispositivo: nas-prova', '192.168.50.10');"
+                    cmd.ExecuteNonQuery()
+                End Using
+            End Using
+
+            store = New InventoryStore(path)
+            Dim hosts = store.Network.ListHosts()
+            Assert.That(hosts.Count, [Is].EqualTo(2))
+            Dim nas = store.Network.Find("NAS ufficio")
+            Assert.That(nas.NetworkKey, [Is].EqualTo("net:192.168.50.0/24"))
+            Assert.That(nas.IsOnline, [Is].True, "la scansione della 2.6.0 resta l'ultima della sua rete")
+            Assert.That(store.Network.Find("cam-cliente").NetworkKey, [Is].EqualTo("net:172.16.20.0/24"))
+            Assert.That(store.Network.ListNetworks().Select(Function(n) n.Key), [Is].EquivalentTo({"net:192.168.50.0/24", "net:172.16.20.0/24"}))
+            Assert.That(store.Network.ListEvents().Single().NetworkKey, [Is].EqualTo("net:192.168.50.0/24"))
+            Assert.That(store.Network.ListScans().Single().NetworkKey, [Is].EqualTo("net:192.168.50.0/24"))
+
+            ' la chiave unica è ora (rete, dispositivo): lo stesso MAC può stare in due sedi
+            Dim client = Site("bb:00:00:00:00:02", "10.0.0.0/24")
+            store.Network.RecordScan(Report(New DateTime(2026, 10, 31, 9, 0, 0), Host("10.0.0.10", "aa:bb:cc:00:00:10", "nas-gemello")), client)
+            Assert.That(store.Network.ListHosts().Count, [Is].EqualTo(3))
+            Assert.That(store.Network.Find("NAS ufficio").NetworkKey, [Is].EqualTo("net:192.168.50.0/24"), "l'adozione vale per la stessa sottorete, non per un altro cliente")
+        End Sub
+
+#End Region
+
 #Region "Servizio di sorveglianza"
 
         ''' <summary>Motore finto: restituisce i rapporti in sequenza, senza toccare la rete.</summary>
@@ -159,6 +255,9 @@ Namespace WhoIsPro.Tests
             End Sub
             Public Function GetLocalNetworks() As IReadOnlyList(Of LocalNetwork) Implements INetworkScanner.GetLocalNetworks
                 Return Array.Empty(Of LocalNetwork)()
+            End Function
+            Public Function IdentifyNetwork(target As String) As NetworkIdentity Implements INetworkScanner.IdentifyNetwork
+                Return NetworkIdentity.ForSubnet("192.168.50.0/24")
             End Function
             Public Function ScanAsync(options As ScanOptions, progress As IProgress(Of ScanPhaseProgress), ct As CancellationToken) As Task(Of ScanReport) Implements INetworkScanner.ScanAsync
                 progress?.Report(New ScanPhaseProgress("ping", 1, 1, "prova"))

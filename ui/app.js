@@ -52,18 +52,24 @@ async function start() {
   offerAutoScan(res && res.autoScan);
 }
 
-/** Avvio: l'ultima sessione salvata è stata riaperta (o non c'è più, o non si legge). */
+/** Avvio: la sessione della rete in cui si trova il PC (o l'ultima salvata) è stata riaperta, o è nuova, o non si legge. */
 function announceReopen(r) {
   if (!r) return;
   const name = fileName(r.file);
+  if (r.fresh) {
+    if (r.known) toast(`Sessione nuova per «${r.network}»: si salva da sola in Documenti\\WhoIs Pro\\Sessioni appena c'è qualcosa.`, { tone: 'info', title: 'Rete riconosciuta', timeout: 8000 });
+    return;
+  }
   if (r.missing) toast(`Il file ${name} non c'è più (spostato o cancellato): si parte da una sessione nuova.`, { tone: 'warning', title: 'Ultima sessione non trovata', timeout: 9000 });
-  else if (r.error) toast(`${name}: ${r.error}. Si parte da una sessione nuova; prova ad aprirla con «Apri…».`, { tone: 'error', title: 'Ultima sessione non riaperta', timeout: 12000 });
+  else if (r.error) toast(`${name}: ${r.error}. Si parte da una sessione nuova; prova ad aprirla con «Apri…».`, { tone: 'error', title: 'Sessione non riaperta', timeout: 12000 });
   else if (r.restoredFromBackup) toast('Il file principale era danneggiato: la sessione viene dalla copia .bak. Salvala per rigenerare il file.', { tone: 'warning', title: `Riaperta ${name} dalla copia di sicurezza`, timeout: 12000 });
   else {
     const c = counts();
-    toast(`${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}, ${plural(S.data.scans.length, 'scansione', 'scansioni')}.`, { tone: 'success', title: `Riaperta l'ultima sessione: ${name}` });
+    toast(`${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}, ${plural(S.data.scans.length, 'scansione', 'scansioni')}.`, { tone: 'success', title: r.network ? `Riaperta la sessione di «${r.network}»` : `Riaperta l'ultima sessione: ${name}` });
   }
 }
+
+const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Struttura
@@ -189,15 +195,36 @@ function internetPill() {
     : pill('is-off', 'wifiOff', 'Connessione a Internet', 'Assente', 'Senza connessione a Internet: WHOIS, DNS pubblici e aggiornamenti non funzionano');
 }
 
-function topbarActions() {
-  const st = S.st;
-  const s = st.session;
+/** Il riquadro della sessione: con il salvataggio automatico dice la rete e quando si è salvata; altrimenti file e modifiche. */
+function sessionChip() {
+  const s = S.st.session;
   const dirty = s.dirty;
+  if (s.autoSave) {
+    const label = s.networkName || (s.file ? fileName(s.file).replace(/\.whoispro$/i, '') : 'Sessione nuova');
+    let small;
+    let ic;
+    let cls;
+    if (s.autoSaveFailed) { small = 'Salvataggio automatico fermo'; ic = 'alert'; cls = 'is-dirty'; }
+    else if (dirty) { small = 'Si salva tra poco…'; ic = 'edit'; cls = 'is-dirty'; }
+    else if (s.autoSavedAt) { small = `Salvata da sola alle ${hhmm(s.autoSavedAt)}`; ic = 'check'; cls = 'is-saved'; }
+    else if (s.file) { small = 'Sessione salvata'; ic = 'check'; cls = 'is-saved'; }
+    else { small = s.networkName ? 'Sessione di questa rete' : 'Sessione'; ic = 'archive'; cls = ''; }
+    const title = s.file ? `${s.file}${s.networkName ? `\nRete: ${s.networkName}` : ''}` : `La sessione si salverà da sola in ${s.sessionsFolder || 'Documenti\\WhoIs Pro\\Sessioni'}${s.networkName ? `\nRete: ${s.networkName}` : ''}`;
+    return `<button class="site-picker session-chip" data-action="session-menu" title="${esc(title)}">
+      <span class="site-icon ${cls}">${icon(ic)}</span>
+      <span class="site-label"><small>${esc(small)}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
+    ${s.autoSaveFailed ? `<button class="btn btn-primary" data-action="save-as" title="Scegli un altro file">${icon('save')} Salva con nome</button>` : ''}`;
+  }
   const label = s.file ? fileName(s.file).replace(/\.whoispro$/i, '') : 'Sessione non salvata';
-  return `${internetPill()}<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
+  return `<button class="site-picker session-chip" data-action="session-menu" title="${esc(s.file || 'La sessione non è ancora stata salvata in un file')}">
       <span class="site-icon ${dirty ? 'is-dirty' : s.file ? 'is-saved' : ''}">${icon(dirty ? 'edit' : s.file ? 'check' : 'archive')}</span>
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
-    ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}
+    ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}`;
+}
+
+function topbarActions() {
+  const st = S.st;
+  return `${internetPill()}${sessionChip()}
     <span class="topbar-sep"></span>
     <button class="icon-btn" data-action="pc-network" title="Rete del PC: schede, IP, gateway, DNS e profili">${icon('network')}</button>
     <button class="icon-btn ${S.page === 'settings' ? 'is-active' : ''}" data-action="go" data-page="settings" title="Impostazioni${st.update && st.update.available ? ' · nuova versione disponibile' : ''}">${icon('settings')}${st.update && st.update.available ? '<span class="dot-badge"></span>' : ''}</button>`;
@@ -261,6 +288,8 @@ setNavigator(go);
 // ---------------------------------------------------------------------------------------------------------------------
 /** Prima di perdere i dati: vero se si può procedere (salvato, o l'utente ha scelto di non salvare). */
 async function confirmDiscard(what) {
+  // con il salvataggio automatico il programma salva da sé prima di cambiare sessione
+  if (S.st.session.autoSave && !S.st.session.autoSaveFailed) return true;
   if (!S.st.session.dirty) return true;
   const total = Object.values(counts()).reduce((a, b) => a + b, 0);
   if (!total) return true;
@@ -280,7 +309,8 @@ async function newSession() {
     adopt(await call('newSession'));
     updateChrome();
     renderPage(true);
-    toast('Nuova sessione vuota.', { tone: 'success' });
+    const net = S.st.session.networkName;
+    toast(S.st.session.autoSave && net ? `Sessione nuova per «${net}»: si salva da sola appena c'è qualcosa.` : 'Nuova sessione vuota.', { tone: 'success' });
   } catch (err) { toastError(err); }
 }
 
@@ -324,14 +354,16 @@ async function exportSession(format) {
 function sessionMenu(anchor) {
   const s = S.st.session;
   openMenu(anchor, [
-    { header: s.file ? fileName(s.file) : 'Sessione non salvata' },
+    { header: s.file ? fileName(s.file) : s.autoSave && s.networkName ? `Sessione di «${s.networkName}»` : 'Sessione non salvata' },
     ...(s.file ? [{ html: `<div class="menu-path">${esc(s.file)}</div>` }] : []),
+    ...(s.autoSave && s.networkName ? [{ html: `<div class="menu-path">Rete: ${esc(s.networkName)} · si salva da sola</div>` }] : []),
     { ic: 'edit', label: 'Dettagli della sessione…', run: () => openSessionDrawer() },
     { sep: true },
     { ic: 'filePlus', label: 'Nuova sessione', hint: 'Ctrl+N', run: newSession },
     { ic: 'folderOpen', label: 'Apri…', hint: 'Ctrl+O', run: openSession },
-    { ic: 'save', label: 'Salva', hint: 'Ctrl+S', run: () => saveSession(false) },
+    { ic: 'save', label: s.autoSave ? 'Salva adesso' : 'Salva', hint: 'Ctrl+S', run: () => saveSession(false) },
     { ic: 'download', label: 'Salva con nome…', hint: 'Ctrl+Maiusc+S', run: () => saveSession(true) },
+    ...(s.autoSave ? [{ ic: 'folder', label: 'Apri la cartella delle sessioni', run: () => call('openSessionsFolder').catch((e) => toastError(e)) }] : []),
     { sep: true },
     { ic: 'fileCode', label: 'Esporta report HTML…', run: () => exportSession('html') },
     { ic: 'sheet', label: 'Esporta host in CSV…', run: () => exportSession('csv') },
@@ -461,6 +493,41 @@ on('inventory.state', (w) => {
   if (S.st.running) S.st.running.inventory = !!(w.scanning && !S.st.running.network);
   updateChrome();
 });
+
+// La sessione si è salvata da sola: il riquadro in alto lo dice (e la Panoramica, se è aperta, mostra il file)
+on('session.saved', (d) => {
+  if (!S.st) return;
+  adopt({ state: d.state });
+  updateChrome();
+  if (S.page === 'overview') renderPage();
+});
+on('session.autosaveFailed', (d) => {
+  if (!S.st) return;
+  adopt({ state: d.state });
+  updateChrome();
+  toast(`${d.error} Il salvataggio automatico resta fermo finché non salvi con nome.`, { tone: 'error', title: 'Sessione non salvata', timeout: 15000, action: { label: 'Salva con nome', run: () => saveSession(true) } });
+});
+// Il PC è passato a un'altra rete (altro cliente, casa): si propone la sessione di quella rete
+on('network.changed', (d) => {
+  if (!S.st || !d || d.sameSession) return;
+  adopt({ state: d.state });
+  updateChrome();
+  if (!d.autoSave) { toast(`Adesso sei in «${d.name}».`, { tone: 'info', title: 'Altra rete', timeout: 8000 }); return; }
+  toast(d.hasSession ? `C'è già una sessione salvata per «${d.name}».` : `Vuoi una sessione nuova per «${d.name}»? Quella attuale resta salvata.`, {
+    tone: 'info', title: `Sei in un'altra rete: ${d.name}`, timeout: 30000, ic: 'network',
+    action: { label: d.hasSession ? 'Apri la sua sessione' : 'Nuova sessione', run: () => switchNetworkSession() },
+  });
+});
+
+async function switchNetworkSession() {
+  try {
+    const r = adopt(await call('switchNetworkSession'));
+    updateChrome();
+    renderPage(true);
+    const c = counts();
+    toast(r.reopened ? `${plural(c.hosts, 'host', 'host')}, ${plural(c.ports, 'porta', 'porte')}.` : 'Sessione nuova: si salva da sola appena c\'è qualcosa.', { tone: 'success', title: `Sessione di «${r.network}»` });
+  } catch (err) { toastError(err, 'Sessione non cambiata'); }
+}
 on('inventory.progress', (p) => {
   if (!S.st || !S.st.inventory) return;
   S.st.inventory.scanning = true;

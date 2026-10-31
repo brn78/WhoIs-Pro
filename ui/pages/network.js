@@ -668,17 +668,13 @@ on('network.done', (d) => {
   // le differenze dell'archivio della rete (dispositivi nuovi, ricomparsi, cambiati, assenti): i nuovi arrivano anche come avviso
   const diff = d.diff;
   const changes = diff && !diff.isFirst ? diff.newCount + diff.goneCount + diff.changedCount + diff.returnedCount : 0;
-  const archive = diff ? (diff.isFirst ? ' Archivio della rete creato.' : ` Archivio: ${diff.summary}`) : '';
+  const archive = diff ? (diff.isFirst ? ' Archivio di questa rete creato: dalla prossima scansione arrivano confronti e avvisi.' : ` Archivio: ${diff.summary}`) : '';
   if (d.error) toast(d.error, { tone: 'error', title: 'Scansione interrotta' });
   else if (d.cancelled) toast(`${plural(d.found, 'host attivo', 'host attivi')} fino a quel momento (l'archivio non viene aggiornato).`, { tone: 'warning', title: 'Scansione fermata' });
   else toast(`${plural(d.found, 'host attivo', 'host attivi')} in ${fmtSeconds(d.seconds)}${gone}.${archive}`, {
-    tone: 'success', title: 'Scansione della rete completata', timeout: changes ? 10000 : 6000,
-    action: changes ? { label: 'Cambiamenti', run: () => navigate('devices', { tab: 'events' }) } : null,
+    tone: 'success', title: 'Scansione della rete completata', timeout: changes || (diff && diff.isFirst) ? 10000 : 6000,
+    action: changes ? { label: 'Cambiamenti', run: () => navigate('devices', { tab: 'events' }) } : diff && diff.isFirst ? { label: 'Archivio', run: () => navigate('devices') } : null,
   });
-  const fresh = d.newDevices || [];
-  if (fresh.length && d.firstCensus) {
-    toast(`Da ora WhoIs Pro ricorda questi ${plural(fresh.length, 'dispositivo', 'dispositivi')} nell'archivio della rete: alla prossima scansione segnala chi si collega per la prima volta.`, { tone: 'info', title: 'Archivio della rete creato', timeout: 10000, action: { label: 'Apri', run: () => navigate('devices') } });
-  }
   setTimeout(() => { n.fresh.clear(); }, 2000);
 });
 

@@ -5,6 +5,22 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.7.0 · 31 ottobre 2026
+
+- **Un archivio per ogni rete**, per chi gira tra i clienti: la rete si riconosce dal MAC del router, non dalla sottorete
+  (la stessa 192.168.1.0/24 esiste in mille sedi); senza un router raggiungibile vale la sottorete. Nella pagina
+  *Dispositivi* un selettore mostra la rete in cui ti trovi («qui») e le altre visitate, più «Tutte le reti»; a ogni rete
+  puoi dare un nome («Cliente Rossi», «Casa») e «Dimentica la rete» toglie una sede con i suoi dispositivi. I confronti
+  valgono dentro la rete: il NAS del cliente non diventa «assente» quando sei a casa. La prima scansione automatica in
+  una rete mai vista parte subito.
+- **Sessione salvata da sola, una per rete**: pochi secondi dopo ogni modifica, in
+  `Documenti\WhoIs Pro\Sessioni\<nome della rete>.whoispro`. All'avvio si riapre la sessione della rete in cui si trova
+  il PC; quando ti colleghi a un'altra rete un avviso propone la sua sessione (o una nuova), e quella di prima resta
+  salvata. Il riquadro in alto dice «Salvata da sola alle HH:MM»; «Salva con nome», «Apri» e la cartella delle sessioni
+  restano nel menu. Si spegne in *Impostazioni → Generale → Sessione* (torna il salvataggio a mano di prima).
+- L'archivio della 2.6.0 si aggiorna da solo: i dispositivi già conosciuti, compresi quelli importati dal vecchio
+  registro, restano divisi per sottorete e passano alla rete giusta appena una scansione li ritrova.
+
 ## 2.6.0 · 31 ottobre 2026
 
 - **Archivio della rete nel tempo** (nuova pagina *Dispositivi*): il registro dei dispositivi diventa un archivio

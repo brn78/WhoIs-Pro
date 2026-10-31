@@ -43,6 +43,13 @@ Namespace Config
         Public Property Profiles As New List(Of NetworkProfile)()
         ''' <summary>Ultima sessione salvata o aperta: all'avvio si riapre se il file c'è ancora (vuoto dopo «Nuova sessione»).</summary>
         Public Property LastSession As String = ""
+        ''' <summary>
+        ''' La sessione si salva da sola (Documenti\WhoIs Pro\Sessioni, un file per rete, con il nome della rete) e all'avvio
+        ''' si riapre quella della rete in cui si trova il PC: chi gira tra i clienti non deve pensare ai file.
+        ''' </summary>
+        Public Property AutoSaveSession As Boolean = True
+        ''' <summary>Per ogni rete (chiave dell'archivio) l'ultimo file di sessione usato lì.</summary>
+        Public Property NetworkSessions As New Dictionary(Of String, String)(StringComparer.Ordinal)
 
         ''' <summary>Archivio della rete: scansioni automatiche a intervalli.</summary>
         Public Property NetworkWatchEnabled As Boolean
@@ -74,6 +81,7 @@ Namespace Config
                     Dim s = JsonSerializer.Deserialize(Of AppSettings)(File.ReadAllText(path), JsonOptions)
                     If s IsNot Nothing Then
                         If s.Profiles Is Nothing Then s.Profiles = New List(Of NetworkProfile)()
+                        If s.NetworkSessions Is Nothing Then s.NetworkSessions = New Dictionary(Of String, String)(StringComparer.Ordinal)
                         s.AutoStart = AutoStartEnabled()
                         Return s
                     End If

@@ -1641,3 +1641,10 @@ table.dt .trunc.w-summary { --w: 420px; }
 .toast.attention .toast-icon { background: var(--warning-soft); color: var(--warning-text); }
 .toast.attention .toast-bar { color: var(--warning); opacity: .6; }
 .toast .toast-time { flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 5px; }
+
+/* Archivio della rete: barra della rete mostrata (selettore, stato «sei qui», rinomina, dimentica) */
+.net-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius, 12px); background: var(--surface); }
+.net-bar-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; color: var(--muted); }
+.net-bar .select { min-width: 260px; max-width: 420px; }
+.net-bar-info { font-size: 12.5px; margin-left: auto; }
+@media (max-width: 900px) { .net-bar-info { margin-left: 0; flex-basis: 100%; } }

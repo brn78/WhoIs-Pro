@@ -68,6 +68,12 @@ Namespace UI
         Private _dirty As Boolean
         Private _adapters As List(Of LocalAdapterInfo)
 
+        ' sessione per rete: si salva da sola in Documenti\WhoIs Pro\Sessioni (un file per rete, con il nome della rete)
+        ' due secondi e mezzo dopo l'ultima modifica; la rete della sessione sta nella sessione stessa (NetworkKey)
+        Private ReadOnly _autoSave As New System.Windows.Forms.Timer With {.Interval = 2500}
+        Private _autoSavedAt As DateTime?
+        Private _autoSaveFailed As Boolean
+
         ' archivio della rete nel tempo (SQLite, Core\Inventory) e sorveglianza: scansioni periodiche e a richiesta, una alla
         ' volta, con il motore DiscoveryScanner. La scansione della pagina Rete passa dallo stesso servizio e aggiorna lo
         ' stesso archivio; il registro dei dispositivi (nome, note, icona per MAC) è una vista sullo stesso database.
@@ -101,8 +107,10 @@ Namespace UI
             AddHandler _internetTimer.Tick, Sub() CheckInternet()
             _devices = New DeviceRegistry(_store)
             _watch = New NetworkWatchService(_settings, _store, New DiscoveryScanner(), SynchronizationContext.Current)
+            AddHandler _autoSave.Tick, Sub() AutoSaveNow()
             AddHandler _watch.Progressed, AddressOf OnWatchProgress
             AddHandler _watch.Finished, AddressOf OnWatchFinished
+            AddHandler _watch.NetworkChanged, AddressOf OnNetworkChanged
             AddHandler _watch.StateChanged, Sub() _owner.PostEvent("inventory.state", _watch.View())
             ' avvisi dell'archivio (dispositivo nuovo, sospetto ricomparso): schedina nella pagina e, a finestra nascosta, avviso di Windows
             AddHandler _watch.AlertRaised, Sub(s, a)
@@ -158,15 +166,25 @@ Namespace UI
                 Case "stopNetwork"
                     If _sessionScan Then _watch.CancelScan()
                     Return Nothing
-                Case "inventory" : Return InventoryView(ArgText(args, "query"), ArgFlag(args, "onlyOnline"))
+                Case "inventory" : Return InventoryView(ArgText(args, "query"), ArgFlag(args, "onlyOnline"), ArgText(args, "network"))
                 Case "inventoryHost" : Return InventoryHost(ArgLong(args, "id"))
                 Case "inventorySave" : Return InventorySave(args)
                 Case "inventoryForget"
                     _store.Network.DeleteHost(ArgLong(args, "id"))
-                    Return InventoryView("", False)
+                    Return InventoryView("", False, ArgText(args, "network"))
                 Case "inventoryAck"
-                    If ArgFlag(args, "all") Then _store.Network.AcknowledgeAll() Else _store.Network.Acknowledge(ArgLong(args, "id"))
-                    Return New With {.unseen = _store.Network.UnacknowledgedCount(), .state = State()}
+                    If ArgFlag(args, "all") Then _store.Network.AcknowledgeAll(NetworkFilter(ArgText(args, "network"))) Else _store.Network.Acknowledge(ArgLong(args, "id"))
+                    Return New With {.unseen = _store.Network.UnacknowledgedCount(NetworkFilter("")), .state = State()}
+                Case "inventoryNetwork" : Return RenameNetwork(ArgText(args, "key"), ArgText(args, "alias"))
+                Case "inventoryForgetNetwork"
+                    If _watch.IsScanning Then Throw New UserMessageException("C'è una scansione in corso: aspetta che finisca prima di dimenticare una rete.")
+                    _store.Network.DeleteNetwork(ArgText(args, "key"))
+                    Return InventoryView("", False, "")
+                Case "switchNetworkSession" : Return SwitchNetworkSession()
+                Case "openSessionsFolder"
+                    Directory.CreateDirectory(SessionsFolder)
+                    Process.Start(New ProcessStartInfo(SessionsFolder) With {.UseShellExecute = True})
+                    Return Nothing
                 Case "inventoryScan" : Return StartInventoryScan(ArgText(args, "target"))
                 Case "inventoryStop"
                     If _watch.IsScanning AndAlso Not _sessionScan Then _watch.CancelScan()
@@ -253,9 +271,180 @@ Namespace UI
             _watch.Start()
             ' il catalogo delle icone dei dispositivi si prepara subito, fuori dalla finestra: la scelta poi si apre già pronta
             Dim unusedIcons = Task.Run(Function() IconCatalog.Count)
-            Dim reopened = ReopenLastSession()
+            Dim reopened = OpenStartupSession()
             Return New With {.state = State(), .session = SessionData(), .reopened = reopened, .autoScan = AutoScanOffer()}
         End Function
+
+#Region "Sessione per rete e salvataggio automatico"
+
+        ''' <summary>Cartella delle sessioni salvate da sole: Documenti\WhoIs Pro\Sessioni (con una cartella dati propria, WHOISPRO_DATA_FOLDER, lì dentro).</summary>
+        Public Shared ReadOnly Property SessionsFolder As String
+            Get
+                If Not String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WHOISPRO_DATA_FOLDER")) Then Return Path.Combine(MainWindow.LocalFolder, "Sessioni")
+                Return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "WhoIs Pro", "Sessioni")
+            End Get
+        End Property
+
+        ''' <summary>Lega la sessione a una rete: la chiave e il nome (quello dato dall'utente, altrimenti l'etichetta) restano nella sessione.</summary>
+        Private Sub BindSessionNetwork(network As NetworkIdentity)
+            If network Is Nothing Then Return
+            _session.NetworkKey = network.Key
+            _session.NetworkName = If(_store.Network.GetNetwork(network.Key)?.DisplayName, network.Label)
+        End Sub
+
+        ''' <summary>Il nome della rete della sessione per il file e per la barra ("" se la sessione non ha una rete).</summary>
+        Private Function SessionNetworkName() As String
+            If String.IsNullOrEmpty(_session.NetworkKey) Then Return ""
+            Return If(_store.Network.GetNetwork(_session.NetworkKey)?.DisplayName, If(_session.NetworkName, ""))
+        End Function
+
+        ''' <summary>Per ogni rete l'ultimo file di sessione usato lì: così all'avvio, in quella rete, si riapre quello.</summary>
+        Private Sub RememberNetworkSession()
+            If String.IsNullOrEmpty(_session.NetworkKey) OrElse _file = "" Then Return
+            Dim known As String = Nothing
+            If _settings.NetworkSessions.TryGetValue(_session.NetworkKey, known) AndAlso String.Equals(known, _file, StringComparison.OrdinalIgnoreCase) Then Return
+            _settings.NetworkSessions(_session.NetworkKey) = _file
+            Try
+                SettingsStore.Save(MainWindow.LocalFolder, _settings)
+            Catch
+                ' le impostazioni non si scrivono: al prossimo avvio si parte da una sessione nuova
+            End Try
+        End Sub
+
+        ''' <summary>Nome di file per la sessione della sua rete: il nome della rete ripulito; se il file esiste già (un'altra sessione della stessa rete), con data e ora.</summary>
+        Private Function DefaultSessionPath() As String
+            Dim name = SessionNetworkName()
+            If name = "" Then name = "Sessione"
+            For Each c In Path.GetInvalidFileNameChars()
+                name = name.Replace(c, "-"c)
+            Next
+            name = name.Replace("·", "-").Trim()
+            If name.Length > 60 Then name = name.Substring(0, 60).Trim()
+            Dim candidate = Path.Combine(SessionsFolder, name & ".whoispro")
+            If File.Exists(candidate) Then candidate = Path.Combine(SessionsFolder, $"{name} {DateTime.Now:yyyy-MM-dd HHmm}.whoispro")
+            Return candidate
+        End Function
+
+        ''' <summary>Qualcosa da conservare: dati, scansioni, oppure note e titolo scritti dall'utente.</summary>
+        Private ReadOnly Property HasAnyData As Boolean
+            Get
+                Return _session.Hosts.Count + _session.Ports.Count + _session.WhoisEntries.Count + _session.DnsRecords.Count + _session.TracerouteHops.Count > 0 OrElse
+                       (_session.Scans IsNot Nothing AndAlso _session.Scans.Count > 0) OrElse (_session.PerfTests IsNot Nothing AndAlso _session.PerfTests.Count > 0) OrElse
+                       Not String.IsNullOrWhiteSpace(_session.Notes)
+            End Get
+        End Property
+
+        ''' <summary>Il salvataggio automatico riparte da capo a ogni modifica: scrive 2,5 secondi dopo l'ultima.</summary>
+        Private Sub ScheduleAutoSave()
+            If Not _settings.AutoSaveSession OrElse _autoSaveFailed Then Return
+            _autoSave.Stop()
+            _autoSave.Start()
+        End Sub
+
+        ''' <summary>
+        ''' Salva adesso, se il salvataggio automatico è attivo e c'è qualcosa da salvare: nel file della sessione, oppure nel
+        ''' file della sua rete in Documenti\WhoIs Pro\Sessioni. Un errore ferma i tentativi fino al prossimo salvataggio a mano.
+        ''' </summary>
+        Public Sub AutoSaveNow()
+            _autoSave.Stop()
+            If Not _settings.AutoSaveSession OrElse Not _dirty OrElse _autoSaveFailed OrElse Not HasAnyData Then Return
+            Try
+                If String.IsNullOrEmpty(_session.NetworkKey) Then BindSessionNetwork(_watch.CurrentNetwork())
+                If _file = "" Then
+                    Directory.CreateDirectory(SessionsFolder)
+                    _file = DefaultSessionPath()
+                End If
+                Dim res = AtomicFileManager.SaveSessionAtomic(_session, _file)
+                If Not res.IsSuccess Then Throw New IOException(res.ErrorMessage)
+                _dirty = False
+                _autoSavedAt = DateTime.Now
+                RememberSession(_file)
+                RememberNetworkSession()
+                _owner.PostEvent("session.saved", New With {.file = _file, .at = _autoSavedAt, .auto = True, .state = State()})
+            Catch ex As Exception
+                _autoSaveFailed = True
+                _owner.PostEvent("session.autosaveFailed", New With {.file = _file, .error = Describe(ex), .state = State()})
+            End Try
+        End Sub
+
+        ''' <summary>
+        ''' All'avvio: con il salvataggio automatico si riapre la sessione della rete in cui si trova il PC (l'ultimo file usato
+        ''' lì), altrimenti si parte con una sessione nuova legata a quella rete; senza, l'ultima sessione usata, come prima.
+        ''' </summary>
+        Private Function OpenStartupSession() As Object
+            If Not _settings.AutoSaveSession Then Return ReopenLastSession()
+            If _reopenTried Then Return Nothing
+            _reopenTried = True
+            Dim network = _watch.CurrentNetwork()
+            BindSessionNetwork(network)
+            Dim name = SessionNetworkName()
+            Dim path As String = Nothing
+            If network IsNot Nothing Then _settings.NetworkSessions.TryGetValue(network.Key, path)
+            If String.IsNullOrEmpty(path) OrElse Not File.Exists(path) Then
+                Return New With {.network = name, .fresh = True, .known = network IsNot Nothing, .error = ""}
+            End If
+            Try
+                Dim restored = False
+                Dim loaded = AtomicFileManager.LoadSessionSafe(path, restored)
+                If loaded Is Nothing Then Throw New InvalidDataException("il file non contiene una sessione di WhoIs Pro")
+                _session = loaded
+                _file = path
+                _dirty = restored
+                BindSessionNetwork(network)
+                Return New With {.file = path, .network = name, .restoredFromBackup = restored, .error = ""}
+            Catch ex As Exception
+                Return New With {.file = path, .network = name, .restoredFromBackup = False, .error = ex.Message}
+            End Try
+        End Function
+
+        ''' <summary>Il PC è passato a un'altra rete (altro cliente, casa): la pagina propone la sessione di quella rete.</summary>
+        Private Sub OnNetworkChanged(sender As Object, network As NetworkIdentity)
+            Dim name = If(_store.Network.GetNetwork(network.Key)?.DisplayName, network.Label)
+            Dim path As String = Nothing
+            _settings.NetworkSessions.TryGetValue(network.Key, path)
+            _owner.PostEvent("network.changed", New With {
+                .key = network.Key, .name = name, .sameSession = String.Equals(_session.NetworkKey, network.Key, StringComparison.Ordinal),
+                .hasSession = Not String.IsNullOrEmpty(path) AndAlso File.Exists(path), .autoSave = _settings.AutoSaveSession, .state = State()
+            })
+        End Sub
+
+        ''' <summary>«Passa alla sessione di questa rete»: salva quella attuale (se automatico), poi apre il file della rete o ne inizia una nuova.</summary>
+        Private Function SwitchNetworkSession() As Object
+            Dim network = _watch.CurrentNetwork(refresh:=True)
+            If network Is Nothing Then Throw New UserMessageException("Nessuna rete locale riconosciuta adesso: collega il PC a una rete.")
+            If _settings.AutoSaveSession Then
+                AutoSaveNow()
+            ElseIf HasUnsavedData Then
+                Throw New UserMessageException("La sessione ha dati non salvati: salvala prima di passare a un'altra rete.")
+            End If
+            StopAll()
+            Dim path As String = Nothing
+            _settings.NetworkSessions.TryGetValue(network.Key, path)
+            _session = New ScanSession()
+            _file = ""
+            _dirty = False
+            _autoSaveFailed = False
+            Dim reopened = False
+            If Not String.IsNullOrEmpty(path) AndAlso File.Exists(path) Then
+                Try
+                    Dim restored = False
+                    Dim loaded = AtomicFileManager.LoadSessionSafe(path, restored)
+                    If loaded IsNot Nothing Then
+                        _session = loaded
+                        _file = path
+                        _dirty = restored
+                        reopened = True
+                    End If
+                Catch
+                    ' file illeggibile: si parte da una sessione nuova per questa rete
+                End Try
+            End If
+            BindSessionNetwork(network)
+            RememberSession(_file)
+            Return WrapSession(New With {.network = SessionNetworkName(), .reopened = reopened, .file = _file})
+        End Function
+
+#End Region
 
         Private _reopenTried As Boolean
         Private _autoScanOffered As Boolean
@@ -415,6 +604,8 @@ Namespace UI
                 .autoScanDelay = _settings.AutoScanDelay,
                 .autoInstallUpdates = _settings.AutoInstallUpdates,
                 .autoUpdateOui = _settings.AutoUpdateOui,
+                .autoSaveSession = _settings.AutoSaveSession,
+                .sessionsFolder = SessionsFolder,
                 .profiles = _settings.Profiles,
                 .networkWatchEnabled = _settings.NetworkWatchEnabled,
                 .networkScanIntervalMinutes = _settings.NetworkScanIntervalMinutes,
@@ -452,6 +643,12 @@ Namespace UI
             End If
             Dim theme = ArgText(args, "theme")
             If theme = "auto" OrElse theme = "light" OrElse theme = "dark" Then _settings.Theme = theme
+            ' sessione salvata da sola, una per rete
+            If args.TryGetProperty("autoSaveSession", value) Then
+                _settings.AutoSaveSession = value.ValueKind = JsonValueKind.True
+                _autoSaveFailed = False
+                If _settings.AutoSaveSession AndAlso _dirty Then ScheduleAutoSave()
+            End If
             ' archivio della rete: scansioni automatiche e avvisi
             If args.TryGetProperty("networkWatchEnabled", value) Then _settings.NetworkWatchEnabled = value.ValueKind = JsonValueKind.True
             If args.TryGetProperty("notifyNewDevices", value) Then _settings.NotifyNewDevices = value.ValueKind = JsonValueKind.True
@@ -645,6 +842,12 @@ Namespace UI
                 .file = _file,
                 .fileName = If(_file = "", "", Path.GetFileName(_file)),
                 .dirty = _dirty,
+                .autoSave = _settings.AutoSaveSession,
+                .autoSavedAt = _autoSavedAt,
+                .autoSaveFailed = _autoSaveFailed,
+                .networkKey = _session.NetworkKey,
+                .networkName = SessionNetworkName(),
+                .sessionsFolder = SessionsFolder,
                 .counts = New With {
                     .hosts = _session.Hosts.Count,
                     .ports = _session.Ports.Count,
@@ -700,6 +903,7 @@ Namespace UI
         Private Sub Touch()
             _dirty = True
             _session.ModifiedAt = DateTime.Now
+            ScheduleAutoSave()
         End Sub
 
         ''' <summary>Vero se ci sono dati non salvati (la finestra lo chiede prima di chiudere).</summary>
@@ -770,7 +974,7 @@ Namespace UI
                 Dim info = ToHostInfo(p.Host)
                 ' con le porte il tipo lo decide il motore (anche dai banner e dal NetBIOS); senza, aiutano quelle già nella sessione.
                 ' Nella fase ping il MAC non c'è ancora: l'archivio si aggiorna dalla fase ARP in poi, così niente doppioni per IP
-                If AddHost(info, classifyFromPorts:=Not _netOptions.ScanPorts, observe:=p.Phase <> "ping") Then _netNew.Add(info)
+                If AddHost(info, classifyFromPorts:=Not _netOptions.ScanPorts, observe:=p.Phase <> "ping", network:=_watch.Network) Then _netNew.Add(info)
                 _netFound(info.IPAddress) = info
                 _netSeenIps.Add(info.IPAddress)
             End If
@@ -932,7 +1136,7 @@ Namespace UI
                     AddPort(ToPortInfo(discovered.Ip, port))
                 Next
                 host = ToHostInfo(discovered)
-                isNew = AddHost(host, classifyFromPorts:=False)
+                isNew = AddHost(host, classifyFromPorts:=False, network:=If(report.Network, _watch.CurrentNetwork()))
                 Await FillIpv6Async(wake:=False)
             Else
                 Dim known = _session.Hosts.FirstOrDefault(Function(h) h.IPAddress = ip)
@@ -967,7 +1171,7 @@ Namespace UI
         ''' rilevazione, il nome, le note e l'icona dall'archivio della rete (anche da sessioni precedenti) e, se richiesto,
         ''' il tipo dalle porte già trovate. Vero se il dispositivo non era mai stato visto da questo PC.
         ''' </summary>
-        Private Function AddHost(h As HostInfo, Optional classifyFromPorts As Boolean = True, Optional observe As Boolean = True) As Boolean
+        Private Function AddHost(h As HostInfo, Optional classifyFromPorts As Boolean = True, Optional observe As Boolean = True, Optional network As NetworkIdentity = Nothing) As Boolean
             Dim idx = _session.Hosts.FindIndex(Function(x) x.IPAddress = h.IPAddress)
             If idx >= 0 Then
                 h.FirstSeen = _session.Hosts(idx).FirstSeen
@@ -981,7 +1185,7 @@ Namespace UI
                 _session.Hosts.Add(h)
             End If
             ApplyOpenPorts(h, classifyFromPorts)
-            Dim isNew = observe AndAlso _devices.Observe(h)
+            Dim isNew = observe AndAlso _devices.Observe(h, network)
             Touch()
             Return isNew
         End Function
@@ -1099,28 +1303,52 @@ Namespace UI
 
 #Region "Archivio della rete"
 
-        ''' <summary>Tutto quello che serve alla pagina Dispositivi: elenco filtrato, cambiamenti, scansioni, digest e stato della sorveglianza.</summary>
-        Private Function InventoryView(query As String, onlyOnline As Boolean) As Object
+        ''' <summary>La rete chiesta dalla pagina come filtro dell'archivio: "" = quella in cui si trova il PC, "*" = tutte (Nothing).</summary>
+        Private Function NetworkFilter(networkArg As String) As String
+            If networkArg = "*" Then Return Nothing
+            If Not String.IsNullOrEmpty(networkArg) Then Return networkArg
+            Return If(_watch.CurrentNetwork()?.Key, _store.Network.ListNetworks().FirstOrDefault()?.Key)
+        End Function
+
+        ''' <summary>
+        ''' Tutto quello che serve alla pagina Dispositivi per una rete ("" = quella in cui si trova il PC, o la più recente;
+        ''' "*" = tutte): elenco filtrato, cambiamenti, scansioni, digest, le reti conosciute e lo stato della sorveglianza.
+        ''' </summary>
+        Private Function InventoryView(query As String, onlyOnline As Boolean, networkArg As String) As Object
             Dim inv = _store.Network
-            Dim recentNew = inv.ListEvents(300, since:=DateTime.Now.AddHours(-24)).Where(Function(e) e.Kind = "nuovo" AndAlso e.HostId.HasValue).Select(Function(e) e.HostId.Value).ToHashSet()
-            Dim hosts = inv.ListHosts(query, onlyOnline).Select(Function(h) HostView(h, recentNew.Contains(h.Id))).ToList()
+            Dim networks = inv.ListNetworks()
+            Dim current = _watch.CurrentNetwork()
+            Dim filter = NetworkFilter(networkArg)
+            Dim names = networks.ToDictionary(Function(n) n.Key, Function(n) n.DisplayName, StringComparer.Ordinal)
+            Dim recentNew = inv.ListEvents(300, since:=DateTime.Now.AddHours(-24), networkKey:=filter).Where(Function(e) e.Kind = "nuovo" AndAlso e.HostId.HasValue).Select(Function(e) e.HostId.Value).ToHashSet()
+            Dim hosts = inv.ListHosts(query, onlyOnline, filter).Select(Function(h) HostView(h, recentNew.Contains(h.Id), names)).ToList()
             Return New With {
+                .network = If(filter, "*"),
+                .current = _watch.NetworkView(current),
+                .networks = networks.Select(Function(n) New With {
+                    .key = n.Key, .label = n.Label, .alias = n.[Alias], .name = n.DisplayName, .hasGateway = n.HasGateway, .cidr = n.Cidr, .gatewayIp = n.GatewayIp,
+                    .hostsCount = n.HostsCount, .onlineCount = n.OnlineCount, .scansCount = n.ScansCount, .lastScanAt = n.LastScanAt, .lastSeen = n.LastSeen, .unseen = n.Unseen,
+                    .isCurrent = current IsNot Nothing AndAlso n.Key = current.Key, .isSession = n.Key = _session.NetworkKey
+                }).ToList(),
                 .hosts = hosts,
-                .total = inv.Count,
-                .events = inv.ListEvents(400),
-                .scans = inv.ListScans(100),
-                .digest = inv.Digest(),
+                .total = If(filter Is Nothing, inv.Count, inv.CountIn(filter)),
+                .events = inv.ListEvents(400, networkKey:=filter),
+                .scans = inv.ListScans(100, filter),
+                .digest = inv.Digest(filter),
                 .watch = _watch.View()
             }
         End Function
 
-        Private Shared Function HostView(h As NetHostRecord, isNew As Boolean) As Object
+        Private Shared Function HostView(h As NetHostRecord, isNew As Boolean, networkNames As IReadOnlyDictionary(Of String, String)) As Object
+            Dim networkName As String = Nothing
+            If networkNames IsNot Nothing AndAlso h.NetworkKey IsNot Nothing Then networkNames.TryGetValue(h.NetworkKey, networkName)
             Return New With {
                 .id = h.Id, .hostKey = h.HostKey, .mac = If(h.Mac, "").ToUpperInvariant(), .ip = h.Ip, .hostName = h.HostName, .netBios = h.NetBios, .workgroup = h.Workgroup,
                 .vendor = h.Vendor, .deviceType = h.DeviceType, .category = h.Category, .osGuess = h.OsGuess, .isGateway = h.IsGateway, .isLocal = h.IsLocal,
                 .firstSeen = h.FirstSeen, .lastSeen = h.LastSeen, .seenCount = h.SeenCount, .missCount = h.MissCount, .ports = h.Ports, .latencyMs = h.LatencyMs,
                 .alias = h.[Alias], .trust = CInt(h.Trust), .notes = h.Notes, .icon = If(h.Icon, ""), .iconColor = If(h.IconColor, ""),
-                .isOnline = h.IsOnline, .displayName = h.DisplayName, .isNew = isNew, .sensitivePorts = h.SensitivePorts
+                .isOnline = h.IsOnline, .displayName = h.DisplayName, .isNew = isNew, .sensitivePorts = h.SensitivePorts,
+                .network = h.NetworkKey, .networkName = networkName
             }
         End Function
 
@@ -1129,7 +1357,16 @@ Namespace UI
             Dim h = _store.Network.Get(id)
             If h Is Nothing Then Throw New UserMessageException("Il dispositivo non è più nell'archivio.")
             Dim isNew = _store.Network.ListEvents(50, since:=DateTime.Now.AddHours(-24), hostId:=id).Any(Function(e) e.Kind = "nuovo")
-            Return New With {.host = HostView(h, isNew), .history = _store.Network.ListEvents(30, hostId:=id)}
+            Dim names = _store.Network.ListNetworks().ToDictionary(Function(n) n.Key, Function(n) n.DisplayName, StringComparer.Ordinal)
+            Return New With {.host = HostView(h, isNew, names), .history = _store.Network.ListEvents(30, hostId:=id)}
+        End Function
+
+        ''' <summary>Nome dato dall'utente a una rete («Cliente Rossi»): nell'archivio e, se è la rete della sessione, anche nella sessione.</summary>
+        Private Function RenameNetwork(key As String, [alias] As String) As Object
+            If String.IsNullOrEmpty(key) Then Throw New UserMessageException("Rete non indicata.")
+            _store.Network.SetNetworkAlias(key, [alias])
+            If String.Equals(_session.NetworkKey, key, StringComparison.Ordinal) Then _session.NetworkName = SessionNetworkName()
+            Return InventoryView("", False, key)
         End Function
 
         ''' <summary>Alias, fiducia e note scritti nella scheda; l'alias e le note tornano anche sull'host della sessione, se c'è.</summary>
@@ -1509,10 +1746,13 @@ Namespace UI
 #Region "Sessione"
 
         Private Function NewSession() As Object
+            If _settings.AutoSaveSession Then AutoSaveNow()
             StopAll()
             _session = New ScanSession()
             _file = ""
             _dirty = False
+            _autoSaveFailed = False
+            BindSessionNetwork(_watch.CurrentNetwork())
             RememberSession("")
             Return WrapSession()
         End Function
@@ -1531,12 +1771,17 @@ Namespace UI
                     Throw New UserMessageException($"La sessione non si apre: {ex.Message}")
                 End Try
                 If loaded Is Nothing Then Throw New UserMessageException("Il file non contiene una sessione di WhoIs Pro.")
+                If _settings.AutoSaveSession Then AutoSaveNow()
                 StopAll()
                 _session = loaded
                 _file = open.FileName
                 _dirty = restored
+                _autoSaveFailed = False
+                ' una sessione di prima della 2.7 non sa di che rete è: diventa di quella in cui si trova il PC
+                If String.IsNullOrEmpty(_session.NetworkKey) Then BindSessionNetwork(_watch.CurrentNetwork())
                 RememberSession(_file)
-                Return WrapSession(New With {.restoredFromBackup = restored, .file = _file})
+                RememberNetworkSession()
+                Return WrapSession(New With {.restoredFromBackup = restored, .file = _file, .network = SessionNetworkName()})
             End Using
         End Function
 
@@ -1554,11 +1799,16 @@ Namespace UI
                     path = save.FileName
                 End Using
             End If
+            If String.IsNullOrEmpty(_session.NetworkKey) Then BindSessionNetwork(_watch.CurrentNetwork())
             Dim res = AtomicFileManager.SaveSessionAtomic(_session, path)
             If Not res.IsSuccess Then Throw New UserMessageException(res.ErrorMessage)
             _file = path
             _dirty = False
+            _autoSaveFailed = False
+            _autoSavedAt = DateTime.Now
+            _autoSave.Stop()
             RememberSession(path)
+            RememberNetworkSession()
             Return Wrap(New With {.file = res.FilePath, .checksum = res.ChecksumSHA256, .backup = If(File.Exists(res.BackupPath), res.BackupPath, Nothing)})
         End Function
 
@@ -1623,7 +1873,7 @@ Namespace UI
                 color = ArgText(args, "iconColor").Trim().ToLowerInvariant()
                 If color <> "" AndAlso Not Text.RegularExpressions.Regex.IsMatch(color, "^#[0-9a-f]{6}$") Then color = ""
             End If
-            _devices.SetLabel(h, name, notes, icon, color)
+            _devices.SetLabel(h, name, notes, icon, color, _watch.CurrentNetwork())
             Touch()
             Return New With {.host = h, .state = State()}
         End Function
@@ -1829,6 +2079,8 @@ Namespace UI
 
         Public Sub Dispose() Implements IDisposable.Dispose
             StopAll()
+            _autoSave.Stop()
+            _autoSave.Dispose()
             _watch.Dispose()
             _flush.Stop()
             _flush.Dispose()

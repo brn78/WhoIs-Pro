@@ -1,5 +1,6 @@
-// Archivio della rete nel tempo: dispositivi conosciuti con la scheda curata dall'utente (alias, fiducia, note),
-// cambiamenti tra una scansione e l'altra (nuovo, ricomparso, cambiato, assente) e storico delle scansioni.
+// Archivio della rete nel tempo, una rete (sede, cliente) per volta: dispositivi conosciuti con la scheda curata dall'utente
+// (alias, fiducia, note), cambiamenti tra una scansione e l'altra (nuovo, ricomparso, cambiato, assente) e storico delle
+// scansioni. La rete è il router (MAC) o, in mancanza, la sottorete; si apre su quella in cui si trova il PC.
 import { call, on } from '../core/bridge.js';
 import { $, $$, esc, fmtDateTime, fmtNumber, fmtSeconds, plural } from '../core/dom.js';
 import { icon } from '../core/icons.js';
@@ -7,13 +8,15 @@ import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { table } from '../core/table.js';
-import { confirmDialog, emptyState, note, openMenu, pageHead, toast, toastError } from '../core/ui.js';
+import { confirmDialog, emptyState, note, openMenu, pageHead, promptDialog, toast, toastError } from '../core/ui.js';
 import { launchItems, shortVendor } from './network.js';
 
 S.devices = {
-  data: null,          // risposta di «inventory»: hosts, events, scans, digest, watch
+  data: null,          // risposta di «inventory»: network, current, networks, hosts, events, scans, digest, watch
   loading: false,
   tab: 'hosts',
+  network: '',         // rete mostrata: '' = quella in cui si trova il PC, '*' = tutte, altrimenti la chiave
+  networkPinned: false, // vero se l'utente ha scelto una rete: non si segue più quella del PC finché non cambia pagina
   q: '', onlyOnline: false,
   selectedId: null, detail: null, saved: false,
   pendingHost: null,   // scheda da aprire appena i dati arrivano (dall'avviso o da un evento)
@@ -24,12 +27,23 @@ const TRUST = { 0: { label: 'Da classificare', tone: '' }, 1: { label: 'Affidabi
 const KIND = { nuovo: 'warning', ricomparso: 'info', cambiato: 'primary', assente: '' };
 
 const watch = () => (S.devices.data && S.devices.data.watch) || (S.st && S.st.inventory) || {};
-const scanning = () => !!watch().scanning;
 const fmtShort = (iso) => fmtDateTime(iso).replace(/\/\d{4} /, ' ');
 const upperMac = (m) => String(m || '').toUpperCase();
+const allNetworks = () => S.devices.data && S.devices.data.network === '*';
+/** La rete mostrata, con i suoi numeri (null con «Tutte le reti» o se non è ancora in archivio). */
+const shownNetwork = () => { const d = S.devices.data; return d ? (d.networks || []).find((n) => n.key === d.network) || null : null; };
+/** Nome della rete mostrata: alias dell'utente, altrimenti l'etichetta della scansione. */
+function shownNetworkName() {
+  const d = S.devices.data;
+  if (!d) return '';
+  if (d.network === '*') return 'Tutte le reti';
+  const n = shownNetwork();
+  if (n) return n.name;
+  return d.current && d.current.key === d.network ? d.current.name : d.network.replace(/^(gw|net):/, '');
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Intestazione: digest, «Scansiona adesso» con l'avanzamento per fase
+// Intestazione: rete mostrata (selettore, rinomina, dimentica), digest, «Scansiona adesso» con l'avanzamento per fase
 // ---------------------------------------------------------------------------------------------------------------------
 function scanControl() {
   const w = watch();
@@ -39,7 +53,8 @@ function scanControl() {
       <span class="scan-live-text"><b id="inv-status">${esc(w.status || 'Preparazione…')}</b><span class="meter"><span id="inv-meter" style="width:${w.percent || 0}%"></span></span></span>
       ${S.st && S.st.running && S.st.running.network ? '' : `<button class="btn btn-sm btn-danger" data-action="inv-stop">${icon('stop')} Ferma</button>`}</span>`;
   }
-  return `<button class="btn btn-primary" data-action="inv-scan" title="Scansiona la rete principale (o quella delle Impostazioni → Archivio della rete) e aggiorna l'archivio">${icon('radar')} Scansiona adesso</button>`;
+  const cur = w.network;
+  return `<button class="btn btn-primary" data-action="inv-scan" title="${esc(cur ? `Scansiona la rete in cui sei adesso (${cur.name}) e aggiorna il suo archivio` : 'Scansiona la rete principale e aggiorna l\'archivio')}">${icon('radar')} Scansiona adesso</button>`;
 }
 
 /** Aggiorna sul posto lo stato della scansione (testo e barra) senza ridisegnare la pagina. */
@@ -51,11 +66,40 @@ function updateLive() {
   $('#inv-meter', live).style.width = `${w.percent || 0}%`;
 }
 
+/** Selettore della rete: quella in cui si trova il PC è segnata «qui»; le altre sono le sedi visitate; in fondo «Tutte le reti». */
+function networkBar() {
+  const d = S.devices.data;
+  const nets = (d.networks || []).slice();
+  const cur = d.current;
+  if (cur && !nets.some((n) => n.key === cur.key)) nets.unshift({ key: cur.key, name: cur.name, label: cur.label, hostsCount: 0, scansCount: 0, isCurrent: true, hasGateway: cur.hasGateway });
+  const sel = d.network;
+  const selected = nets.find((n) => n.key === sel);
+  const opt = (n) => `<option value="${esc(n.key)}" ${n.key === sel ? 'selected' : ''}>${esc(n.name)}${n.isCurrent ? ' · qui' : ''}${n.hostsCount ? ` · ${plural(n.hostsCount, 'dispositivo', 'dispositivi')}` : ''}</option>`;
+  const total = nets.reduce((a, n) => a + (n.hostsCount || 0), 0);
+  let where = '';
+  if (!cur) where = '<span class="pill" title="Nessuna scheda di rete collegata a un router">Nessuna rete locale</span>';
+  else if (sel === '*') where = `<span class="pill" title="${esc(cur.name)}">Adesso sei in «${esc(cur.name)}»</span>`;
+  else if (selected && selected.isCurrent) where = '<span class="pill success pill-dot" title="L\'archivio di questa rete si aggiorna con le scansioni di adesso">Sei in questa rete</span>';
+  else where = `<span class="pill warning pill-dot" title="Adesso sei in «${esc(cur.name)}»: questo è l'archivio di un'altra sede">Non sei in questa rete</span>`;
+  const info = selected
+    ? `${selected.hasGateway ? `router ${esc(selected.label.split(' · ').slice(1).join(' · ') || selected.cidr || '')}` : 'riconosciuta dalla sottorete'}${selected.scansCount ? ` · ${plural(selected.scansCount, 'scansione', 'scansioni')}` : ''}${selected.lastScanAt ? ` · ultima ${fmtShort(selected.lastScanAt)}` : ''}`
+    : sel === '*' ? `${plural(nets.length, 'rete', 'reti')} in archivio` : '';
+  return `<div class="net-bar">
+    <span class="net-bar-label">${icon('network')} Rete</span>
+    <select class="select" data-field="network" title="L'archivio è diviso per rete: a casa vedi i dispositivi di casa, dal cliente quelli del cliente. La rete si riconosce dal MAC del router.">
+      ${nets.map(opt).join('')}<option value="*" ${sel === '*' ? 'selected' : ''}>Tutte le reti · ${plural(total, 'dispositivo', 'dispositivi')}</option></select>
+    ${where}
+    ${sel !== '*' ? `<button class="btn btn-sm" data-action="net-rename" title="Dai un nome alla rete: il cliente, la sede. Vale anche per il file della sessione.">${icon('edit')} Rinomina</button>` : ''}
+    ${sel !== '*' && selected && !selected.isCurrent ? `<button class="btn btn-sm btn-danger-ghost" data-action="net-forget" title="Toglie dall'archivio la rete con i suoi dispositivi, la loro storia e le sue scansioni">${icon('trash')} Dimentica la rete</button>` : ''}
+    <span class="net-bar-info muted">${info}</span>
+  </div>`;
+}
+
 function footerText() {
   const d = S.devices.data;
   const w = watch();
   const last = d && d.scans && d.scans[0];
-  if (!last) return 'L\'archivio si costruisce scansione dopo scansione: anche le scansioni della pagina Rete lo aggiornano. Le scansioni automatiche si regolano in Impostazioni → Archivio della rete.';
+  if (!last) return 'L\'archivio si costruisce scansione dopo scansione, rete per rete: anche le scansioni della pagina Rete lo aggiornano. Le scansioni automatiche si regolano in Impostazioni → Archivio della rete.';
   let next = '';
   if (w.enabled && w.nextScanAt) {
     const at = new Date(w.nextScanAt);
@@ -74,7 +118,7 @@ function hostRow(h) {
     ${catIcon(h)}
     <span class="dev-text">
       <span class="dev-name"><b class="trunc" title="${esc(h.displayName)}">${esc(h.displayName)}</b>
-        ${h.trust ? `<span class="pill ${t.tone}">${t.label.toLowerCase()}</span>` : ''}${h.isNew ? '<span class="pill warning">nuovo</span>' : ''}</span>
+        ${h.trust ? `<span class="pill ${t.tone}">${t.label.toLowerCase()}</span>` : ''}${h.isNew ? '<span class="pill warning">nuovo</span>' : ''}${allNetworks() && h.networkName ? `<span class="tag" title="Rete">${esc(h.networkName)}</span>` : ''}</span>
       <small class="trunc" title="${esc(sub)}">${esc(sub)}</small></span>
     <span class="dev-state"><span class="state"><span class="dot ${h.isOnline ? 'on' : ''}"></span>${h.isOnline ? 'presente' : `ultima volta ${fmtShort(h.lastSeen)}`}</span><span class="mono">${esc(h.ip)}</span></span>
   </button>`;
@@ -83,9 +127,16 @@ function hostRow(h) {
 function listCard() {
   const d = S.devices.data;
   const hosts = d.hosts;
+  const others = (d.networks || []).filter((n) => n.key !== d.network && n.hostsCount > 0).length;
+  // la stessa sottorete conosciuta solo per sottorete (vecchio registro, versioni precedenti): i suoi dispositivi passano qui appena ricompaiono
+  const shown = shownNetwork() || d.current;
+  const legacy = shown && shown.cidr ? (d.networks || []).find((n) => n.key !== d.network && !n.hasGateway && n.cidr === shown.cidr && n.hostsCount > 0) : null;
   let body;
-  if (!d.total) body = emptyState('server', 'Nessun dispositivo in archivio', 'Avvia una scansione: i dispositivi trovati restano qui anche quando si spengono, con la loro storia.');
-  else if (!hosts.length) body = emptyState('search', 'Nessun dispositivo corrisponde', 'Cambia le parole della ricerca o togli «solo presenti».');
+  if (!d.total) {
+    body = allNetworks()
+      ? emptyState('server', 'Nessun dispositivo in archivio', 'Avvia una scansione: i dispositivi trovati restano qui anche quando si spengono, con la loro storia.')
+      : emptyState('server', `Nessun dispositivo in «${shownNetworkName()}»`, `Avvia una scansione da qui o dalla pagina Rete: i dispositivi di questa rete restano in archivio con la loro storia.${legacy ? ` In archivio ci sono già ${plural(legacy.hostsCount, 'dispositivo', 'dispositivi')} della sottorete ${legacy.cidr} (versioni precedenti): passano qui appena la scansione li ritrova.` : others ? ` Le altre ${plural(others, 'rete conosciuta è', 'reti conosciute sono')} nel menu «Rete» qui sopra.` : ''}`);
+  } else if (!hosts.length) body = emptyState('search', 'Nessun dispositivo corrisponde', 'Cambia le parole della ricerca o togli «solo presenti».');
   else body = `<div class="dev-list" id="dev-list">${hosts.map(hostRow).join('')}</div>`;
   return `<section class="card table-card">
     <div class="toolbar">
@@ -119,8 +170,9 @@ function detailCard() {
     h.latencyMs != null ? chip('activity', `${fmtNumber(Math.round(h.latencyMs))} ms`) : '',
     h.isGateway ? chip('router', 'gateway') : '',
     h.isLocal ? chip('laptop', 'questa macchina') : '',
+    h.networkName ? chip('network', h.networkName, `Rete: ${h.networkName}`) : '',
   ].filter(Boolean).join('');
-  const seen = `${h.isOnline ? 'Presente nell\'ultima scansione' : `Non visto nell'ultima scansione: ultima volta ${fmtDateTime(h.lastSeen)}`} · conosciuto dal ${fmtDateTime(h.firstSeen)} · visto ${plural(h.seenCount, 'volta', 'volte')}.`;
+  const seen = `${h.isOnline ? 'Presente nell\'ultima scansione della sua rete' : `Non visto nell'ultima scansione: ultima volta ${fmtDateTime(h.lastSeen)}`} · conosciuto dal ${fmtDateTime(h.firstSeen)} · visto ${plural(h.seenCount, 'volta', 'volte')}.`;
   const ports = (h.ports || []).slice().sort((a, b) => a.port - b.port);
   const sens = h.sensitivePorts || [];
   const trustBtn = (v) => `<button type="button" class="${h.trust === v ? 'is-active' : ''}" data-action="trust" data-trust="${v}">${TRUST[v].label}</button>`;
@@ -168,8 +220,8 @@ function eventsCard() {
   const unseen = events.filter((e) => !e.acknowledged).length;
   return `<section class="card table-card"><div class="card-head"><div class="card-title">${icon('history')}<h2>Cambiamenti</h2><span class="count">${events.length}</span>${unseen ? `<span class="pill warning">${plural(unseen, 'da vedere', 'da vedere')}</span>` : ''}</div>
       <button class="btn btn-sm" data-action="ack-all" ${unseen ? '' : 'disabled'}>${icon('check')} Segna tutto come visto</button></div>
-    ${events.length ? `<div class="ev-list">${events.map(eventRow).join('')}</div>` : emptyState('history', 'Nessun cambiamento', 'Dalla seconda scansione in poi compaiono qui i dispositivi nuovi, ricomparsi, cambiati o assenti.')}
-    <div class="table-foot">${icon('info', { size: 14 })} Nuovo = mai visto prima · Ricomparso = tornato dopo essere stato assente · Cambiato = IP, nome o porte diversi · Assente = non risponde da ${2} scansioni. Un clic apre la scheda del dispositivo.</div>
+    ${events.length ? `<div class="ev-list">${events.map(eventRow).join('')}</div>` : emptyState('history', 'Nessun cambiamento', 'Dalla seconda scansione di questa rete in poi compaiono qui i dispositivi nuovi, ricomparsi, cambiati o assenti.')}
+    <div class="table-foot">${icon('info', { size: 14 })} Nuovo = mai visto prima in questa rete · Ricomparso = tornato dopo essere stato assente · Cambiato = IP, nome o porte diversi · Assente = non risponde da ${2} scansioni di questa rete. Un clic apre la scheda del dispositivo.</div>
   </section>`;
 }
 
@@ -191,9 +243,15 @@ function scansCard() {
 // ---------------------------------------------------------------------------------------------------------------------
 // Pagina
 // ---------------------------------------------------------------------------------------------------------------------
+function headText() {
+  const d = S.devices.data;
+  if (!d) return 'Dispositivi visti nel tempo, rete per rete, con confronto tra le scansioni e avvisi sui cambiamenti.';
+  return allNetworks() ? `Tutte le reti: ${d.digest}` : `«${shownNetworkName()}»: ${d.digest}`;
+}
+
 function render() {
   const d = S.devices.data;
-  const head = pageHead(d ? esc(d.digest) : 'Dispositivi visti nel tempo, con confronto tra le scansioni e avvisi sui cambiamenti.', `<span id="inv-scan-box">${scanControl()}</span>`);
+  const head = pageHead(esc(headText()), `<span id="inv-scan-box">${scanControl()}</span>`);
   if (!d) return `${head}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura dell'archivio…</div></div>`;
   const unseen = (d.events || []).filter((e) => !e.acknowledged).length;
   const tab = (key, ic, label, extra = '') => `<button class="tab ${S.devices.tab === key ? 'is-active' : ''}" data-action="tab" data-tab="${key}">${icon(ic)}${label}${extra}</button>`;
@@ -202,7 +260,7 @@ function render() {
   if (S.devices.tab === 'events') body = eventsCard();
   else if (S.devices.tab === 'scans') body = scansCard();
   else body = `<div class="grid grid-side devices-grid">${listCard()}${detailCard()}</div>`;
-  return `${head}${tabs}${body}<p class="page-foot muted">${icon('info', { size: 14 })} ${esc(footerText())}</p>`;
+  return `${head}${networkBar()}${tabs}${body}<p class="page-foot muted">${icon('info', { size: 14 })} ${esc(footerText())}</p>`;
 }
 
 function rerender() {
@@ -222,13 +280,21 @@ function renderDetail() {
   old.outerHTML = detailCard();
 }
 
+/** Legge l'archivio della rete scelta; la risposta dice quale rete è stata risolta ('' diventa quella del PC). */
+async function fetchInventory() {
+  const s = S.devices;
+  const data = await call('inventory', { query: s.q, onlyOnline: s.onlyOnline, network: s.network });
+  s.network = data.network;
+  if (S.st) S.st.inventory = data.watch;
+  return data;
+}
+
 async function load() {
   const s = S.devices;
   if (s.loading) return;
   s.loading = true;
   try {
-    s.data = await call('inventory', { query: s.q, onlyOnline: s.onlyOnline });
-    if (S.st) S.st.inventory = s.data.watch;
+    s.data = await fetchInventory();
     if (s.pendingHost) { s.selectedId = s.pendingHost; s.pendingHost = null; s.tab = 'hosts'; }
     const ids = new Set(s.data.hosts.map((h) => h.id));
     if (s.selectedId && !ids.has(s.selectedId) && !s.q && !s.onlyOnline) s.selectedId = null;
@@ -282,13 +348,12 @@ async function save() {
 async function refreshList() {
   const s = S.devices;
   try {
-    s.data = await call('inventory', { query: s.q, onlyOnline: s.onlyOnline });
-    if (S.st) S.st.inventory = s.data.watch;
+    s.data = await fetchInventory();
     renderList();
     const info = $('.toolbar-info');
     if (info) info.textContent = s.data.hosts.length === s.data.total ? plural(s.data.total, 'dispositivo', 'dispositivi') : `${s.data.hosts.length} di ${s.data.total}`;
     const sub = $('.page-sub');
-    if (sub) sub.textContent = s.data.digest;
+    if (sub) sub.textContent = headText();
   } catch (err) { toastError(err); }
 }
 
@@ -298,10 +363,51 @@ async function forget() {
   const ok = await confirmDialog({ title: `Dimenticare ${det.host.displayName}?`, message: 'Il dispositivo e la sua storia spariscono dall\'archivio. Se ricompare nella rete viene segnalato come nuovo.', confirmText: 'Dimentica', tone: 'danger' });
   if (!ok) return;
   try {
-    await call('inventoryForget', { id: det.host.id });
+    await call('inventoryForget', { id: det.host.id, network: S.devices.network });
     S.devices.selectedId = null;
     S.devices.detail = null;
     toast('Dispositivo dimenticato.', { tone: 'success' });
+    load();
+  } catch (err) { toastError(err); }
+}
+
+/** «Rinomina»: il nome della rete (il cliente, la sede) nell'archivio; lo prende anche il file della sessione. */
+async function renameNetwork() {
+  const d = S.devices.data;
+  if (!d || d.network === '*') return;
+  const n = shownNetwork();
+  const name = await promptDialog({
+    title: 'Nome della rete', sub: n ? n.label : shownNetworkName(), label: 'Nome', value: (n && n.alias) || '',
+    placeholder: 'Es. Cliente Rossi, Casa, Sede di Milano', ic: 'network', confirmText: 'Salva',
+  });
+  if (name == null) return;
+  try {
+    S.devices.data = await call('inventoryNetwork', { key: d.network, alias: name.trim() });
+    S.devices.network = S.devices.data.network;
+    if (S.st) S.st.inventory = S.devices.data.watch;
+    rerender();
+    if (S.devices.selectedId) loadDetail(S.devices.selectedId);
+    toast(name.trim() ? `La rete ora si chiama «${name.trim()}».` : 'La rete torna al nome della scansione.', { tone: 'success' });
+    bus.dispatchEvent(new Event('state'));
+  } catch (err) { toastError(err, 'Nome non salvato'); }
+}
+
+async function forgetNetwork() {
+  const d = S.devices.data;
+  const n = shownNetwork();
+  if (!d || !n || n.isCurrent) return;
+  const ok = await confirmDialog({
+    title: `Dimenticare la rete «${n.name}»?`, confirmText: 'Dimentica la rete', tone: 'danger',
+    message: `${plural(n.hostsCount, 'dispositivo', 'dispositivi')}, la loro storia e ${plural(n.scansCount, 'scansione', 'scansioni')} spariscono dall'archivio. Le sessioni salvate non cambiano; se torni in quella rete l'archivio riparte da zero.`,
+  });
+  if (!ok) return;
+  try {
+    await call('inventoryForgetNetwork', { key: n.key });
+    S.devices.network = '';
+    S.devices.networkPinned = false;
+    S.devices.selectedId = null;
+    S.devices.detail = null;
+    toast(`Rete «${n.name}» dimenticata.`, { tone: 'success' });
     load();
   } catch (err) { toastError(err); }
 }
@@ -325,7 +431,7 @@ async function startScan() {
     adopt(await call('inventoryScan', {}));
     S.devices.data.watch = S.st.inventory;
     updateLive();
-    toast('La scansione aggiorna l\'archivio: i dispositivi della sessione non cambiano.', { tone: 'info', title: 'Scansione dell\'archivio avviata', timeout: 5000 });
+    toast('La scansione aggiorna l\'archivio della rete in cui sei: i dispositivi della sessione non cambiano.', { tone: 'info', title: 'Scansione dell\'archivio avviata', timeout: 5000 });
   } catch (err) { toastError(err, 'Scansione non avviata'); }
 }
 
@@ -351,6 +457,8 @@ const actions = {
   'trust': (el) => { $$('.trust-seg button').forEach((b) => b.classList.toggle('is-active', b === el)); },
   'save-host': () => save(),
   'forget-host': () => forget(),
+  'net-rename': () => renameNetwork(),
+  'net-forget': () => forgetNetwork(),
   'host-ports': () => { const h = S.devices.detail && S.devices.detail.host; if (h) navigate('ports', { host: h.ip, start: true }); },
   'host-tools': (el) => {
     const h = S.devices.detail && S.devices.detail.host;
@@ -359,7 +467,7 @@ const actions = {
   },
   'open-event': (el) => openEvent(Number(el.dataset.id), el.dataset.host),
   'ack-all': async () => {
-    try { adopt({ state: (await call('inventoryAck', { all: true })).state }); load(); toast('Tutti i cambiamenti segnati come visti.', { tone: 'success' }); } catch (err) { toastError(err); }
+    try { adopt({ state: (await call('inventoryAck', { all: true, network: S.devices.network })).state }); load(); toast('Tutti i cambiamenti di questa rete segnati come visti.', { tone: 'success' }); } catch (err) { toastError(err); }
   },
   'inv-scan': () => startScan(),
   'inv-stop': () => call('inventoryStop').catch((e) => toastError(e)),
@@ -368,7 +476,19 @@ const actions = {
 let searchTimer = 0;
 
 on('inventory.progress', () => { if (S.page === 'devices') updateLive(); });
-on('inventory.state', (w) => { if (S.devices.data) S.devices.data.watch = w; if (S.page === 'devices') updateLive(); });
+on('inventory.state', (w) => {
+  // il PC è passato a un'altra rete: la pagina la segue, salvo che l'utente ne abbia scelta una apposta
+  const before = S.devices.data && S.devices.data.current ? S.devices.data.current.key : null;
+  if (S.devices.data) S.devices.data.watch = w;
+  if (w && w.network && before && w.network.key !== before && !S.devices.networkPinned) {
+    S.devices.network = '';
+    S.devices.selectedId = null;
+    S.devices.detail = null;
+    if (S.page === 'devices') load();
+    return;
+  }
+  if (S.page === 'devices') updateLive();
+});
 on('inventory.done', (d) => {
   S.devices.badgeSeen = false;
   if (d.diff && !d.diff.isFirst && !d.cancelled && !d.error && (S.page !== 'network' || d.automatic)) {
@@ -377,8 +497,8 @@ on('inventory.done', (d) => {
       tone: changes ? 'info' : 'success', title: d.automatic ? 'Scansione automatica completata' : 'Archivio aggiornato', timeout: 8000,
       action: changes ? { label: 'Cambiamenti', run: () => navigate('devices', { tab: 'events' }) } : null,
     });
-  } else if (d.diff && d.diff.isFirst && !d.cancelled) {
-    toast(`${plural(d.found, 'dispositivo', 'dispositivi')} nell'archivio: dalla prossima scansione arrivano i confronti e gli avvisi.`, { tone: 'success', title: 'Archivio della rete creato', timeout: 9000 });
+  } else if (d.diff && d.diff.isFirst && !d.cancelled && (S.page !== 'network' || d.automatic)) {
+    toast(`${plural(d.found, 'dispositivo', 'dispositivi')} nell'archivio di questa rete: dalla prossima scansione arrivano i confronti e gli avvisi.`, { tone: 'success', title: 'Archivio della rete creato', timeout: 9000 });
   } else if (d.error && d.automatic) toast(d.error, { tone: 'error', title: 'Scansione automatica non riuscita' });
   if (S.page === 'devices') load();
 });
@@ -389,8 +509,10 @@ definePage('devices', {
   badge: () => (S.devices.badgeSeen ? 0 : ((S.st && S.st.inventory && S.st.inventory.unseen) || 0)),
   render,
   after: () => { S.devices.badgeSeen = true; bus.dispatchEvent(new Event('state')); load(); },
+  // tornando sulla pagina si riparte dalla rete in cui si trova il PC
+  leave: () => { S.devices.networkPinned = false; S.devices.network = ''; },
   enter: (params) => {
-    if (params.host) { S.devices.pendingHost = Number(params.host); S.devices.q = ''; S.devices.onlyOnline = false; S.devices.tab = 'hosts'; load(); }
+    if (params.host) { S.devices.pendingHost = Number(params.host); S.devices.q = ''; S.devices.onlyOnline = false; S.devices.tab = 'hosts'; S.devices.network = ''; load(); }
     if (params.tab) { S.devices.tab = params.tab; rerender(); }
   },
   actions,
@@ -399,6 +521,7 @@ definePage('devices', {
   },
   onChange: (el, field) => {
     if (field === 'onlyOnline') { S.devices.onlyOnline = el.checked; refreshList(); }
+    if (field === 'network') { S.devices.network = el.value; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; load(); }
   },
   onContext: (row, point) => hostMenu(point, row.dataset.id),
 });

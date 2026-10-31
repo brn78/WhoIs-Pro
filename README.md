@@ -49,13 +49,15 @@ centrali d'allarme, stampanti, moduli domotici, automazione, server e macchine v
 descrivono ogni dispositivo per intero, con *Ordina per* accanto alla ricerca; un singolo host si **riscansiona** con
 un clic; con **Ripeti** la scansione riparte da sola. Una /24 intera, con porte e banner, in una decina di secondi.
 
-**🗂️ Archivio della rete nel tempo**<br>
-Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** di questo PC (chiave il MAC: un cambio di IP resta
-lo stesso dispositivo) e segna i **cambiamenti**: nuovo, ricomparso, cambiato, assente. A ogni dispositivo dai
-**nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**; la scheda mostra porte, storia e
-i servizi esposti **da verificare**; la colonna **Rilevato** della pagina Rete dice quando è comparso la prima volta.
-**Scansioni automatiche** a intervalli e **avvisi** in basso a destra quando compare un dispositivo nuovo o ne
-ricompare uno sospetto; chi non risponde più resta in elenco, segnato *non risponde*.
+**🗂️ Archivio della rete nel tempo, una rete per cliente**<br>
+Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** della rete in cui ti trovi: la rete si riconosce dal
+**MAC del router** (la stessa 192.168.1.0/24 esiste in mille sedi), i dispositivi dal MAC (un cambio di IP resta lo
+stesso dispositivo). Nella pagina *Dispositivi* scegli la rete («qui» quella attuale, poi le altre visitate, o tutte),
+le dai un **nome** («Cliente Rossi», «Casa») e vedi i **cambiamenti** di quella sede: nuovo, ricomparso, cambiato,
+assente. A ogni dispositivo dai **nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**;
+la scheda mostra porte, storia e i servizi esposti **da verificare**. **Scansioni automatiche** a intervalli e
+**avvisi** in basso a destra quando compare un dispositivo nuovo o ne ricompare uno sospetto. La **sessione si salva
+da sola**, una per rete, e si riapre quando torni in quella rete.
 
 **🔌 Porte TCP e UDP**<br>
 Gruppi di porte pronti (le 20 o le 100 più comuni, web, database, posta, accesso remoto, domotica) o elenco libero
@@ -87,7 +89,8 @@ di download e upload. Il giudizio è in parole semplici, con cosa regge la linea
 online, lavoro da remoto, telecamere viste da fuori.
 
 **💾 Sessioni e report**<br>
-Tutto quello che trovi finisce nella sessione: file `.whoispro` con **salvataggio atomico** (SHA-256 e copia `.bak`),
+Tutto quello che trovi finisce nella sessione, che **si salva da sola**: un file `.whoispro` per ogni rete in
+`Documenti\WhoIs Pro\Sessioni` (salvataggio atomico, SHA-256 e copia `.bak`), riaperto quando torni in quella rete;
 esportazione in **HTML**, **CSV** per Excel o testo.
 
 **🔀 Profili di rete**<br>
@@ -202,12 +205,16 @@ dare un alias e correggere l'idea che il programma si è fatto.
 <summary><b>Come funzionano l'archivio e gli avvisi?</b></summary>
 <br>
 Ogni scansione (dalla pagina <i>Rete</i>, da <i>Dispositivi → Scansiona adesso</i> o automatica) aggiorna l'archivio
-in <code>%LOCALAPPDATA%\WhoIsPro\archivio-rete.db</code> e lo confronta con la precedente. La prima scansione crea
-l'archivio senza avvisi. Un dispositivo è <b>assente</b> solo dopo due scansioni consecutive senza risposta, così i
-telefoni e i sensori Wi-Fi in risparmio energetico non oscillano. In <i>Impostazioni → Rete</i> accendi le scansioni
-automatiche (intervallo, rete, timeout) e l'avviso per i dispositivi nuovi: se sono più di tre arriva un solo avviso
-aggregato, e lo stesso dispositivo non avvisa due volte in mezz'ora. <i>Dimentica</i> toglie un dispositivo
-dall'archivio: se ricompare torna «nuovo».
+in <code>%LOCALAPPDATA%\WhoIsPro\archivio-rete.db</code> e lo confronta con la precedente <b>della stessa rete</b>:
+ogni rete (il router, riconosciuto dal MAC; senza router la sottorete) ha i suoi dispositivi, i suoi cambiamenti e le
+sue scansioni, così il NAS di un cliente non diventa «assente» quando sei a casa. La prima scansione di una rete crea
+il suo archivio senza avvisi. Un dispositivo è <b>assente</b> solo dopo due scansioni consecutive senza risposta, così i
+telefoni e i sensori Wi-Fi in risparmio energetico non oscillano; si confrontano solo le porte provate in quella
+scansione. In <i>Impostazioni → Archivio della rete</i> accendi le scansioni automatiche (intervallo, rete, timeout) e
+l'avviso per i dispositivi nuovi: se sono più di tre arriva un solo avviso aggregato, e lo stesso dispositivo non avvisa
+due volte in mezz'ora. <i>Dimentica</i> toglie un dispositivo dall'archivio (se ricompare torna «nuovo»);
+<i>Dimentica la rete</i> toglie una sede intera. I dispositivi del vecchio registro, o di una scansione senza il MAC
+del router, restano divisi per sottorete e passano alla rete giusta appena una scansione li ritrova.
 </details>
 
 <details>
@@ -224,13 +231,16 @@ diritti di amministratore, il programma no. <i>Torna a DHCP</i> rimette la sched
 <br>
 Sì: in <i>Impostazioni</i> attivi l'icona nell'area di notifica e, se vuoi, l'avvio con Windows. La X nasconde la
 finestra accanto all'orologio; dal menu dell'icona si riapre, si chiude davvero o si applica al volo un
-<b>profilo di rete</b> (con la spunta su quello attivo). All'avvio il programma riapre l'ultima sessione salvata.
+<b>profilo di rete</b> (con la spunta su quello attivo). All'avvio il programma riapre la sessione della rete in cui si
+trova il PC (quella salvata da sola); con il salvataggio automatico spento, l'ultima sessione salvata.
 </details>
 
 <details>
 <summary><b>Dove finiscono i dati?</b></summary>
 <br>
-Le sessioni dove le salvi tu (file <code>.whoispro</code>, in JSON, con le copie <code>.bak</code> accanto). In
+Le sessioni in <code>Documenti\WhoIs Pro\Sessioni</code>, un file <code>.whoispro</code> (JSON, con la copia
+<code>.bak</code> accanto) per ogni rete, salvato da solo pochi secondi dopo ogni modifica; con <i>Salva con nome</i>
+dove vuoi tu, e in <i>Impostazioni → Generale → Sessione</i> puoi tornare al salvataggio a mano. In
 <code>%LOCALAPPDATA%\WhoIsPro</code> restano le impostazioni e i profili di rete, l'archivio della rete
 (<code>archivio-rete.db</code>, SQLite: dispositivi conosciuti con nome, icona, fiducia e note, scansioni e
 cambiamenti; si svuota da <i>Impostazioni → Archivio della rete</i>), il database dei produttori aggiornato, la

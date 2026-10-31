@@ -15,5 +15,8 @@
         Public Property Scans As New List(Of ScanRecord)()
         ''' <summary>Test delle prestazioni di rete (gli ultimi 50).</summary>
         Public Property PerfTests As New List(Of PerfResult)()
+        ''' <summary>La rete (sede) della sessione: chiave dell'archivio ("gw:" più il MAC del router) e nome; vuoti nelle sessioni prima della 2.7.</summary>
+        Public Property NetworkKey As String = ""
+        Public Property NetworkName As String = ""
     End Class
 End Namespace

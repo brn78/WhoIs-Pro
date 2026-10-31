@@ -1,4 +1,4 @@
-Option Strict On
+﻿Option Strict On
 
 Imports System.Drawing
 Imports System.IO
@@ -479,6 +479,8 @@ Namespace UI
                 Hide()
                 Return
             End If
+            ' con il salvataggio automatico la sessione si scrive adesso, senza domande
+            If _ready AndAlso Not _closingForUpdate Then _bridge.AutoSaveNow()
             If _ready AndAlso Not _closingForUpdate AndAlso _bridge.HasUnsavedData Then
                 Dim answer = MessageBox.Show(Me, "La sessione ha dati non salvati. Salvarla prima di chiudere?", Text,
                                              MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)

@@ -170,6 +170,10 @@ Namespace Network.Scan
             Await PingPhaseAsync(plan, hosts, timeout, parallelism, progress, ct).ConfigureAwait(False)
             Dim arpOnly = Await ArpPhaseAsync(plan, hosts, timeout, parallelism, progress, ct).ConfigureAwait(False)
             MarkLocalMachineAndGateway(hosts, interfaces)
+            ' la rete di questa scansione: il MAC del gateway lo abbiamo appena letto con l'ARP, se risponde
+            Dim gatewayHost As DiscoveredHost = Nothing
+            If plan.Interface?.Gateway IsNot Nothing Then hosts.TryGetValue(Ipv4.ToUInt32(plan.Interface.Gateway), gatewayHost)
+            Dim network = Identify(plan, gatewayHost?.Mac)
 
             Dim found = hosts.Values.OrderBy(Function(h) h.Ip, IpComparer.Instance).ToList()
             If options.ResolveNames Then Await NamesPhaseAsync(found, timeout, parallelism, progress, ct).ConfigureAwait(False)
@@ -191,7 +195,50 @@ Namespace Network.Scan
                 final.Step(Nothing, host)
             Next
             final.Complete($"{result.Count} host classificati")
-            Return New ScanReport(startedAt, clock.Elapsed, plan.Label, If(plan.Interface?.Address.ToString(), ""), plan.Interface?.Gateway?.ToString(), result) With {.ProbedPorts = probed}
+            Return New ScanReport(startedAt, clock.Elapsed, plan.Label, If(plan.Interface?.Address.ToString(), ""), plan.Interface?.Gateway?.ToString(), result) With {.ProbedPorts = probed, .Network = network}
+        End Function
+
+#End Region
+
+#Region "Identità della rete"
+
+        ''' <summary>
+        ''' Rete a cui appartiene una scansione di <paramref name="target"/>: se il bersaglio sta nella sottorete di una scheda
+        ''' (vuoto = rete principale) è il MAC del suo gateway, letto dalla tabella dei vicini o con una richiesta ARP (pochi
+        ''' millisecondi); per un bersaglio instradato, o senza gateway raggiungibile, la sottorete. Bersaglio non valido: ArgumentException.
+        ''' </summary>
+        Public Function IdentifyNetwork(target As String) As NetworkIdentity Implements INetworkScanner.IdentifyNetwork
+            Return Identify(ResolveTarget(target, DiscoverInterfaces()), Nothing)
+        End Function
+
+        Private Shared Function Identify(plan As ScanPlan, gatewayMacHint As String) As NetworkIdentity
+            Dim iface = plan.Interface
+            Dim first = If(plan.Addresses.Length > 0, plan.Addresses(0), 0UI)
+            If iface IsNot Nothing AndAlso iface.Contains(first) Then
+                If iface.Gateway IsNot Nothing Then
+                    Dim mac = If(MacVendorLookup.Normalize(gatewayMacHint), GatewayMac(iface))
+                    If mac IsNot Nothing Then
+                        Return New NetworkIdentity With {
+                            .Key = "gw:" & mac, .Cidr = iface.Cidr, .GatewayIp = iface.Gateway.ToString(), .GatewayMac = mac,
+                            .GatewayVendor = MacVendorLookup.Lookup(mac), .InterfaceName = iface.Name
+                        }
+                    End If
+                End If
+                Return NetworkIdentity.ForSubnet(iface.Cidr, iface.Name, iface.Gateway?.ToString())
+            End If
+            ' bersaglio in un'altra sottorete (instradato): la rete indicata, oppure la /24 del primo indirizzo
+            Return If(plan.Label.Contains("/"c), NetworkIdentity.ForSubnet(plan.Label), NetworkIdentity.ForIp(Ipv4.Format(first)))
+        End Function
+
+        ''' <summary>MAC del gateway della scheda: dalla tabella dei vicini se c'è, altrimenti con una richiesta ARP dalla scheda stessa.</summary>
+        Private Shared Function GatewayMac(iface As LocalInterface) As String
+            Dim gateway = Ipv4.ToUInt32(iface.Gateway)
+            Dim neighbors = IpHelper.ReadNeighbors()
+            If neighbors IsNot Nothing Then
+                Dim row = neighbors.FirstOrDefault(Function(n) n.Address = gateway AndAlso n.IsPresent AndAlso n.HasUsableMac AndAlso (iface.Index < 0 OrElse n.InterfaceIndex = iface.Index))
+                If row IsNot Nothing Then Return MacVendorLookup.Normalize(MacVendorLookup.FormatMac(row.Mac))
+            End If
+            Return IpHelper.SendArp(gateway, iface.Value)
         End Function
 
         ''' <summary>Porte richieste valide, uniche e ordinate; l'elenco comune se mancano.</summary>
