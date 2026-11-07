@@ -200,10 +200,12 @@ Namespace UI
         ''' <summary>Stato per la pagina (barra superiore, pagina Dispositivi, Impostazioni), con la rete in cui si trova il PC.</summary>
         Public Function View() As Object
             Dim current = CurrentNetwork()
+            Dim last = Inventory.LastScan(current?.Key)?.StartedAt
+            Dim nextScan As DateTime? = If(_settings.NetworkWatchEnabled, If(last.HasValue, last.Value + Interval, DateTime.Now), CType(Nothing, DateTime?))
             Return New With {
                 .scanning = IsScanning, .automatic = IsAutomatic, .status = Status, .percent = Percent,
                 .phase = Progress?.Phase, .target = Options?.Target,
-                .lastScanAt = LastScanAt, .nextScanAt = NextScanAt, .enabled = _settings.NetworkWatchEnabled,
+                .lastScanAt = last, .nextScanAt = nextScan, .enabled = _settings.NetworkWatchEnabled,
                 .intervalMinutes = _settings.NetworkScanIntervalMinutes, .unseen = Inventory.UnacknowledgedCount(current?.Key),
                 .network = NetworkView(current)
             }

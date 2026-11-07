@@ -1,4 +1,4 @@
-﻿Option Strict On
+Option Strict On
 
 Imports System.Text.RegularExpressions
 Imports WhoIsPro.Network.Scan
@@ -63,7 +63,7 @@ Namespace Utils
             If host Is Nothing Then Throw New ArgumentNullException(NameOf(host))
             Dim s As New Signals(host)
             Dim rules As Func(Of Signals, Result)() = {
-                AddressOf Gateway, AddressOf Hypervisor, AddressOf Alarm, AddressOf Automation, AddressOf Printer3D, AddressOf Printer, AddressOf Nas, AddressOf Camera,
+                AddressOf Gateway, AddressOf Hypervisor, AddressOf HikvisionDevice, AddressOf Alarm, AddressOf Automation, AddressOf Printer3D, AddressOf Printer, AddressOf Nas, AddressOf Camera,
                 AddressOf GameConsole, AddressOf MediaPlayer, AddressOf VoiceAssistant, AddressOf HomeAutomation, AddressOf Ups,
                 AddressOf Voip, AddressOf NetworkGear, AddressOf Apple, AddressOf RaspberryPi, AddressOf Mobile, AddressOf ServerRole,
                 AddressOf Windows, AddressOf Unix, AddressOf ByVendor, AddressOf ByTtl
@@ -81,7 +81,7 @@ Namespace Utils
         ''' <summary>Classificazione dai soli dati della sessione (produttore, nome, porte, TTL): usata dalla riclassificazione e dai test.</summary>
         Public Function Classify(macVendor As String, hostname As String, openPorts As IEnumerable(Of Integer), ttl As Integer, mac As String) As DeviceClassification
             Dim host As New DiscoveredHost With {
-                .Vendor = If(String.IsNullOrWhiteSpace(macVendor) OrElse macVendor = "Sconosciuto" OrElse macVendor = "Produttore non catalogato" OrElse macVendor = "Unknown", Nothing, macVendor),
+                .Vendor = MacVendorLookup.CleanVendor(macVendor),
                 .HostName = If(String.IsNullOrWhiteSpace(hostname), Nothing, hostname),
                 .Mac = MacVendorLookup.Normalize(mac),
                 .Ttl = If(ttl > 0, ttl, CType(Nothing, Integer?))
@@ -134,6 +134,133 @@ Namespace Utils
 #End Region
 
 #Region "Regole: identità del dispositivo"
+
+        Private ReadOnly HikvisionModelPattern As New Regex("\b((?:i?ds|hm|ipc|nvr|dvr)-[a-z0-9/]{2,16}(?:-[a-z0-9/]{1,12})*)\b", RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+        ''' <summary>Codici che usa solo Hikvision (DS-2CD…, DS-7608…, DS-K1T…, DS-PWA…, DS-3E…, HM-TD…): bastano da soli; «nvr-sala» o «ds-server» no.</summary>
+        Private ReadOnly HikvisionOwnModelPattern As New Regex("^(?:i?DS-(?:2[A-Z]{2}\d|[1-9]\d{2,3}[A-Z]|K[0-9A-Z]|P[WH]A|3E\d|19A|TC[GM])|HM-TD)", RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+        Private ReadOnly HikvisionNvrChannelsPattern As New Regex("^(?:i?ds)-(?:71|76|77|86|96)(04|08|16|32|64|128)", RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+        Private ReadOnly SadpFirmwareBannerPattern As New Regex("(?:\bFW|\bFirmware)\s+(V\d[^\r\n·|]*)", RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+
+        ''' <summary>
+        ''' Dispositivi Hikvision (telecamere IP/PTZ/termiche/ANPR, NVR, DVR Turbo HD, videocitofoni, terminali controllo
+        ''' accessi MinMoe, centrali AX PRO, switch PoE): usa i metadati SADP se presenti, oppure il codice modello in nomi/banner.
+        ''' </summary>
+        Private Function HikvisionDevice(s As Signals) As Result
+            Dim isHik = s.Sadp IsNot Nothing OrElse
+                        s.InAny("hikvision", "app-webs", "dnvrs-webs", "dvrdvs-webs", "hikvision-webs", "/doc/page/login.asp", "hikvision sdk", "realm: ip camera(")
+            Dim model = ExtractHikvisionModel(s)
+            If Not isHik Then
+                ' senza altri indizi serve un codice che usa solo Hikvision, e un produttore del MAC che non dica il contrario
+                Dim vendorBrand = s.VendorBrand(Kind.Any)
+                If model Is Nothing OrElse Not HikvisionOwnModelPattern.IsMatch(model) OrElse
+                   (vendorBrand IsNot Nothing AndAlso vendorBrand.Name <> "Hikvision") Then Return Nothing
+            End If
+
+            If model IsNot Nothing Then
+                Dim upper = model.ToUpperInvariant()
+                ' Centrali d'allarme AX PRO / PHA
+                If upper.StartsWith("DS-PWA", StringComparison.Ordinal) OrElse upper.StartsWith("DS-PHA", StringComparison.Ordinal) OrElse upper.StartsWith("DS-19A", StringComparison.Ordinal) Then
+                    Return New Result($"Centrale d'allarme Hikvision AX PRO ({model})", CategoryAlarm)
+                End If
+                ' Terminali presenze / riconoscimento facciale MinMoe e centraline controllo accessi
+                If upper.StartsWith("DS-K1T", StringComparison.Ordinal) OrElse upper.StartsWith("DS-K1A", StringComparison.Ordinal) Then
+                    Return New Result($"Terminale controllo accessi Hikvision {model}", CategoryHome)
+                End If
+                If upper.StartsWith("DS-K26", StringComparison.Ordinal) OrElse upper.StartsWith("DS-K28", StringComparison.Ordinal) OrElse upper.StartsWith("DS-K2M", StringComparison.Ordinal) Then
+                    Return New Result($"Centralina controllo accessi Hikvision {model}", CategoryHome)
+                End If
+                ' Videocitofonia IP (posti esterni KV/KD/KB e monitor interni KH)
+                If upper.StartsWith("DS-KV", StringComparison.Ordinal) OrElse upper.StartsWith("DS-KD", StringComparison.Ordinal) OrElse upper.StartsWith("DS-KB", StringComparison.Ordinal) Then
+                    Return New Result($"Posto esterno videocitofono Hikvision {model}", CategoryCamera)
+                End If
+                If upper.StartsWith("DS-KH", StringComparison.Ordinal) Then
+                    Return New Result($"Monitor videocitofono Hikvision {model}", CategoryCamera)
+                End If
+                ' Switch di rete PoE Hikvision
+                If upper.StartsWith("DS-3E", StringComparison.Ordinal) Then
+                    Return New Result($"Switch PoE Hikvision {model}", CategoryNetwork)
+                End If
+                ' Telecamere PTZ / Speed Dome
+                If upper.StartsWith("DS-2DE", StringComparison.Ordinal) OrElse upper.StartsWith("DS-2DF", StringComparison.Ordinal) OrElse
+                   upper.StartsWith("IDS-2DE", StringComparison.Ordinal) OrElse upper.StartsWith("IDS-2DF", StringComparison.Ordinal) OrElse
+                   upper.StartsWith("DS-2PT", StringComparison.Ordinal) Then
+                    Return New Result($"Telecamera PTZ Hikvision {model}", CategoryCamera)
+                End If
+                ' Telecamere termiche
+                If upper.StartsWith("DS-2TD", StringComparison.Ordinal) OrElse upper.StartsWith("IDS-2TD", StringComparison.Ordinal) OrElse upper.StartsWith("HM-TD", StringComparison.Ordinal) Then
+                    Return New Result($"Telecamera termica Hikvision {model}", CategoryCamera)
+                End If
+                ' Telecamere lettura targhe (ANPR) / Traffico
+                If upper.StartsWith("IDS-2CD7A", StringComparison.Ordinal) OrElse upper.StartsWith("DS-2CD7A", StringComparison.Ordinal) OrElse
+                   upper.StartsWith("DS-2CD4A26", StringComparison.Ordinal) OrElse upper.StartsWith("IDS-TCM", StringComparison.Ordinal) OrElse
+                   upper.StartsWith("DS-TCG", StringComparison.Ordinal) Then
+                    Return New Result($"Telecamera ANPR Hikvision {model}", CategoryCamera)
+                End If
+                ' Decoder / Video Wall
+                If upper.StartsWith("DS-69", StringComparison.Ordinal) OrElse upper.StartsWith("DS-64", StringComparison.Ordinal) Then
+                    Return New Result($"Decoder video Hikvision {model}", CategoryCamera)
+                End If
+                ' Videoregistratori NVR (DS-76xxNI, DS-77xxNI, DS-86xxNI, DS-96xxNI, DS-71xxNI, NVR-...)
+                Dim isNvrModel = upper.StartsWith("NVR-", StringComparison.Ordinal) OrElse
+                                 ((upper.StartsWith("DS-71", StringComparison.Ordinal) OrElse upper.StartsWith("DS-76", StringComparison.Ordinal) OrElse
+                                   upper.StartsWith("DS-77", StringComparison.Ordinal) OrElse upper.StartsWith("DS-86", StringComparison.Ordinal) OrElse
+                                   upper.StartsWith("DS-96", StringComparison.Ordinal) OrElse upper.StartsWith("IDS-77", StringComparison.Ordinal) OrElse
+                                   upper.StartsWith("IDS-96", StringComparison.Ordinal)) AndAlso
+                                  (upper.Contains("NI", StringComparison.Ordinal) OrElse upper.Contains("NXI", StringComparison.Ordinal) OrElse Not upper.Contains("H", StringComparison.Ordinal)))
+                If isNvrModel Then
+                    Dim ch = InferHikvisionChannels(model, s.Sadp)
+                    Dim chSuffix = If(ch > 0, $" ({ch} canali)", "")
+                    Return New Result($"Videoregistratore di rete (NVR) Hikvision {model}{chSuffix}", CategoryCamera)
+                End If
+                ' Videoregistratori DVR Turbo HD (DS-71xxH, DS-72xxH, DS-73xxH, DS-81xxH, DS-90xxH, DVR-...)
+                Dim isDvrModel = upper.StartsWith("DVR-", StringComparison.Ordinal) OrElse
+                                 upper.StartsWith("DS-72", StringComparison.Ordinal) OrElse upper.StartsWith("DS-73", StringComparison.Ordinal) OrElse
+                                 upper.StartsWith("DS-81", StringComparison.Ordinal) OrElse upper.StartsWith("DS-90", StringComparison.Ordinal) OrElse
+                                 upper.StartsWith("IDS-72", StringComparison.Ordinal) OrElse upper.StartsWith("IDS-73", StringComparison.Ordinal) OrElse
+                                 (upper.StartsWith("DS-71", StringComparison.Ordinal) AndAlso upper.Contains("H", StringComparison.Ordinal))
+                If isDvrModel Then
+                    Return New Result($"Videoregistratore DVR Hikvision {model}", CategoryCamera)
+                End If
+                ' Telecamere IP (DS-2CD..., iDS-2CD..., DS-2CV..., DS-2XM..., IPC-...)
+                Return New Result($"Telecamera IP Hikvision {model}", CategoryCamera)
+            End If
+
+            ' Senza codice modello: distinguiamo NVR/DVR da telecamera IP grazie a banner e nomi
+            If Not s.WindowsLike Then
+                Dim isRecorder = s.InNamesOrBanners("=nvr", "=dvr", "dvrdvs-webs", "recorder", "videoregistratore", "rtsp/1.0 404") OrElse
+                                 (s.Sadp IsNot Nothing AndAlso s.Sadp.TotalChannels > 1)
+                Return New Result(If(isRecorder, "Videoregistratore di rete (NVR) Hikvision", "Telecamera IP Hikvision"), CategoryCamera)
+            End If
+            Return Nothing
+        End Function
+
+        Private Function ExtractHikvisionModel(s As Signals) As String
+            If s.Sadp IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(s.Sadp.Model) Then
+                Dim m = HikvisionModelPattern.Match(s.Sadp.Model)
+                If m.Success Then Return NormalizeModelCase(m.Groups(1).Value)
+                Return s.Sadp.Model.Trim()
+            End If
+            For Each source In {s.Banners, s.Names}
+                If String.IsNullOrEmpty(source) Then Continue For
+                Dim m = HikvisionModelPattern.Match(source)
+                If m.Success Then Return NormalizeModelCase(m.Groups(1).Value)
+            Next
+            Return Nothing
+        End Function
+
+        Private Function NormalizeModelCase(raw As String) As String
+            Dim upper = raw.Trim().ToUpperInvariant()
+            If upper.StartsWith("IDS-", StringComparison.Ordinal) Then Return "i" & upper.Substring(1)
+            Return upper
+        End Function
+
+        Private Function InferHikvisionChannels(model As String, sadp As SadpDeviceInfo) As Integer
+            If sadp IsNot Nothing AndAlso sadp.DigitalChannels > 0 Then Return sadp.DigitalChannels
+            Dim m = HikvisionNvrChannelsPattern.Match(model)
+            Dim ch As Integer
+            If m.Success AndAlso Integer.TryParse(m.Groups(1).Value, ch) Then Return ch
+            Return 0
+        End Function
 
         ''' <summary>Centrali d'allarme: dal produttore della scheda di rete (a parole intere: «inim» non è Minimax) o dal nome.</summary>
         Private Function Alarm(s As Signals) As Result
@@ -286,6 +413,11 @@ Namespace Utils
             ' firmware originale eWeLink (Sonoff): controllo locale sulla 8081, senza interfaccia web sulla 80
             If s.Port(8081) AndAlso s.InVendor("espressif", "itead") AndAlso Not s.AnyPort(80, 443, 6053) Then Return New Result("Dispositivo Sonoff (eWeLink)", CategoryHome)
             If s.InAny("espressif", "esp32", "esp8266", "=esp") Then Return New Result("Modulo IoT ESP32 / ESP8266", CategoryHome)
+            ' inverter fotovoltaici: dal produttore del MAC, dal titolo della pagina web o dal certificato TLS
+            If s.InAny("fronius") Then Return New Result("Inverter fotovoltaico Fronius", CategoryHome)
+            If s.InAny("solaredge") Then Return New Result("Inverter fotovoltaico SolarEdge", CategoryHome)
+            If s.InAny("sma solar", "sunny boy", "sunny tripower", "sunny portal") Then Return New Result("Inverter fotovoltaico SMA", CategoryHome)
+            If s.InNamesOrBanners("vantage tpt", "infusion controller", "titolo: ic-ii") Then Return New Result("Automazione / Domotica Vantage", CategoryHome)
             Dim brand = s.FindBrand(Kind.Home)
             If brand IsNot Nothing AndAlso brand.IsOnly(Kind.Home) Then Return New Result($"Dispositivo domotico {brand.Name}", CategoryHome)
             Return Nothing
@@ -310,10 +442,12 @@ Namespace Utils
             Dim networkFirst = brand IsNot Nothing AndAlso Not brand.Has(Kind.Phone Or Kind.Computer)
             Dim networkText = s.InNamesOrBanners("router", "=switch", "access point", "accesspoint", "repeater", "extender",
                 "ripetitore", "=mesh", "routeros", "openwrt", "dd-wrt", "=luci", "=airport", "=ap", "=sw", "edgeos", "unifi", "=uap",
-                "=usw", "fritz", "keenetic")
+                "=usw", "fritz", "keenetic", "edgeswitch", "cloudkey")
             If Not networkFirst AndAlso Not networkText AndAlso Not (brand IsNot Nothing AndAlso (s.TtlNetwork OrElse s.Port(53))) Then Return Nothing
             Dim role As String
-            If s.InNamesOrBanners("access point", "accesspoint", "=ap", "=uap", "=wap") Then
+            If s.InNamesOrBanners("cloudkey", "unifi network", "unifi os") Then
+                role = "Controller di rete"
+            ElseIf s.InNamesOrBanners("access point", "accesspoint", "=ap", "=uap", "=wap") Then
                 role = "Access point"
             ElseIf s.InNamesOrBanners("repeater", "extender", "ripetitore") Then
                 role = "Ripetitore Wi-Fi"
@@ -472,7 +606,15 @@ Namespace Utils
         ''' </summary>
         Public Function GuessOs(host As DiscoveredHost) As String
             If host Is Nothing Then Throw New ArgumentNullException(NameOf(host))
-            Dim banners = String.Join(" | ", host.Ports.Select(Function(p) p.Banner).Where(Function(b) Not String.IsNullOrWhiteSpace(b))).ToLowerInvariant()
+            If host.Sadp IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(host.Sadp.SoftwareVersion) Then
+                Return "Firmware " & host.Sadp.SoftwareVersion.Trim()
+            End If
+            Dim rawBanners = String.Join(" | ", host.Ports.Select(Function(p) p.Banner).Where(Function(b) Not String.IsNullOrWhiteSpace(b)))
+            If rawBanners.Length > 0 Then
+                Dim fwMatch = SadpFirmwareBannerPattern.Match(rawBanners)
+                If fwMatch.Success Then Return "Firmware " & fwMatch.Groups(1).Value.Trim()
+            End If
+            Dim banners = rawBanners.ToLowerInvariant()
             If banners.Length > 0 Then
                 If banners.Contains("microsoft-iis") OrElse banners.Contains("openssh_for_windows") OrElse banners.Contains("microsoft-httpapi") Then Return "Windows"
                 If banners.Contains("pfsense") Then Return "FreeBSD (pfSense)"
@@ -574,7 +716,7 @@ Namespace Utils
             New Brand("AVM FRITZ!Box", Kind.Network, "avm audiovisuelles", "avm gmbh", "fritz"),
             New Brand("Keenetic", Kind.Network, "keenetic"),
             New Brand("Cisco Meraki", Kind.Network, "meraki"),
-            New Brand("Ubiquiti", Kind.Network Or Kind.Camera, "ubiquiti", "=ubnt", "unifi", "edgerouter", "edgeswitch"),
+            New Brand("Ubiquiti", Kind.Network Or Kind.Camera, "ubiquiti", "=ubnt", "unifi", "edgerouter", "edgeswitch", "cloudkey"),
             New Brand("MikroTik", Kind.Network, "mikrotik", "routerboard", "routeros"),
             New Brand("TP-Link", Kind.Network Or Kind.Camera Or Kind.Home, "tp-link", "tplink", "tp link", "tapo", "=kasa", "=deco"),
             New Brand("Netgear", Kind.Network Or Kind.Nas, "netgear", "readynas", "=orbi"),
@@ -678,7 +820,7 @@ Namespace Utils
             New Brand("Drobo", Kind.Nas, "drobo"),
             New Brand("Seagate", Kind.Nas, "seagate"),
             New Brand("Thecus", Kind.Nas, "thecus"),
-            New Brand("Hikvision", Kind.Camera, "hikvision", "app-webs", "dnvrs-webs"),
+            New Brand("Hikvision", Kind.Camera, "hikvision", "app-webs", "dnvrs-webs", "dvrdvs-webs", "hikvision-webs"),
             New Brand("Ezviz", Kind.Camera, "ezviz"),
             New Brand("Dahua", Kind.Camera, "dahua"),
             New Brand("Imou", Kind.Camera, "=imou"),
@@ -748,7 +890,7 @@ Namespace Utils
             New Brand("Dyson", Kind.Home, "dyson"),
             New Brand("Miele", Kind.Home, "miele"),
             New Brand("Bosch Siemens", Kind.Home, "bsh hausger", "home connect"),
-            New Brand("Daikin", Kind.Home, "daikin"),
+            New Brand("Daikin", Kind.Home, "daikin", "prhttpd"),
             New Brand("Lutron", Kind.Home, "lutron"),
             New Brand("Vimar", Kind.Home, "vimar"),
             New Brand("BTicino", Kind.Home, "bticino", "legrand"),
@@ -825,6 +967,7 @@ Namespace Utils
         Private NotInheritable Class Signals
             Public Sub New(host As DiscoveredHost)
                 IsGateway = host.IsGateway
+                Sadp = host.Sadp
                 Ttl = If(host.Ttl.HasValue AndAlso host.Ttl.Value > 0, host.Ttl, Nothing)
                 Ports = host.Ports.Select(Function(p) p.Port).ToHashSet()
                 RandomMac = host.Vendor = MacVendorLookup.PrivateAddressLabel OrElse (host.Vendor Is Nothing AndAlso MacVendorLookup.IsLocallyAdministered(host.Mac))
@@ -837,6 +980,7 @@ Namespace Utils
             End Sub
 
             Public ReadOnly Property IsGateway As Boolean
+            Public ReadOnly Property Sadp As SadpDeviceInfo
             Public ReadOnly Property Ttl As Integer?
             Public ReadOnly Property Ports As HashSet(Of Integer)
             Public ReadOnly Property RandomMac As Boolean

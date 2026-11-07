@@ -342,5 +342,168 @@ Namespace WhoIsPro.Tests
             Assert.That(NetworkUtils.MatchesHostFilter(host, "40163b Smart TV 42"), [Is].True)
             Assert.That(NetworkUtils.MatchesHostFilter(host, "192.168 Apple"), [Is].False, "Se uno dei token non corrisponde deve restituire False")
         End Sub
+
+        <Test>
+        Public Sub SadpDiscovery_ParseHello_ShouldParseOfficialXmlAndHandleMalformedInput()
+            Dim xml = "<?xml version=""1.0"" encoding=""UTF-8""?>" &
+                      "<Hello>" &
+                      "<Uuid>8D2091BC-1DD2-11B2-807B-8CE748CF9334</Uuid>" &
+                      "<Types>hello</Types>" &
+                      "<DeviceType>1234</DeviceType>" &
+                      "<DeviceDescription>DS-7608NI-K2/8P</DeviceDescription>" &
+                      "<DeviceSN>DS-7608NI-K2/8P0820210607CCRR000000001</DeviceSN>" &
+                      "<CommandPort>8000</CommandPort>" &
+                      "<HttpPort>80</HttpPort>" &
+                      "<MAC>44-19-b7-00-00-64</MAC>" &
+                      "<IPv4Address>192.168.1.64</IPv4Address>" &
+                      "<DHCP>false</DHCP>" &
+                      "<AnalogChannelNum>0</AnalogChannelNum>" &
+                      "<DigitalChannelNum>8</DigitalChannelNum>" &
+                      "<SoftwareVersion>V4.30.085 build 210607</SoftwareVersion>" &
+                      "<DSPVersion>V5.0 build 210601</DSPVersion>" &
+                      "<Activated>false</Activated>" &
+                      "</Hello>"
+
+            Dim info = Network.Scan.SadpDiscovery.ParseHello(xml)
+            Assert.That(info, [Is].Not.Null)
+            Assert.That(info.Ip, [Is].EqualTo("192.168.1.64"))
+            Assert.That(info.Mac, [Is].EqualTo("44:19:b7:00:00:64"))
+            Assert.That(info.Model, [Is].EqualTo("DS-7608NI-K2/8P"))
+            Assert.That(info.SoftwareVersion, [Is].EqualTo("V4.30.085 build 210607"))
+            Assert.That(info.HttpPort, [Is].EqualTo(80))
+            Assert.That(info.CommandPort, [Is].EqualTo(8000))
+            Assert.That(info.DigitalChannels, [Is].EqualTo(8))
+            Assert.That(info.Activated, [Is].EqualTo(False))
+            Assert.That(info.Dhcp, [Is].EqualTo(False))
+
+            Dim banner = Network.Scan.SadpDiscovery.FormatBanner(info)
+            Assert.That(banner, Does.Contain("Hikvision SDK").And.Contain("DS-7608NI-K2/8P").And.Contain("FW V4.30.085 build 210607").And.Contain("NON ATTIVATO"))
+
+            ' Eco della nostra stessa sonda <Probe> o XML malformato: deve restituire Nothing senza eccezioni
+            Dim probeEcho = Network.Scan.SadpDiscovery.BuildProbeXml()
+            Assert.That(Network.Scan.SadpDiscovery.ParseHello(probeEcho), [Is].Null)
+            Assert.That(Network.Scan.SadpDiscovery.ParseHello("<Hello><broken>"), [Is].Null)
+            Assert.That(Network.Scan.SadpDiscovery.ParseHello("non è xml"), [Is].Null)
+
+            ' Risposta <ProbeMatch> di una telecamera, che ripete <Types>inquiry</Types>: non è un'eco della sonda
+            Dim probeMatch = "<?xml version=""1.0"" encoding=""UTF-8""?>" & vbCrLf &
+                "<ProbeMatch><Uuid>FCA5F552-CD11-4EB8-8B07-F59B71B82E25</Uuid>" & vbCrLf & "<Types>inquiry</Types>" & vbCrLf &
+                "<DeviceType>139856</DeviceType><DeviceDescription>DS-2CD2442FWD-IW</DeviceDescription>" &
+                "<DeviceSN>DS-2CD2442FWD-IW20200101AAWR000000001</DeviceSN><CommandPort>8000</CommandPort><HttpPort>80</HttpPort>" &
+                "<MAC>bc-ad-28-00-00-c9</MAC><IPv4Address>192.168.1.201</IPv4Address><DHCP>false</DHCP>" &
+                "<AnalogChannelNum>0</AnalogChannelNum><DigitalChannelNum>1</DigitalChannelNum></ProbeMatch>"
+            Dim real = Network.Scan.SadpDiscovery.ParseHello(probeMatch)
+            Assert.That(real, [Is].Not.Null)
+            Assert.That(real.Model, [Is].EqualTo("DS-2CD2442FWD-IW"))
+            Assert.That(real.Ip, [Is].EqualTo("192.168.1.201"))
+
+            ' Stessa telecamera via Wi-Fi (MAC del modulo Bilian, nessuna risposta SADP): riconosciuta dal rinvio della pagina web
+            Dim wifiCam As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.202", .Mac = "28:f3:66:00:00:ca", .Vendor = "SHENZHEN BILIAN ELECTRONIC CO., LTD", .Ttl = 64}
+            wifiCam.Ports.Add(New Network.Scan.OpenPort(80, "TCP", "HTTP", "Server: webserver · Rinvio: /doc/page/login.asp?_"))
+            wifiCam.Ports.Add(New Network.Scan.OpenPort(443, "TCP", "HTTPS", Nothing))
+            Assert.That(DeviceClassifier.Classify(wifiCam).DeviceType, [Is].EqualTo("Telecamera IP Hikvision"))
+        End Sub
+
+        <Test>
+        Public Sub DeviceClassifier_ShouldClassifyAllHikvisionFamiliesAndFirmware()
+            ' NVR con canali da SADP e versione firmware
+            Dim nvrHost As New Network.Scan.DiscoveredHost With {
+                .Ip = "192.168.1.64",
+                .Mac = "44:19:b7:00:00:64",
+                .Vendor = "Hangzhou Hikvision Digital Technology Co.,Ltd.",
+                .Sadp = New Network.Scan.SadpDeviceInfo With {
+                    .Ip = "192.168.1.64",
+                    .Model = "DS-7608NI-K2/8P",
+                    .SoftwareVersion = "V4.30.085 build 210607",
+                    .DigitalChannels = 8,
+                    .Activated = True
+                }
+            }
+            Dim cNvr = DeviceClassifier.Classify(nvrHost)
+            Assert.That(cNvr.Category, [Is].EqualTo(DeviceClassifier.CategoryCamera))
+            Assert.That(cNvr.DeviceType, [Is].EqualTo("Videoregistratore di rete (NVR) Hikvision DS-7608NI-K2/8P (8 canali)"))
+            Assert.That(DeviceClassifier.GuessOs(nvrHost), [Is].EqualTo("Firmware V4.30.085 build 210607"))
+
+            ' Telecamera PTZ, Termica, ANPR, DVR, Videocitofono, Controllo Accessi MinMoe, AX PRO, Switch PoE
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "DS-2DE4225IW-DE", Nothing, 64, "").DeviceType, [Is].EqualTo("Telecamera PTZ Hikvision DS-2DE4225IW-DE"))
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "DS-2TD2617B-6/PA", Nothing, 64, "").DeviceType, [Is].EqualTo("Telecamera termica Hikvision DS-2TD2617B-6/PA"))
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "iDS-2CD7A26G0/P-IZHS", Nothing, 64, "").DeviceType, [Is].EqualTo("Telecamera ANPR Hikvision iDS-2CD7A26G0/P-IZHS"))
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "DS-7208HQHI-K1", Nothing, 64, "").DeviceType, [Is].EqualTo("Videoregistratore DVR Hikvision DS-7208HQHI-K1"))
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "DS-KV8113-WME1", Nothing, 64, "").DeviceType, [Is].EqualTo("Posto esterno videocitofono Hikvision DS-KV8113-WME1"))
+            Assert.That(DeviceClassifier.Classify("Hangzhou Hikvision", "DS-KH6320-WTE1", Nothing, 64, "").DeviceType, [Is].EqualTo("Monitor videocitofono Hikvision DS-KH6320-WTE1"))
+
+            Dim acs = DeviceClassifier.Classify("Hangzhou Hikvision", "DS-K1T341AMF", Nothing, 64, "")
+            Assert.That(acs.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
+            Assert.That(acs.DeviceType, [Is].EqualTo("Terminale controllo accessi Hikvision DS-K1T341AMF"))
+
+            Dim axPro = DeviceClassifier.Classify("Hangzhou Hikvision", "DS-PWA96-M-WE", Nothing, 64, "")
+            Assert.That(axPro.Category, [Is].EqualTo(DeviceClassifier.CategoryAlarm))
+            Assert.That(axPro.DeviceType, [Is].EqualTo("Centrale d'allarme Hikvision AX PRO (DS-PWA96-M-WE)"))
+
+            Dim sw = DeviceClassifier.Classify("Hangzhou Hikvision", "DS-3E0508P-E", Nothing, 64, "")
+            Assert.That(sw.Category, [Is].EqualTo(DeviceClassifier.CategoryNetwork))
+            Assert.That(sw.DeviceType, [Is].EqualTo("Switch PoE Hikvision DS-3E0508P-E"))
+        End Sub
+
+        <Test>
+        Public Sub SensitivePorts_ShouldFlagUnactivatedHikvisionAndOutdatedFirmware()
+            Dim record As New Inventory.NetHostRecord With {
+                .Ip = "192.168.1.64",
+                .Vendor = "Hangzhou Hikvision Digital Technology Co.,Ltd.",
+                .DeviceType = "Telecamera IP Hikvision DS-2CD2143G0-I",
+                .OsGuess = "Firmware V5.5.82 build 190510",
+                .Ports = {
+                    New Network.Scan.OpenPort(80, "TCP", "HTTP", "Server: App-webs/"),
+                    New Network.Scan.OpenPort(8000, "TCP", "Hikvision-SDK", "Hikvision SDK · DS-2CD2143G0-I · FW V5.5.82 build 190510 · NON ATTIVATO")
+                }
+            }
+            Dim warnings = record.SensitivePorts
+            Assert.That(warnings, Has.Some.Contains("non attivato"))
+            Assert.That(warnings, Has.Some.Contains("Firmware datato (build 2019)"))
+        End Sub
+
+        <Test>
+        Public Sub MultiSubnetAndVpnClassification_ShouldWorkCorrectly()
+            ' Più sottoreti separate da virgola o punto e virgola
+            Dim ips = NetworkUtils.ParseTargets("192.168.30.0/24, 10.0.0.0/24")
+            Assert.That(ips.Count, [Is].EqualTo(508))
+            Dim scanner As New Network.Scan.DiscoveryScanner()
+            Dim net = scanner.IdentifyNetwork("192.168.30.0/24, 10.0.0.0/24")
+            Assert.That(net.Cidr, [Is].EqualTo("192.168.30.0/24, 10.0.0.0/24"))
+
+            ' Centralina controllo accessi Hikvision DS-K2602T via SADP unicast su VLAN instradata
+            Dim acPanel As New Network.Scan.DiscoveredHost With {
+                .Ip = "10.0.0.31",
+                .Mac = "c0:51:7e:00:00:31",
+                .Sadp = New Network.Scan.SadpDeviceInfo With {
+                    .Ip = "10.0.0.31",
+                    .Mac = "c0:51:7e:00:00:31",
+                    .Model = "DS-K2602T",
+                    .SoftwareVersion = "V1.0.4 build 211028",
+                    .CommandPort = 8000
+                }
+            }
+            Dim cAc = DeviceClassifier.Classify(acPanel)
+            Assert.That(cAc.Category, [Is].EqualTo(DeviceClassifier.CategoryHome))
+            Assert.That(cAc.DeviceType, [Is].EqualTo("Centralina controllo accessi Hikvision DS-K2602T"))
+
+            ' Switch Ubiquiti EdgeSwitch e CloudKey riconosciuti dal banner HTTPS (443) anche senza MAC
+            Dim edgeSw As New Network.Scan.DiscoveredHost With {.Ip = "10.0.0.10", .Ttl = 63}
+            edgeSw.Ports.Add(New Network.Scan.OpenPort(443, "TCP", "HTTPS", "Titolo: Ubiquiti EdgeSwitch"))
+            Assert.That(DeviceClassifier.Classify(edgeSw).DeviceType, [Is].EqualTo("Switch Ubiquiti"))
+
+            Dim cloudKey As New Network.Scan.DiscoveredHost With {.Ip = "10.0.0.254", .Ttl = 63}
+            cloudKey.Ports.Add(New Network.Scan.OpenPort(443, "TCP", "HTTPS", "Server: nginx · Titolo: CloudKey"))
+            Assert.That(DeviceClassifier.Classify(cloudKey).DeviceType, [Is].EqualTo("Controller di rete Ubiquiti"))
+
+            ' Domotica Vantage e inverter Fronius
+            Dim vantage As New Network.Scan.DiscoveredHost With {.Ip = "10.0.0.202", .Ttl = 63}
+            vantage.Ports.Add(New Network.Scan.OpenPort(80, "TCP", "HTTP", "Server: Boa/0.93.15 · Titolo: Vantage TPT"))
+            Assert.That(DeviceClassifier.Classify(vantage).DeviceType, [Is].EqualTo("Automazione / Domotica Vantage"))
+
+            Dim fronius As New Network.Scan.DiscoveredHost With {.Ip = "10.0.0.215", .Ttl = 63}
+            fronius.Ports.Add(New Network.Scan.OpenPort(80, "TCP", "HTTP", "Titolo: Fronius: 000.000001"))
+            Assert.That(DeviceClassifier.Classify(fronius).DeviceType, [Is].EqualTo("Inverter fotovoltaico Fronius"))
+        End Sub
     End Class
 End Namespace

@@ -47,8 +47,9 @@ Namespace Inventory
                     notes        TEXT,
                     icon         TEXT,
                     icon_color   TEXT,
+                    extra_ips    TEXT,
                     UNIQUE(network_key, host_key)"
-        Private Const HostColumnList As String = "network_key, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, glyph, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color"
+        Private Const HostColumnList As String = "network_key, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, glyph, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, extra_ips"
 
 #End Region
 
@@ -130,6 +131,8 @@ Namespace Inventory
             Dim hostColumns = Columns("net_hosts")
             If Not hostColumns.Contains("icon") Then Execute("ALTER TABLE net_hosts ADD COLUMN icon TEXT")
             If Not hostColumns.Contains("icon_color") Then Execute("ALTER TABLE net_hosts ADD COLUMN icon_color TEXT")
+            ' 2.8: altri IPv4 dello stesso dispositivo (stesso MAC), prima della ricostruzione per rete che copia tutte le colonne
+            If Not hostColumns.Contains("extra_ips") Then Execute("ALTER TABLE net_hosts ADD COLUMN extra_ips TEXT")
             If Not hostColumns.Contains("network_key") Then MigrateToNetworks()
         End Sub
 

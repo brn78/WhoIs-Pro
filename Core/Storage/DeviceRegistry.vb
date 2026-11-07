@@ -209,22 +209,25 @@ Namespace Storage
         Public Sub Save()
         End Sub
 
-        ''' <summary>Host della sessione come lo vede il motore, per l'archivio.</summary>
-        Friend Shared Function ToDiscovered(h As HostInfo) As DiscoveredHost
-            Dim vendor = If(h.MacVendor, "")
-            If vendor = "Sconosciuto" OrElse vendor = "Produttore non catalogato" OrElse vendor.StartsWith("N/D", StringComparison.Ordinal) Then vendor = Nothing
+        ''' <summary>Host della sessione come lo vede il motore, per l'archivio o la riclassificazione.</summary>
+        Friend Shared Function ToDiscovered(h As HostInfo, Optional openPorts As IEnumerable(Of OpenPort) = Nothing) As DiscoveredHost
             Dim d As New DiscoveredHost With {
-                .Ip = h.IPAddress, .Mac = MacVendorLookup.Normalize(h.MacAddress), .Vendor = vendor,
-                .HostName = If(String.IsNullOrEmpty(h.Hostname), Nothing, h.Hostname), .NetBiosName = If(String.IsNullOrEmpty(h.NetBiosName), Nothing, h.NetBiosName),
-                .NetBiosWorkgroup = If(String.IsNullOrEmpty(h.Workgroup), Nothing, h.Workgroup),
+                .Ip = h.IPAddress, .Mac = MacVendorLookup.Normalize(h.MacAddress), .Vendor = MacVendorLookup.CleanVendor(h.MacVendor),
+                .HostName = If(String.IsNullOrWhiteSpace(h.Hostname), Nothing, h.Hostname), .NetBiosName = If(String.IsNullOrWhiteSpace(h.NetBiosName), Nothing, h.NetBiosName),
+                .NetBiosWorkgroup = If(String.IsNullOrWhiteSpace(h.Workgroup), Nothing, h.Workgroup),
                 .DeviceType = If(h.DeviceType, "Dispositivo"), .Category = If(h.DeviceCategory, DeviceClassifier.CategoryOther),
                 .OsGuess = If(String.IsNullOrEmpty(h.OSGuess) OrElse h.OSGuess = "Sconosciuto", Nothing, h.OSGuess),
                 .RespondsToPing = h.RespondsToPing, .LatencyMs = If(h.ResponseTimeMs > 0, h.ResponseTimeMs, CType(Nothing, Double?)),
                 .Ttl = If(h.TTL > 0, h.TTL, CType(Nothing, Integer?)), .IsGateway = h.IsGateway, .IsLocalMachine = h.IsLocalMachine
             }
-            For Each p In If(h.OpenPorts, New List(Of Integer)())
-                d.Ports.Add(New OpenPort(p, "TCP", PortDictionary.ServiceNameOrNull(p), Nothing))
-            Next
+            If openPorts IsNot Nothing Then
+                d.Ports.AddRange(openPorts)
+            Else
+                For Each p In If(h.OpenPorts, New List(Of Integer)())
+                    d.Ports.Add(New OpenPort(p, "TCP", PortDictionary.ServiceNameOrNull(p), Nothing))
+                Next
+            End If
+            If h.OtherIpv4 IsNot Nothing Then d.ExtraIps.AddRange(h.OtherIpv4)
             Return d
         End Function
 

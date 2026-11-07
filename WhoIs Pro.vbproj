@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     WhoIs Pro: scanner di rete e porte, WHOIS, DNS, traceroute e connessioni attive, con sessioni salvate in modo
@@ -17,7 +17,7 @@
     <ApplicationIcon>Assets\WhoIsPro.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
 
-    <Version>2.7.0</Version>
+    <Version>2.8.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WhoIs Pro</Product>
     <AssemblyTitle>WhoIs Pro</AssemblyTitle>

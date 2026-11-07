@@ -1,4 +1,4 @@
-﻿Namespace Models
+Namespace Models
     ''' <summary>Host della sessione: quello che la scansione della rete ha trovato (e che finisce nel file .whoispro).</summary>
     Public Class HostInfo
         Public Property IPAddress As String = ""
@@ -33,6 +33,8 @@
         Public Property IconColor As String = ""
         ''' <summary>Indirizzi IPv6 dello stesso dispositivo (stesso MAC), dalla tabella dei vicini di Windows.</summary>
         Public Property Ipv6 As New List(Of String)()
+        ''' <summary>Altri indirizzi IPv4 dello stesso dispositivo (stesso MAC): una sola riga invece di una per indirizzo.</summary>
+        Public Property OtherIpv4 As New List(Of String)()
 
         Public Overrides Function ToString() As String
             Return $"{IPAddress} ({If(String.IsNullOrEmpty(Hostname), "No Hostname", Hostname)}) - {DeviceType}"

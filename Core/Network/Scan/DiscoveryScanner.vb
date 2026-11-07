@@ -21,9 +21,9 @@ Namespace Network.Scan
 
 #Region "Costanti"
 
-        ''' <summary>Rete più ampia scansionabile: una /22, cioè 1024 indirizzi.</summary>
+        ''' <summary>Rete singola più ampia scansionabile: una /22 (1024 indirizzi); fino a 4096 indirizzi complessivi su più sottoreti.</summary>
         Private Const MinPrefixLength As Integer = 22
-        Private Const MaxAddresses As Integer = 1024
+        Private Const MaxAddresses As Integer = 4096
         ''' <summary>Ricerche DNS inverse contemporanee: Windows le esegue bloccando un thread ciascuna.</summary>
         Private Const MaxConcurrentDns As Integer = 16
 
@@ -165,10 +165,34 @@ Namespace Network.Scan
 
             ' Il database dei produttori si carica in parallelo al ping, così non pesa sulla scansione
             Dim vendorWarmup = Task.Run(Function() MacVendorLookup.TotalVendorsLoaded, CancellationToken.None)
+            ' Sonda multicast SADP (239.255.255.250:37020) in parallelo al ping sulle schede locali: trova modello, firmware,
+            ' seriale e stato di attivazione dei dispositivi Hikvision senza allungare la scansione
+            Dim sadpAddresses = plan.Interfaces.Where(Function(i) Not i.IsVirtual).Select(Function(i) i.Address).ToList()
+            If sadpAddresses.Count = 0 Then sadpAddresses = plan.Interfaces.Select(Function(i) i.Address).ToList()
+            ' per un solo indirizzo (riscansione di un host) basta mezzo secondo: le risposte in LAN arrivano in pochi decimi
+            Dim sadpBudget = If(plan.Addresses.Length = 1, Math.Clamp(timeout \ 2, 300, 600), Math.Clamp(timeout * 2, 1000, 1800))
+            Dim sadpTask = If(sadpAddresses.Count > 0 AndAlso plan.Addresses.Any(AddressOf plan.IsOnLink),
+                              SadpDiscovery.QueryAsync(sadpAddresses, sadpBudget, ct),
+                              Task.FromResult(Of IReadOnlyList(Of SadpDeviceInfo))(Array.Empty(Of SadpDeviceInfo)()))
 
             Dim hosts As New ConcurrentDictionary(Of UInteger, DiscoveredHost)()
             Await PingPhaseAsync(plan, hosts, timeout, parallelism, progress, ct).ConfigureAwait(False)
             Dim arpOnly = Await ArpPhaseAsync(plan, hosts, timeout, parallelism, progress, ct).ConfigureAwait(False)
+            ' Si attende sempre la risposta SADP (in pratica è già arrivata durante ping e ARP): le telecamere Wi-Fi hanno spesso
+            ' il MAC del modulo radio e non di Hikvision, quindi il produttore non basta per decidere
+            Dim sadpFound = Await sadpTask.ConfigureAwait(False)
+            ApplySadpResults(plan, hosts, sadpFound, progress)
+            ' Sottoreti instradate o VPN (dove il multicast 239.255.255.250 non passa): interroghiamo in unicast UDP 37020
+            ' gli host fuori rete che hanno risposto al ping (o il singolo IP), ottenendo modello, firmware, seriale e MAC
+            Dim offLinkTargets = hosts.Where(Function(p) p.Value.Sadp Is Nothing AndAlso Not plan.IsOnLink(p.Key)).
+                Select(Function(p) Ipv4.ToAddress(p.Key)).ToList()
+            If offLinkTargets.Count = 0 AndAlso plan.Addresses.Length = 1 AndAlso Not plan.IsOnLink(plan.Addresses(0)) Then
+                offLinkTargets.Add(Ipv4.ToAddress(plan.Addresses(0)))
+            End If
+            If offLinkTargets.Count > 0 Then
+                Dim unicastSadp = Await SadpDiscovery.QueryUnicastAsync(offLinkTargets, Math.Clamp(timeout * 2, 900, 1600), ct).ConfigureAwait(False)
+                ApplySadpResults(plan, hosts, unicastSadp, progress)
+            End If
             MarkLocalMachineAndGateway(hosts, interfaces)
             ' la rete di questa scansione: il MAC del gateway lo abbiamo appena letto con l'ARP, se risponde
             Dim gatewayHost As DiscoveredHost = Nothing
@@ -181,17 +205,28 @@ Namespace Network.Scan
             Dim probed As IReadOnlyList(Of Integer) = Array.Empty(Of Integer)()
             If options.ScanPorts Then
                 probed = NormalizePorts(options.Ports)
-                Await PortsPhaseAsync(found, probed, timeout, parallelism, progress, ct).ConfigureAwait(False)
-                If options.GrabBanners Then Await BannerPhaseAsync(found, timeout, parallelism, progress, ct).ConfigureAwait(False)
+                Await PortsPhaseAsync(plan, found, probed, timeout, parallelism, progress, ct).ConfigureAwait(False)
+                If options.GrabBanners Then
+                    Await BannerPhaseAsync(found, timeout, parallelism, progress, ct).ConfigureAwait(False)
+                    Await HikvisionWebFollowUpAsync(found, timeout, ct).ConfigureAwait(False)
+                End If
             End If
 
             DropVanishedArpHosts(hosts, arpOnly)
             Await vendorWarmup.ConfigureAwait(False)
 
             Dim result = hosts.Values.OrderBy(Function(h) h.Ip, IpComparer.Instance).ToList()
-            Dim final As New PhaseReporter(progress, "fine", result.Count)
             For Each host In result
                 Describe(host)
+            Next
+            ' più IPv4 con lo stesso MAC = un solo dispositivo (il conteggio deve dire quanti sono davvero)
+            Dim merge = SameDeviceMerger.MergeByMac(result)
+            result = merge.Hosts
+            For Each host In merge.Merged
+                Describe(host)
+            Next
+            Dim final As New PhaseReporter(progress, "fine", result.Count)
+            For Each host In result
                 final.Step(Nothing, host)
             Next
             final.Complete($"{result.Count} host classificati")
@@ -362,10 +397,64 @@ Namespace Network.Scan
             For Each address In arpOnly
                 Dim host As DiscoveredHost = Nothing
                 If Not hosts.TryGetValue(address, host) Then Continue For
-                Dim evidence = host.Ports.Count > 0 OrElse host.NetBiosName IsNot Nothing OrElse host.IsGateway OrElse host.IsLocalMachine
+                Dim evidence = host.Ports.Count > 0 OrElse host.NetBiosName IsNot Nothing OrElse host.Sadp IsNot Nothing OrElse host.IsGateway OrElse host.IsLocalMachine
                 If Not evidence AndAlso Not present.Contains(address) Then hosts.TryRemove(address, host)
             Next
         End Sub
+
+        ''' <summary>
+        ''' Abbinamento delle risposte SADP agli host della scansione (per IP o per MAC); segnala nella barra di avanzamento
+        ''' eventuali dispositivi Hikvision presenti sul cavo ma configurati su un'altra sottorete (es. 192.168.1.64 di fabbrica).
+        ''' </summary>
+        Private Shared Sub ApplySadpResults(plan As ScanPlan, hosts As ConcurrentDictionary(Of UInteger, DiscoveredHost),
+                                            sadpList As IReadOnlyList(Of SadpDeviceInfo), progress As IProgress(Of ScanPhaseProgress))
+            If sadpList Is Nothing OrElse sadpList.Count = 0 Then Return
+            Dim targetSet = plan.Addresses.ToHashSet()
+            For Each item In sadpList
+                Dim addr As UInteger
+                Dim hasIp = Ipv4.TryParse(item.Ip, addr)
+                If hasIp AndAlso targetSet.Contains(addr) Then
+                    Dim host As DiscoveredHost = Nothing
+                    If hosts.TryGetValue(addr, host) Then
+                        host.Sadp = item
+                        If host.Mac Is Nothing AndAlso item.Mac IsNot Nothing Then host.Mac = item.Mac
+                    Else
+                        host = New DiscoveredHost With {.Ip = Ipv4.Format(addr), .Mac = item.Mac, .RespondsToPing = False, .Sadp = item}
+                        hosts(addr) = host
+                    End If
+                    Dim label = If(Not String.IsNullOrEmpty(item.Model), item.Model, "Hikvision")
+                    progress?.Report(New ScanPhaseProgress("arp", hosts.Count, Math.Max(hosts.Count, 1), $"{host.Ip} → {label} (SADP)", host))
+                    ' Stesso dispositivo con un secondo indirizzo (es. telecamera -W con cavo e Wi-Fi sullo stesso MAC):
+                    ' SADP risponde da una sola interfaccia, i dati valgono anche per l'altra
+                    ApplySadpByMac(hosts, item, host)
+                    Continue For
+                End If
+
+                ' Abbinamento per MAC se l'host è già tra quelli trovati
+                If ApplySadpByMac(hosts, item, Nothing) Then Continue For
+
+                ' Dispositivo Hikvision sul cavo LAN ma con IP fuori dalla sottorete scansionata: segnalato nell'avanzamento
+                If hasIp AndAlso plan.Addresses.Length > 1 Then
+                    Dim model = If(Not String.IsNullOrEmpty(item.Model), $" ({item.Model})", "")
+                    progress?.Report(New ScanPhaseProgress("arp", hosts.Count, Math.Max(hosts.Count, 1), $"Hikvision fuori sottorete: {item.Ip}{model}"))
+                End If
+            Next
+        End Sub
+
+        ''' <summary>Assegna i dati SADP agli host (diversi da <paramref name="except"/>) con lo stesso MAC; True se almeno uno.</summary>
+        Private Shared Function ApplySadpByMac(hosts As ConcurrentDictionary(Of UInteger, DiscoveredHost), item As SadpDeviceInfo, except As DiscoveredHost) As Boolean
+            Dim mac = MacVendorLookup.Normalize(item.Mac)
+            If mac Is Nothing Then Return False
+            Dim any = False
+            For Each h In hosts.Values
+                If h Is except OrElse h.Sadp IsNot Nothing Then Continue For
+                If String.Equals(MacVendorLookup.Normalize(h.Mac), mac, StringComparison.OrdinalIgnoreCase) Then
+                    h.Sadp = item
+                    any = True
+                End If
+            Next
+            Return any
+        End Function
 
         ''' <summary>Gateway delle schede locali e indirizzi di questa macchina (con il MAC della scheda e il nome del PC).</summary>
         Private Shared Sub MarkLocalMachineAndGateway(hosts As ConcurrentDictionary(Of UInteger, DiscoveredHost), interfaces As List(Of LocalInterface))
@@ -436,14 +525,24 @@ Namespace Network.Scan
 
 #Region "Fase porte"
 
-        Private Shared Async Function PortsPhaseAsync(hosts As List(Of DiscoveredHost), ports As IReadOnlyList(Of Integer), timeout As Integer, parallelism As Integer,
+        Private Shared Async Function PortsPhaseAsync(plan As ScanPlan, hosts As List(Of DiscoveredHost), ports As IReadOnlyList(Of Integer), timeout As Integer, parallelism As Integer,
                                                       progress As IProgress(Of ScanPhaseProgress), ct As CancellationToken) As Task
             ' prove ordinate porta per porta: le connessioni contemporanee si distribuiscono su tutti gli host
             Dim addresses = hosts.ToDictionary(Function(h) h, Function(h) IPAddress.Parse(h.Ip))
-            Dim probes As New List(Of (Host As DiscoveredHost, Port As Integer))(hosts.Count * ports.Count)
+            Dim baseSet = ports.ToHashSet()
+            Dim probes As New List(Of (Host As DiscoveredHost, Port As Integer))(hosts.Count * ports.Count + 16)
             For Each port In ports
                 For Each host In hosts
                     probes.Add((host, port))
+                Next
+            Next
+            ' Sugli host Hikvision rilevati da SADP proviamo sempre anche la porta SDK (8000), HTTP e RTSP (554),
+            ' anche se il gruppo scelto nella pagina era "Le 20 più comuni"
+            For Each host In hosts.Where(Function(h) h.Sadp IsNot Nothing)
+                For Each extraPort In {host.Sadp.HttpPort, host.Sadp.CommandPort, 554}.Distinct()
+                    If extraPort >= 1 AndAlso extraPort <= 65535 AndAlso Not baseSet.Contains(extraPort) Then
+                        probes.Add((host, extraPort))
+                    End If
                 Next
             Next
             Dim phase As New PhaseReporter(progress, "porte", probes.Count)
@@ -463,13 +562,27 @@ Namespace Network.Scan
                     phase.Step($"{probe.Host.Ip}: porta {probe.Port} aperta{If(service Is Nothing, "", $" ({service})")}")
                 End Function, ct).ConfigureAwait(False)
 
+            ' Alcune VPN con subnet router (es. Tailscale MagicDNS) intercettano la porta TCP 53 su ogni indirizzo instradato,
+            ' facendo apparire tutti gli host fuori rete come "Server DNS": se almeno 3 host instradati hanno porte aperte
+            ' e oltre il 70% risponde sulla 53, la scartiamo sugli host fuori rete
+            Dim offLinkHosts = open.Keys.Where(Function(h)
+                                                   Dim addr As UInteger
+                                                   Return Ipv4.TryParse(h.Ip, addr) AndAlso Not plan.IsOnLink(addr)
+                                               End Function).ToHashSet()
+            Dim stripFakeDns = offLinkHosts.Count >= 3 AndAlso
+                               offLinkHosts.Where(Function(h) open(h).Contains(53)).Count() >= Math.Ceiling(offLinkHosts.Count * 0.7)
+
             For Each pair In open
-                For Each port In pair.Value.Distinct().OrderBy(Function(p) p)
+                Dim portList = pair.Value.Distinct().OrderBy(Function(p) p).ToList()
+                If stripFakeDns AndAlso offLinkHosts.Contains(pair.Key) Then
+                    portList.Remove(53)
+                End If
+                For Each port In portList
                     pair.Key.Ports.Add(New OpenPort(port, "TCP", PortDictionary.ServiceNameOrNull(port), Nothing))
                 Next
                 phase.Update(pair.Key)
             Next
-            phase.Complete($"{open.Values.Sum(Function(p) p.Count)} porte aperte su {open.Count} host")
+            phase.Complete($"{hosts.Sum(Function(h) h.Ports.Count)} porte aperte su {hosts.Where(Function(h) h.Ports.Count > 0).Count()} host")
         End Function
 
 #End Region
@@ -510,6 +623,58 @@ Namespace Network.Scan
             phase.Complete($"{banners.Count} banner letti")
         End Function
 
+        ''' <summary>
+        ''' Dispositivi Hikvision riconosciuti solo dall'interfaccia web (nessuna risposta SADP, es. scheda Wi-Fi o firmware
+        ''' vecchio su sottorete instradata): si provano anche la porta SDK (8000), RTSP (554) e il realm ISAPI per il modello.
+        ''' </summary>
+        Private Shared Async Function HikvisionWebFollowUpAsync(hosts As List(Of DiscoveredHost), timeout As Integer, ct As CancellationToken) As Task
+            Dim targets = hosts.Where(Function(h) h.Sadp Is Nothing AndAlso h.Ports.Any(Function(p) IsHikvisionWebBanner(p.Banner))).ToList()
+            If targets.Count = 0 Then Return
+            Dim budget = Math.Clamp(timeout * 2, 800, 2500)
+            Dim jobs = targets.SelectMany(Function(h) {8000, 554}.Where(Function(port) Not h.Ports.Any(Function(p) p.Port = port)).Select(Function(port) (Host:=h, Port:=port))).ToList()
+            Dim found As New ConcurrentBag(Of (Host As DiscoveredHost, Port As Integer, Banner As String))()
+            Await RunThrottledAsync(jobs, 16,
+                Async Function(job, token)
+                    Dim address = IPAddress.Parse(job.Host.Ip)
+                    Using client = Await TcpConnector.ConnectAsync(address, job.Port, timeout, token).ConfigureAwait(False)
+                        If client Is Nothing Then Return
+                    End Using
+                    Dim banner As String = Nothing
+                    If job.Port = 554 Then banner = Await BannerGrabber.GrabAsync(address, 554, budget, token).ConfigureAwait(False)
+                    found.Add((job.Host, job.Port, banner))
+                End Function, ct).ConfigureAwait(False)
+            For Each item In found.OrderBy(Function(f) f.Port)
+                SyncLock item.Host.Ports
+                    If Not item.Host.Ports.Any(Function(p) p.Port = item.Port) Then
+                        item.Host.Ports.Add(New OpenPort(item.Port, "TCP", PortDictionary.ServiceNameOrNull(item.Port), item.Banner))
+                    End If
+                End SyncLock
+            Next
+            ' Sulle telecamere in cui GET / rimanda a /doc/page/login.asp senza indicare il modello, /ISAPI/System/deviceInfo
+            ' risponde 401 con WWW-Authenticate realm="<Modello>" (es. "DS-2CD2532F-I")
+            Await RunThrottledAsync(targets, 16,
+                Async Function(host, token)
+                    Dim webPort = host.Ports.FirstOrDefault(Function(p) BannerGrabber.HttpPorts.Contains(p.Port) AndAlso IsHikvisionWebBanner(p.Banner))
+                    If webPort Is Nothing OrElse webPort.Banner.Contains("Realm:", StringComparison.OrdinalIgnoreCase) Then Return
+                    Dim realm = Await BannerGrabber.GrabHikvisionRealmAsync(IPAddress.Parse(host.Ip), webPort.Port, budget, token).ConfigureAwait(False)
+                    If Not String.IsNullOrWhiteSpace(realm) Then
+                        webPort.Banner = BannerGrabber.Clean($"{webPort.Banner} · Realm: {realm}", 160)
+                    End If
+                End Function, ct).ConfigureAwait(False)
+            For Each host In targets
+                host.Ports.Sort(Function(a, b) a.Port.CompareTo(b.Port))
+            Next
+        End Function
+
+        Friend Shared Function IsHikvisionWebBanner(banner As String) As Boolean
+            If String.IsNullOrEmpty(banner) Then Return False
+            Return banner.Contains("/doc/page/login.asp", StringComparison.OrdinalIgnoreCase) OrElse
+                   banner.Contains("Realm: IP Camera(", StringComparison.OrdinalIgnoreCase) OrElse
+                   banner.Contains("Hikvision", StringComparison.OrdinalIgnoreCase) OrElse
+                   banner.Contains("App-webs", StringComparison.OrdinalIgnoreCase) OrElse
+                   banner.Contains("DNVRS-Webs", StringComparison.OrdinalIgnoreCase)
+        End Function
+
 #End Region
 
 #Region "Classificazione"
@@ -519,9 +684,33 @@ Namespace Network.Scan
             Try
                 host.Mac = If(MacVendorLookup.Normalize(host.Mac), host.Mac)
                 host.Vendor = MacVendorLookup.Lookup(host.Mac)
+                If host.Sadp IsNot Nothing Then
+                    If String.IsNullOrEmpty(host.Vendor) Then host.Vendor = "Hangzhou Hikvision Digital Technology Co.,Ltd."
+                    Dim sadpBanner = SadpDiscovery.FormatBanner(host.Sadp)
+                    Dim sdkPort = host.Ports.FirstOrDefault(Function(p) p.Port = host.Sadp.CommandPort)
+                    If sdkPort IsNot Nothing Then
+                        sdkPort.Service = "Hikvision-SDK"
+                        sdkPort.Banner = sadpBanner
+                    Else
+                        ' Se le porte non sono state scansionate o la CommandPort non era tra quelle aperte,
+                        ' salviamo il banner SADP sulla porta HTTP (se presente) così resta anche nell'archivio SQLite
+                        Dim httpPort = host.Ports.FirstOrDefault(Function(p) p.Port = host.Sadp.HttpPort)
+                        If httpPort IsNot Nothing AndAlso String.IsNullOrWhiteSpace(httpPort.Banner) Then
+                            httpPort.Banner = sadpBanner
+                        End If
+                    End If
+                End If
                 Dim c = DeviceClassifier.Classify(host)
                 host.DeviceType = c.DeviceType
                 host.Category = c.Category
+                ' Se il dispositivo è Hikvision e ha la porta 8000 aperta, il servizio è Hikvision-SDK e non HTTP-Alt
+                If host.DeviceType IsNot Nothing AndAlso host.DeviceType.Contains("Hikvision", StringComparison.OrdinalIgnoreCase) Then
+                    Dim p8000 = host.Ports.FirstOrDefault(Function(p) p.Port = 8000)
+                    If p8000 IsNot Nothing Then
+                        p8000.Service = "Hikvision-SDK"
+                        If String.IsNullOrWhiteSpace(p8000.Banner) Then p8000.Banner = "Hikvision SDK"
+                    End If
+                End If
                 ' dopo la classificazione: la stima del sistema tiene conto della categoria (un modulo IoT con TTL 128 non è Windows)
                 host.OsGuess = If(host.IsLocalMachine, "Windows", DeviceClassifier.GuessOs(host))
             Catch
@@ -554,9 +743,33 @@ Namespace Network.Scan
 
         ''' <summary>
         ''' Interpreta il bersaglio: vuoto = rete principale (al massimo una /22 attorno a questo PC), "192.168.1" = /24,
-        ''' "192.168.1.0/24" = CIDR fino a /22, "192.168.1.10-60" o "192.168.1.10-192.168.1.60" = intervallo, oppure un solo IP.
+        ''' "192.168.1.0/24" = CIDR fino a /22, "192.168.1.10-60" o "192.168.1.10-192.168.1.60" = intervallo, un solo IP,
+        ''' oppure più sottoreti/intervalli separati da virgola o punto e virgola (es. "192.168.1.0/24, 192.168.2.0/24").
         ''' </summary>
         Private Shared Function ResolveTarget(target As String, interfaces As List(Of LocalInterface)) As ScanPlan
+            Dim text = If(target, "").Trim()
+            If text.Length = 0 Then Return ResolveSingleTarget("", interfaces)
+
+            Dim tokens = NetworkUtils.SplitTargets(text)
+            If tokens.Length <= 1 Then Return ResolveSingleTarget(If(tokens.Length = 1, tokens(0), text), interfaces)
+
+            Dim plans = tokens.Select(Function(t) ResolveSingleTarget(t, interfaces)).ToList()
+            Dim addresses = plans.SelectMany(Function(p) p.Addresses).Distinct().ToArray()
+            If addresses.Length > MaxAddresses Then
+                Throw New ArgumentException($"L'insieme delle reti indicate ({addresses.Length:N0} indirizzi) supera il limite massimo di {MaxAddresses:N0} indirizzi.", NameOf(target))
+            End If
+            Dim labels = plans.Select(Function(p) p.Label).Distinct().ToArray()
+            Dim firstOnLink = plans.FirstOrDefault(Function(p) p.Addresses.Length > 0 AndAlso p.IsOnLink(p.Addresses(0)))
+            Dim iface = If(firstOnLink?.Interface, plans(0).Interface)
+            Return New ScanPlan With {
+                .Label = String.Join(", ", labels),
+                .Addresses = addresses,
+                .Interface = iface,
+                .Interfaces = interfaces
+            }
+        End Function
+
+        Private Shared Function ResolveSingleTarget(target As String, interfaces As List(Of LocalInterface)) As ScanPlan
             Dim text = If(target, "").Trim()
             Dim first As UInteger, last As UInteger
             Dim label As String
@@ -577,7 +790,7 @@ Namespace Network.Scan
                 Dim parts = text.Split("/"c, 2, StringSplitOptions.TrimEntries)
                 Dim address As UInteger, prefix As Integer
                 If Not Ipv4.TryParse(parts(0), address) OrElse Not Integer.TryParse(parts(1), prefix) OrElse prefix < 0 OrElse prefix > 32 Then Throw InvalidTarget(text)
-                If prefix < MinPrefixLength Then Throw New ArgumentException($"La rete {text} è troppo ampia: il massimo è una /{MinPrefixLength} ({MaxAddresses} indirizzi).", NameOf(target))
+                If prefix < MinPrefixLength Then Throw New ArgumentException($"La rete {text} è troppo ampia: il massimo per una singola sottorete è una /{MinPrefixLength} (1.024 indirizzi).", NameOf(target))
                 Dim network = address And Ipv4.Mask(prefix)
                 HostRange(network, prefix, first, last)
                 label = $"{Ipv4.Format(network)}/{prefix}"

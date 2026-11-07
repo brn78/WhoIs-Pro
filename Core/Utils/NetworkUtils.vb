@@ -1,8 +1,9 @@
 Imports System.Net
 Imports System.Net.Sockets
 Imports System.Net.NetworkInformation
-Imports System.Runtime.InteropServices
+Imports System.Text.RegularExpressions
 Imports WhoIsPro.Models
+Imports WhoIsPro.Network.Scan
 
 Namespace Utils
     Public Class LocalAdapterInfo
@@ -18,18 +19,9 @@ Namespace Utils
         Public ReadOnly Property SubnetCidr As String
             Get
                 If IPAddress Is Nothing OrElse SubnetMask Is Nothing Then Return ""
-                Dim maskBytes = SubnetMask.GetAddressBytes()
-                Dim bits As Integer = 0
-                For Each b In maskBytes
-                    bits += Convert.ToString(b, 2).Count(Function(c) c = "1"c)
-                Next
-                Dim ipBytes = IPAddress.GetAddressBytes()
-                Dim netBytes(3) As Byte
-                For i = 0 To 3
-                    netBytes(i) = CByte(ipBytes(i) And maskBytes(i))
-                Next
-                Dim netIp As New IPAddress(netBytes)
-                Return $"{netIp}/{bits}"
+                Dim bits = Ipv4.PrefixFromMask(SubnetMask)
+                Dim net = Ipv4.ToUInt32(IPAddress) And Ipv4.Mask(bits)
+                Return $"{Ipv4.Format(net)}/{bits}"
             End Get
         End Property
 
@@ -39,26 +31,9 @@ Namespace Utils
     End Class
 
     Public Module NetworkUtils
-        <DllImport("iphlpapi.dll", ExactSpelling:=True)>
-        Private Function SendARP(destIp As Integer, srcIp As Integer, pMacAddr As Byte(), ByRef phyAddrLen As Integer) As Integer
-        End Function
-
         Public Function GetMacAddress(ip As IPAddress) As String
-            Try
-                Dim destIpBytes = ip.GetAddressBytes()
-                If destIpBytes.Length <> 4 Then Return "" ' Solo IPv4 supportato per ARP
-
-                Dim destIpInt As Integer = BitConverter.ToInt32(destIpBytes, 0)
-                Dim mac(5) As Byte
-                Dim macLen As Integer = mac.Length
-
-                Dim retVal As Integer = SendARP(destIpInt, 0, mac, macLen)
-                If retVal = 0 AndAlso macLen = 6 Then
-                    Return String.Join(":", mac.Select(Function(b) b.ToString("X2")))
-                End If
-            Catch
-            End Try
-            Return ""
+            If ip Is Nothing OrElse ip.AddressFamily <> AddressFamily.InterNetwork Then Return ""
+            Return If(IpHelper.SendArp(Ipv4.ToUInt32(ip)), "")
         End Function
 
         Public Function GetLocalAdapters() As List(Of LocalAdapterInfo)
@@ -90,24 +65,41 @@ Namespace Utils
             Return list
         End Function
 
+        Private ReadOnly ThreeOctetsPattern As New Regex("^\d{1,3}\.\d{1,3}\.\d{1,3}\.?\*?$", RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+        Private ReadOnly SpacedSeparatorPattern As New Regex("\s*([/-])\s*", RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+
+        ''' <summary>
+        ''' Le parti di un bersaglio con più reti o intervalli («192.168.1.0/24, 10.0.0.0/24»): separatori virgola, punto e
+        ''' virgola o spazio; gli spazi attorno a «/» e «-» non contano. Usata dal controllo della pagina e dal motore di scansione.
+        ''' </summary>
+        Public Function SplitTargets(input As String) As String()
+            If String.IsNullOrWhiteSpace(input) Then Return Array.Empty(Of String)()
+            Return SpacedSeparatorPattern.Replace(input.Trim(), "$1").Split(New Char() {","c, ";"c, " "c}, StringSplitOptions.RemoveEmptyEntries Or StringSplitOptions.TrimEntries)
+        End Function
+
         Public Function ParseTargets(input As String) As List(Of IPAddress)
             Dim result As New List(Of IPAddress)()
-            If String.IsNullOrWhiteSpace(input) Then Return result
-
-            Dim targets = input.Split(New Char() {","c, ";"c, " "c}, StringSplitOptions.RemoveEmptyEntries)
-            For Each target In targets
+            For Each target In SplitTargets(input)
                 Dim t = target.Trim()
-                If t.Contains("/"c) Then
+                If ThreeOctetsPattern.IsMatch(t) Then
+                    ' Forma abbreviata es. "192.168.30" o "192.168.30.*" -> /24
+                    result.AddRange(ParseCidr(t.TrimEnd("."c, "*"c).TrimEnd("."c) & ".0/24"))
+                ElseIf t.Contains("/"c) Then
                     ' CIDR es. 192.168.1.0/24
                     result.AddRange(ParseCidr(t))
                 ElseIf t.Contains("-"c) Then
                     ' Range es. 192.168.1.1-192.168.1.50 o 192.168.1.1-50
                     result.AddRange(ParseRange(t))
                 Else
-                    ' Singolo IP o dominio
+                    ' Singolo IP, indirizzo di rete .0 (-> /24) o dominio
                     Dim parsedIp As IPAddress = Nothing
-                    If IPAddress.TryParse(t, parsedIp) Then
-                        result.Add(parsedIp)
+                    If IPAddress.TryParse(t, parsedIp) AndAlso parsedIp.AddressFamily = AddressFamily.InterNetwork Then
+                        Dim b = parsedIp.GetAddressBytes()
+                        If b(3) = 0 Then
+                            result.AddRange(ParseCidr($"{parsedIp}/24"))
+                        Else
+                            result.Add(parsedIp)
+                        End If
                     Else
                         Try
                             Dim resolved = Dns.GetHostAddresses(t)
@@ -130,15 +122,11 @@ Namespace Utils
             Try
                 Dim parts = cidr.Split("/"c)
                 If parts.Length = 2 Then
-                    Dim baseIp As IPAddress = IPAddress.Parse(parts(0).Trim())
-                    Dim prefixLen As Integer = Integer.Parse(parts(1).Trim())
-                    If prefixLen >= 16 AndAlso prefixLen <= 32 Then
-                        Dim ipBytes = baseIp.GetAddressBytes()
-                        If BitConverter.IsLittleEndian Then Array.Reverse(ipBytes)
-                        Dim uintIp As UInteger = BitConverter.ToUInt32(ipBytes, 0)
-
-                        Dim mask As UInteger = If(prefixLen = 0, 0UI, &HFFFFFFFFUI << (32 - prefixLen))
-                        Dim netStart As UInteger = uintIp And mask
+                    Dim uintIp As UInteger = 0
+                    Dim prefixLen As Integer = 0
+                    If Ipv4.TryParse(parts(0), uintIp) AndAlso Integer.TryParse(parts(1).Trim(), prefixLen) AndAlso
+                       prefixLen >= 16 AndAlso prefixLen <= 32 Then
+                        Dim netStart As UInteger = uintIp And Ipv4.Mask(prefixLen)
                         Dim hostCount As UInteger = (1UI << (32 - prefixLen))
 
                         ' Limitazione di sicurezza a /16 (max 65536 IP)
@@ -146,10 +134,7 @@ Namespace Utils
                         Dim endOffset As UInteger = If(prefixLen >= 31, hostCount - 1UI, hostCount - 2UI)
 
                         For i As UInteger = startOffset To endOffset
-                            Dim curIpNum = netStart + i
-                            Dim curBytes = BitConverter.GetBytes(curIpNum)
-                            If BitConverter.IsLittleEndian Then Array.Reverse(curBytes)
-                            list.Add(New IPAddress(curBytes))
+                            list.Add(Ipv4.ToAddress(netStart + i))
                         Next
                     End If
                 End If
@@ -163,37 +148,24 @@ Namespace Utils
             Try
                 Dim parts = rangeStr.Split("-"c)
                 If parts.Length = 2 Then
-                    Dim startIpStr = parts(0).Trim()
-                    Dim endIpStr = parts(1).Trim()
+                    Dim startUint As UInteger = 0
+                    If Not Ipv4.TryParse(parts(0), startUint) Then Return list
 
-                    Dim startIp = IPAddress.Parse(startIpStr)
-                    Dim endIp As IPAddress
+                    Dim endIpStr = parts(1).Trim()
+                    Dim endUint As UInteger = 0
 
                     If Not endIpStr.Contains("."c) Then
                         ' Formato abbreviato es. 192.168.1.1-50
-                        Dim lastOctet As Integer = Integer.Parse(endIpStr)
-                        Dim b = startIp.GetAddressBytes()
-                        b(3) = CByte(lastOctet)
-                        endIp = New IPAddress(b)
-                    Else
-                        endIp = IPAddress.Parse(endIpStr)
+                        Dim lastOctet As Integer = 0
+                        If Not Integer.TryParse(endIpStr, lastOctet) OrElse lastOctet < 0 OrElse lastOctet > 255 Then Return list
+                        endUint = (startUint And &HFFFFFF00UI) Or CUInt(lastOctet)
+                    ElseIf Not Ipv4.TryParse(endIpStr, endUint) Then
+                        Return list
                     End If
 
-                    Dim startBytes = startIp.GetAddressBytes()
-                    Dim endBytes = endIp.GetAddressBytes()
-                    If BitConverter.IsLittleEndian Then
-                        Array.Reverse(startBytes)
-                        Array.Reverse(endBytes)
-                    End If
-
-                    Dim startUint = BitConverter.ToUInt32(startBytes, 0)
-                    Dim endUint = BitConverter.ToUInt32(endBytes, 0)
-
-                    If startUint <= endUint AndAlso (endUint - startUint) <= 65536 Then
+                    If startUint <= endUint AndAlso (endUint - startUint) <= 65536UI Then
                         For u As UInteger = startUint To endUint
-                            Dim curBytes = BitConverter.GetBytes(u)
-                            If BitConverter.IsLittleEndian Then Array.Reverse(curBytes)
-                            list.Add(New IPAddress(curBytes))
+                            list.Add(Ipv4.ToAddress(u))
                         Next
                     End If
                 End If

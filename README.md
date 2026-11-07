@@ -41,13 +41,16 @@ Gratis, senza account e senza cloud: i dati restano sul tuo PC.
 <td width="50%" valign="top">
 
 **📡 Scansione della rete**<br>
-Una rete (`192.168.1.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host rispondono ad ARP e ping e
-compaiono man mano, poi arrivano nomi **DNS e NetBIOS**, le **porte** con i **banner** dei servizi e il **tipo di
-dispositivo** riconosciuto: router, NAS, Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere,
-centrali d'allarme, stampanti, moduli domotici, automazione, server e macchine virtuali. Produttore dai registri IEEE
-(MA-L, MA-M e MA-S, oltre 58.000 prefissi, il più preciso per ogni MAC). In **Elenco** (tabella) o in **Schede** che
-descrivono ogni dispositivo per intero, con *Ordina per* accanto alla ricerca; un singolo host si **riscansiona** con
-un clic; con **Ripeti** la scansione riparte da sola. Una /24 intera, con porte e banner, in una decina di secondi.
+Una o più reti (`192.168.1.0/24, 192.168.30.0/24`), un intervallo (`192.168.1.1-50`) o un indirizzo: gli host rispondono
+ad ARP, ping e sonda **SADP Hikvision** (multicast e unicast) e compaiono man mano, poi arrivano nomi **DNS e NetBIOS**,
+le **porte** con i **banner** dei servizi (anche certificati TLS e ISAPI) e il **tipo di dispositivo** riconosciuto: router,
+switch, NAS, Home Assistant, smart TV, telefoni (anche con il MAC privato), telecamere/NVR/videocitofoni/controllo accessi
+Hikvision con modello e firmware, centrali d'allarme, inverter fotovoltaici, stampanti, moduli domotici, automazione, server
+e macchine virtuali. Produttore dai registri IEEE (MA-L, MA-M e MA-S, oltre 58.000 prefissi, il più preciso per ogni MAC);
+più IPv4 con lo stesso MAC vengono uniti in un solo dispositivo (`+1 IP`), e con più sottoreti sono disponibili filtro e
+raggruppamento per VLAN. In **Elenco** (tabella) o in **Schede** che descrivono ogni dispositivo per intero, con *Ordina per*
+accanto alla ricerca; un singolo host si **riscansiona** con un clic; con **Ripeti** la scansione riparte da sola. Una /24
+intera, con porte e banner, in una decina di secondi.
 
 **🗂️ Archivio della rete nel tempo, una rete per cliente**<br>
 Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** della rete in cui ti trovi: la rete si riconosce dal
@@ -299,7 +302,10 @@ La pagina chiede le operazioni al programma con `postMessage({ id, cmd, args })`
 le scansioni in corso mandano eventi (`network.progress`, `ports.progress`, `trace.hop`, `…done`) accorpati ogni
 120 ms. Con `WHOISPRO_DEVTOOLS=1` (o nella versione Debug) si apre DevTools con F12. Le novità di ogni versione sono nel
 [CHANGELOG](CHANGELOG.md); i componenti e i dati di terze parti, con le loro licenze, in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), che il setup copia accanto al programma.
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), che il setup copia accanto al programma. Il riconoscimento dei
+dispositivi Hikvision (sonda SADP, realm ISAPI, famiglie di modelli), i banner HTTPS con il certificato, la scansione di
+più sottoreti e la fusione degli host con lo stesso MAC sono descritti, con i dettagli di protocollo e le regole, in
+[docs/guida-rilevamento-hikvision.md](docs/guida-rilevamento-hikvision.md).
 
 ## 📬 Contatti
 

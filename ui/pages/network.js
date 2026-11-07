@@ -2,7 +2,7 @@
 // la fa il motore DiscoveryScanner (Core\Network\Scan) tramite il servizio di sorveglianza: alla fine aggiorna anche
 // l'archivio della rete (pagina Dispositivi) e qui arrivano le differenze.
 import { call, on } from '../core/bridge.js';
-import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp } from '../core/dom.js';
+import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp, subnetOf, countSubnets, renderBySubnet, shortVendor } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/store.js';
@@ -16,7 +16,7 @@ S.net = {
   repeat: 0,           // minuti tra una scansione e la successiva (0 = una volta sola)
   autoPorts: true,     // porte TCP degli host trovati, nella stessa scansione (servono anche a riconoscere il dispositivo)
   autoPreset: 'TOP20', // gruppo di porte per autoPorts
-  q: '', sort: { key: 'ipAddress', dir: 1 },
+  q: '', subnet: '', sort: { key: 'ipAddress', dir: 1 },
   progress: null, done: null, fresh: new Set(),
   rescanning: new Set(), // indirizzi riscansionati uno per uno, in corso
   nextAt: 0, repeatTimer: 0,
@@ -52,7 +52,7 @@ function formCard() {
     <form data-form="scan" class="scan-form" autocomplete="off">
       <div class="field"><label for="f-target">Rete o intervallo</label>
         <div class="input-with-button">
-          <input class="input input-mono" id="f-target" data-field="target" list="adapter-list" value="${esc(n.target)}" placeholder="192.168.1.0/24 · 192.168.1.1-50 · 10.0.0.5">
+          <input class="input input-mono" id="f-target" data-field="target" list="adapter-list" value="${esc(n.target)}" placeholder="192.168.1.0/24, 192.168.30.0/24 · 192.168.1.1-50 · 10.0.0.5" title="Una o più sottoreti o intervalli separati da virgola (es. 192.168.1.0/24, 192.168.2.0/24)">
           <datalist id="adapter-list">${list}</datalist>
           <button type="button" class="btn btn-icon" data-action="detect-adapters" title="Rileva di nuovo le schede di rete">${icon('refresh')}</button>
         </div></div>
@@ -125,30 +125,30 @@ function summaryInner() {
 const STATUS_FILTERS = [['all', 'Tutti', ''], ['online', 'Online', 'is-on'], ['offline', 'Non rispondono', 'is-off']];
 const byStatus = (h, s) => s === 'online' ? !isOffline(h) : s === 'offline' ? isOffline(h) : true;
 
+/** Elenco delle sottoreti /24 presenti nella sessione, ordinate per indirizzo con il conteggio degli host. */
+function subnetsInSession() {
+  return countSubnets(S.data.hosts, (h) => h.ipAddress);
+}
+
+function activeSubnetFilter() {
+  const sub = S.net.subnet || '';
+  if (!sub) return '';
+  return S.data.hosts.some((h) => subnetOf(h.ipAddress) === sub) ? sub : '';
+}
+
 function filteredHosts() {
   const q = S.net.q.trim();
   const status = S.net.status || 'all';
-  return S.data.hosts.filter((h) => byStatus(h, status) && matchesAll(q, [h.customName, h.notes, h.ipAddress, h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || [])]));
+  const sub = activeSubnetFilter();
+  return S.data.hosts.filter((h) => (!sub || subnetOf(h.ipAddress) === sub)
+    && byStatus(h, status)
+    && matchesAll(q, [h.customName, h.notes, h.ipAddress, subnetOf(h.ipAddress), h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || []), ...(h.otherIpv4 || [])]));
 }
 
 /** Nome del dispositivo da mostrare: NetBIOS, poi DNS. */
 const hostName = (h) => h.netBiosName || h.hostname || '';
 /** Tutti i nomi conosciuti, per i tooltip. */
 const allNames = (h) => [h.netBiosName, h.hostname, h.workgroup].filter(Boolean).join(' · ');
-
-// forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
-const LEGAL = /[\s,.]+(gmbh|co\.?,?\s*ltd\.?|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|llc|l\.l\.c\.?|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?a\.?|a\.?g\.?|b\.?v\.?|n\.?v\.?|oy|ab|a\/s|kg|k\.?k\.?|co\.?|company|pty\.?|plc|technology\s+co\.?,?\s*ltd\.?)\s*$/i;
-
-/** Produttore senza le forme giuridiche: «Samsung Electronics Co.,Ltd» → «Samsung Electronics». */
-export function shortVendor(name) {
-  let s = String(name || '').trim();
-  for (let i = 0; i < 4; i++) {
-    const t = s.replace(LEGAL, '').replace(/[\s,]+$/, '');
-    if (t === s || t.length < 2) break;
-    s = t;
-  }
-  return s || String(name || '');
-}
 
 /** MAC privato (casuale): telefoni, tablet e PC recenti cambiano indirizzo per ogni rete Wi-Fi. */
 const PRIVATE_MAC = 'MAC privato (casuale)';
@@ -174,10 +174,13 @@ function latency(ms) {
 }
 
 const columns = [
-  { key: 'deviceType', label: 'Dispositivo', cell: (h) => `<div class="cell-main">${catIcon(h)}<div class="cell-text">
+  { key: 'deviceType', label: 'Dispositivo', cell: (h) => {
+    const nPorts = openPorts(h);
+    return `<div class="cell-main">${catIcon(h)}<div class="cell-text">
       <b class="trunc" title="${esc(h.customName ? `${h.customName} · ${h.deviceType}` : h.deviceType)}">${h.customName ? `<span class="custom-name">${esc(h.customName)}</span>` : esc(h.deviceType)}</b>
-      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${osShort(h.osGuess) ? ` · ${esc(osShort(h.osGuess))}` : ''}${h.isGateway ? ' · gateway' : ''}${h.isLocalMachine ? ' · questo PC' : ''}${openPorts(h.ipAddress) ? ` · <b class="ports-count">${plural(openPorts(h.ipAddress), 'porta', 'porte')}</b>` : ''}</small></div></div>` },
-  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
+      <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${osShort(h.osGuess) ? ` · ${esc(osShort(h.osGuess))}` : ''}${h.isGateway ? ' · gateway' : ''}${h.isLocalMachine ? ' · questo PC' : ''}${nPorts ? ` · <b class="ports-count">${plural(nPorts, 'porta', 'porte')}</b>` : ''}</small></div></div>`;
+  } },
+  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${otherIpsTag(h)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
   { key: 'hostname', label: 'Nome', value: hostName, cell: (h) => hostName(h) ? `<span class="trunc w-name" title="${esc(allNames(h))}">${esc(hostName(h))}</span>` : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore e MAC', cell: (h) => `<div class="cell-text">${vendorCell(h).replace('<span', '<b').replace(/<\/span>$/, '</b>')}<small class="mono">${h.macAddress ? esc(h.macAddress) : 'senza MAC'}</small></div>` },
   { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latencyOrArp(h)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
@@ -188,7 +191,23 @@ const columns = [
 const isOffline = (h) => h.status === 'Offline';
 /** Tipo di un indirizzo IPv6 dal prefisso: link-local (fe80::), locale (fc00::/7) oppure globale. */
 const v6Kind = (a) => (/^fe[89ab]/i.test(a) ? 'link-local' : /^f[cd]/i.test(a) ? 'locale' : 'globale');
-const openPorts = (ip) => S.data.ports.filter((p) => p.host === ip).length;
+const openPorts = (h) => portsOf(h).length;
+/** Tutti gli IPv4 del dispositivo: il principale e gli altri con lo stesso MAC. */
+const ipsOf = (h) => [h.ipAddress, ...(h.otherIpv4 || [])];
+/** Porte della sessione su tutti gli IPv4 del dispositivo, senza doppioni. */
+function portsOf(h) {
+  const ips = new Set(ipsOf(h));
+  const seen = new Set();
+  return S.data.ports.filter((p) => {
+    if (!ips.has(p.host)) return false;
+    const k = `${p.portNumber}/${p.protocol}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+/** «+1 IP» accanto all'indirizzo, gli altri IPv4 dello stesso dispositivo nel tooltip. */
+const otherIpsTag = (h) => ((h.otherIpv4 || []).length ? ` <span class="tag" title="Stesso dispositivo (stesso MAC) anche su: ${esc(h.otherIpv4.join(', '))}">+${h.otherIpv4.length} IP</span>` : '');
 const isNewHost = (h) => h.firstSeen && Date.now() - new Date(h.firstSeen).getTime() < 86400000;
 
 /** Data e ora brevi: «oggi 14:20», «ieri 09:05», «12/10 18:40», «03/05/2025». */
@@ -264,7 +283,7 @@ const SORTS = [
   ['deviceType', 'Tipo di dispositivo', (h) => `${h.deviceCategory} ${h.deviceType}`, 1],
   ['macVendor', 'Produttore', (h) => shortVendor(h.macVendor), 1],
   ['responseTimeMs', 'Latenza', (h) => Number(h.responseTimeMs) || 0, 1],
-  ['ports', 'Porte aperte', (h) => openPorts(h.ipAddress), -1],
+  ['ports', 'Porte aperte', (h) => openPorts(h), -1],
   ['firstSeen', 'Prima rilevazione', (h) => timeOf(h.firstSeen), -1],
   ['lastSeen', 'Ultima volta visto', (h) => timeOf(h.lastSeen), -1],
 ];
@@ -286,7 +305,7 @@ function saveView() {
 const fact = (label, value, cls = '', tip = '') => `<span class="hc-fact ${cls}"${tip ? ` title="${esc(tip)}"` : ''}><i>${label}</i><span class="hc-val">${value}</span></span>`;
 
 function hostCard(h) {
-  const ports = S.data.ports.filter((p) => p.host === h.ipAddress).sort((a, b) => a.portNumber - b.portNumber);
+  const ports = portsOf(h).sort((a, b) => a.portNumber - b.portNumber);
   const lat = Number(h.responseTimeMs) || 0;
   const latTone = lat < 10 ? 'success' : lat < 100 ? 'warning' : 'danger';
   const vendor = h.macVendor === PRIVATE_MAC ? `<span title="${esc(PRIVATE_MAC_TIP)}">MAC privato, produttore non noto</span>` : esc(h.macVendor);
@@ -306,7 +325,7 @@ function hostCard(h) {
     <div class="hc-main">
       <div class="hc-line hc-title" title="${esc(name)}${sub ? ` · ${esc(sub)}` : ''}${h.notes ? `\n${esc(h.notes)}` : ''}">${h.customName ? icon('tag', { size: 14 }) : ''}<b>${esc(name)}</b>${sub ? `<span class="hc-type">${esc(sub)}</span>` : ''}${tags}</div>
       <div class="hc-line">
-        <span class="hc-ip mono">${esc(h.ipAddress)}</span>
+        <span class="hc-ip mono">${esc(h.ipAddress)}${otherIpsTag(h)}</span>
         ${fact('Tipo', esc(tipo), '', tipo)}
         ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile</span>', 'grow', macText)}
         ${fact('Risposta', `${h.respondsToPing === false ? '<span class="muted" title="Non risponde al ping: trovato nella tabella ARP">solo ARP</span>' : `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>`}${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
@@ -335,20 +354,42 @@ function tableHtml() {
     return emptyState('search', 'Nessun host corrisponde', st === 'all' ? 'Cambia le parole della ricerca.' : 'Cambia le parole della ricerca o il filtro Tutti / Online / Non rispondono.');
   }
   const rows = sortRows(filtered, SORT_COLUMNS, S.net.sort);
-  if (S.net.view === 'cards') return `<div class="table-wrap scan-h host-cards">${rows.map(hostCard).join('')}</div>`;
+  const subs = subnetsInSession();
+  const groupSubnets = subs.length > 1 && !activeSubnetFilter();
+  if (S.net.view === 'cards') {
+    const html = groupSubnets ? renderBySubnet(rows, (h) => h.ipAddress, hostCard, 'host', 'host') : rows.map(hostCard).join('');
+    return `<div class="table-wrap scan-h host-cards">${html}</div>`;
+  }
   return table({
     columns, rows, sort: S.net.sort, cls: 'scan-h',
+    groupBy: groupSubnets ? (h) => subnetOf(h.ipAddress) : null,
     rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}"`,
   }).replace('<table class="dt">', '<table class="dt clickable">');
 }
 
 /** Ordina per, verso e Schede / Tabella, accanto alla ricerca. */
-function statusCount(key) { return S.data.hosts.filter((h) => byStatus(h, key)).length; }
+function statusCount(key) {
+  const sub = activeSubnetFilter();
+  return S.data.hosts.filter((h) => (!sub || subnetOf(h.ipAddress) === sub) && byStatus(h, key)).length;
+}
+
+let lastSubnetSig = '';
 
 function viewControls() {
   const s = S.net.sort || { key: 'ipAddress', dir: 1 };
   const st = S.net.status || 'all';
+  const subs = subnetsInSession();
+  const curSub = activeSubnetFilter();
+  lastSubnetSig = subs.map(([c, n]) => `${c}:${n}`).join(',');
+  const subnetBox = subs.length > 1
+    ? `<div class="sort-box"><label for="f-subnet">Sottorete</label>
+        <select class="select input-sm" id="f-subnet" data-field="subnet" title="Filtra gli host di una singola sottorete oppure mostrale tutte raggruppate">
+          <option value="" ${!curSub ? 'selected' : ''}>Tutte (${subs.length} sottoreti · ${S.data.hosts.length})</option>
+          ${subs.map(([cidr, cnt]) => `<option value="${esc(cidr)}" ${cidr === curSub ? 'selected' : ''}>${esc(cidr)} (${cnt})</option>`).join('')}
+        </select></div>`
+    : '';
   return `<div class="segmented status-filter" role="group" aria-label="Stato">${STATUS_FILTERS.map(([key, label, dot]) => `<button type="button" class="${st === key ? 'is-active' : ''}" data-action="net-status" data-status="${key}" title="${key === 'all' ? 'Tutti i dispositivi della sessione' : key === 'online' ? 'Solo quelli che hanno risposto all\'ultima scansione' : 'Solo quelli che non hanno risposto'}">${dot ? `<span class="status-dot ${dot}"></span>` : ''}${label}<span class="seg-count" data-status-count="${key}">${statusCount(key)}</span></button>`).join('')}</div>
+    ${subnetBox}
     <div class="sort-box"><label for="f-sort">Ordina per</label>
       <select class="select input-sm" id="f-sort" data-field="sortKey">${SORTS.map(([k, label]) => `<option value="${k}" ${k === s.key ? 'selected' : ''}>${label}</option>`).join('')}</select>
       <button class="btn btn-sm btn-icon sort-dir ${s.dir < 0 ? 'is-desc' : ''}" data-action="sort-dir" title="${s.dir < 0 ? 'Decrescente: clic per crescente' : 'Crescente: clic per decrescente'}">${icon('chevronDown')}</button></div>
@@ -396,6 +437,8 @@ function renderTable() {
   if (!box) return;
   replaceKeepingScroll(box, tableHtml());
   updateInfo();
+  const sig = subnetsInSession().map(([c, n]) => `${c}:${n}`).join(',');
+  if (sig !== lastSubnetSig) refreshControls();
   // i numeri del filtro Tutti / Online / Non rispondono seguono la scansione
   for (const [key] of STATUS_FILTERS) {
     const c = $(`[data-status-count="${key}"]`);
@@ -465,18 +508,35 @@ async function stop() {
 
 function hostByIp(ip) { return S.data.hosts.find((h) => h.ipAddress === ip); }
 
-/** Strumenti di Windows su un host (browser, Esplora risorse, Desktop remoto, SSH, ping): voci comuni ai menu. */
-export function launchItems(host, ports = []) {
+/** Telecamera, NVR o altro apparato Hikvision, dal tipo riconosciuto: per gli indirizzi RTSP nel formato Hikvision. */
+export const isHikvision = (h) => !!h && /hikvision/i.test(h.deviceType || '');
+
+/**
+ * Strumenti di Windows su un host (browser, Esplora risorse, Desktop remoto, SSH, ping): voci comuni ai menu.
+ * Per un dispositivo Hikvision (opzione hikvision, o il banner SDK della 8000) anche gli indirizzi RTSP dei due flussi.
+ */
+export function launchItems(host, ports = [], { hikvision = false } = {}) {
   const open = (kind, port = 0) => () => call('launch', { kind, host, port }).catch((e) => toastError(e));
   const has = (n) => ports.some((p) => p.portNumber === n && p.protocol === 'TCP');
-  return [
-    { ic: 'external', label: 'Apri nel browser (http)', run: open('http'), hint: has(80) ? '80' : '' },
+  const httpAlt = ports.find((p) => p.protocol === 'TCP' && [81, 8080, 8008].includes(p.portNumber));
+  const httpPort = has(80) ? 80 : (httpAlt ? httpAlt.portNumber : 0);
+  const rtspPort = has(8554) && !has(554) ? 8554 : 554;
+  const isCam = hikvision || ports.some((p) => /hikvision/i.test(p.serviceName || p.banner || ''));
+  const items = [
+    { ic: 'external', label: 'Apri nel browser (http)', run: open('http', httpPort), hint: httpPort ? String(httpPort) : '' },
     { ic: 'external', label: 'Apri nel browser (https)', run: open('https'), hint: has(443) ? '443' : '' },
     { ic: 'folderOpen', label: 'Cartelle condivise (Esplora risorse)', run: open('explorer'), hint: has(445) ? 'SMB' : '' },
     { ic: 'monitor', label: 'Desktop remoto', run: open('rdp'), hint: has(3389) ? 'RDP' : '' },
     { ic: 'terminal', label: 'Terminale SSH', run: open('ssh'), hint: has(22) ? 'SSH' : '' },
     { ic: 'activity', label: 'Ping continuo (prompt)', run: open('ping') },
   ];
+  if (isCam) {
+    items.push(
+      { ic: 'copy', label: 'Copia indirizzo RTSP (flusso 101)', hint: String(rtspPort), run: () => copy(`rtsp://${host}:${rtspPort}/Streaming/Channels/101`, 'Indirizzo RTSP (101) copiato.') },
+      { ic: 'copy', label: 'Copia indirizzo RTSP (flusso 102)', hint: 'sub', run: () => copy(`rtsp://${host}:${rtspPort}/Streaming/Channels/102`, 'Indirizzo RTSP (102) copiato.') },
+    );
+  }
+  return items;
 }
 
 function hostMenu(anchor, ip) {
@@ -489,7 +549,7 @@ function hostMenu(anchor, ip) {
     { ic: 'globe', label: 'WHOIS', run: () => navigate('whois', { target: ip, start: true }) },
     { ic: 'route', label: 'Traceroute', run: () => navigate('trace', { target: ip, start: true }) },
     { sep: true },
-    ...launchItems(ip, S.data.ports.filter((p) => p.host === ip)),
+    ...launchItems(ip, portsOf(h), { hikvision: isHikvision(h) }),
     { sep: true },
     { ic: 'copy', label: 'Copia l\'indirizzo IP', run: () => copy(h.ipAddress, 'Indirizzo IP copiato.') },
     { ic: 'copy', label: 'Copia il MAC', disabled: !h.macAddress, run: () => copy(h.macAddress, 'MAC copiato.') },
@@ -514,7 +574,7 @@ async function removeHost(ip) {
 function details(ip) {
   const h = hostByIp(ip);
   if (!h) return;
-  const ports = S.data.ports.filter((p) => p.host === ip);
+  const ports = portsOf(h);
   const body = `<div class="fields">
     <form class="host-label" id="host-label" autocomplete="off">
       <div class="field"><label>Icona</label>
@@ -530,6 +590,7 @@ function details(ip) {
     </form>
     <dl class="kv">
       <dt>Indirizzo IP</dt><dd class="mono">${esc(h.ipAddress)}${h.isGateway ? ' <span class="tag primary">gateway</span>' : ''}${h.isLocalMachine ? ' <span class="tag">questo PC</span>' : ''}</dd>
+      ${(h.otherIpv4 || []).length ? `<dt>Altri IPv4</dt><dd><div class="v6-list">${h.otherIpv4.map((a) => `<span class="mono">${esc(a)}</span>`).join('<br>')}</div><small class="muted">Stesso dispositivo: stesso MAC, contato una volta sola.</small></dd>` : ''}
       <dt>Stato</dt><dd>${isOffline(h) ? '<span class="pill danger pill-dot">Non risponde</span>' : h.respondsToPing === false ? '<span class="pill warning pill-dot">Presente (solo ARP)</span>' : '<span class="pill success pill-dot">Risponde</span>'}</dd>
       <dt>IPv6</dt><dd>${(h.ipv6 || []).length ? `<div class="v6-list">${h.ipv6.map((a) => `<span class="mono">${esc(a)}</span> <span class="tag">${esc(v6Kind(a))}</span>`).join('<br>')}</div>` : '<span class="muted">nessuno visto (il dispositivo non usa IPv6, o non ha ancora risposto)</span>'}</dd>
       <dt>Nome DNS</dt><dd>${h.hostname ? esc(h.hostname) : '<span class="muted">non risolto</span>'}</dd>
@@ -616,7 +677,10 @@ const actions = {
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),
   'host-whois': (el) => navigate('whois', { target: el.dataset.ip, start: true }),
   'host-trace': (el) => navigate('trace', { target: el.dataset.ip, start: true }),
-  'host-tools': (el) => openMenu(el, [{ header: el.dataset.ip }, ...launchItems(el.dataset.ip, S.data.ports.filter((p) => p.host === el.dataset.ip))], { above: true }),
+  'host-tools': (el) => {
+    const h = hostByIp(el.dataset.ip);
+    openMenu(el, [{ header: el.dataset.ip }, ...launchItems(el.dataset.ip, h ? portsOf(h) : [], { hikvision: isHikvision(h) })], { above: true });
+  },
 };
 
 on('network.progress', (d) => {
@@ -626,6 +690,11 @@ on('network.progress', (d) => {
     for (const h of d.hosts) {
       const i = S.data.hosts.findIndex((x) => x.ipAddress === h.ipAddress);
       if (i >= 0) S.data.hosts[i] = h; else { S.data.hosts.push(h); S.net.fresh.add(h.ipAddress); }
+      // più IPv4 con lo stesso MAC: le righe degli indirizzi secondari confluiscono nel principale
+      for (const ip of h.otherIpv4 || []) {
+        const j = S.data.hosts.findIndex((x) => x.ipAddress === ip && x !== h && (!x.macAddress || x.macAddress === h.macAddress));
+        if (j >= 0) { S.data.hosts.splice(j, 1); S.net.fresh.delete(ip); }
+      }
     }
     markDirty();
     emit('data', { list: 'hosts' });
@@ -722,6 +791,12 @@ definePage('network', {
       n.repeat = Number(el.value) || 0;
       // in attesa della prossima: il nuovo intervallo vale da subito («Una volta» la annulla)
       if (n.nextAt) { scheduleRepeat(); renderForm(); }
+    }
+    if (field === 'subnet') {
+      n.subnet = el.value || '';
+      renderTable();
+      refreshControls();
+      return;
     }
     if (field === 'sortKey') {
       const s = SORTS.find((x) => x[0] === el.value);

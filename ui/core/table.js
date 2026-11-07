@@ -46,7 +46,7 @@ export function nextSort(sort, key) {
  * HTML della tabella. columns: [{ key, label, cls, sortable (predefinito sì), value(row), cell(row) }].
  * rowAttrs(row) aggiunge attributi alla riga (per esempio data-action e data-ip).
  */
-export function table({ columns, rows, sort, rowAttrs, cls = '', empty = '' }) {
+export function table({ columns, rows, sort, rowAttrs, cls = '', empty = '', groupBy = null }) {
   if (!rows.length && empty) return empty;
   const head = columns.map((c) => {
     const sortable = c.sortable !== false;
@@ -54,9 +54,29 @@ export function table({ columns, rows, sort, rowAttrs, cls = '', empty = '' }) {
     const ind = sortable ? `<span class="sort-ind">${sorted && sort.dir < 0 ? '▼' : '▲'}</span>` : '';
     return `<th class="${sortable ? 'sortable' : ''} ${sorted ? 'is-sorted' : ''} ${c.cls || ''}" ${sortable ? `data-sort="${c.key}" tabindex="0"` : ''}>${esc(c.label)}${ind}</th>`;
   }).join('');
-  const body = sortRows(rows, columns, sort).map((r) => {
+  const sortedRows = sortRows(rows, columns, sort);
+  const renderRow = (r) => {
     const cells = columns.map((c) => `<td class="${c.cls || ''}">${c.cell ? c.cell(r) : esc(r[c.key])}</td>`).join('');
     return `<tr ${rowAttrs ? rowAttrs(r) : ''}>${cells}</tr>`;
-  }).join('');
+  };
+  let body;
+  if (groupBy) {
+    const groups = new Map();
+    for (const r of sortedRows) {
+      const g = groupBy(r) || '';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(r);
+    }
+    if (groups.size > 1) {
+      body = [...groups.entries()].map(([g, list]) => {
+        const hdr = g ? `<tr class="subnet-row"><td colspan="${columns.length}"><span class="mono"><b>${esc(g)}</b></span> <span class="tag primary">${list.length} host</span></td></tr>` : '';
+        return hdr + list.map(renderRow).join('');
+      }).join('');
+    } else {
+      body = sortedRows.map(renderRow).join('');
+    }
+  } else {
+    body = sortedRows.map(renderRow).join('');
+  }
   return `<div class="table-wrap ${cls}"><table class="dt"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }

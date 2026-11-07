@@ -5,6 +5,44 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.8.0 · 7 novembre 2026
+
+- **Dispositivi Hikvision riconosciuti per modello**: durante la scansione, insieme a ping e ARP, parte la sonda **SADP**
+  di Hikvision (multicast `239.255.255.250:37020`, senza credenziali), che riporta modello esatto, versione del firmware,
+  numero di serie, porte web e SDK, canali e stato di attivazione. Per gli host di altre sottoreti o in VPN, dove il
+  multicast non passa e il MAC non si vede, la stessa domanda va in unicast (UDP 37020); il modello si legge anche dal
+  realm ISAPI della pagina web (`/ISAPI/System/deviceInfo`). Nel tipo si distinguono telecamere IP, PTZ, termiche e
+  lettura targhe, NVR con il numero di canali, DVR, posti esterni e monitor videocitofonici, terminali e centraline di
+  controllo accessi, centrali d'allarme AX PRO e switch PoE; il firmware compare in *Sistema stimato*, il riepilogo SDK
+  sulla porta `8000`. Un Hikvision collegato al cavo ma con l'indirizzo fuori sottorete (quello di fabbrica, per esempio)
+  è segnalato nell'avanzamento. Un nome come «nvr-sala» su un apparecchio di un'altra marca non basta a dirlo Hikvision.
+- **Da verificare, anche per Hikvision**: nella scheda del dispositivo (*Dispositivi*) sono segnalati i dispositivi
+  Hikvision **non attivati** (senza password) e quelli con **firmware datato** (build di cinque anni fa o più). Nel menu
+  dell'host e in *Apri con…*, per telecamere e NVR Hikvision, *Copia indirizzo RTSP* del flusso principale (`101`) e di
+  quello secondario (`102`).
+- **Più sottoreti in una scansione**: in *Rete o intervallo* si scrivono più reti o intervalli separati da virgola
+  (`192.168.1.0/24, 192.168.2.0/24`, fino a 4.096 indirizzi in tutto), anche nelle forme brevi `192.168.2` e
+  `192.168.2.0`. Con host di più sottoreti, nelle pagine *Rete* e *Dispositivi* compare il selettore **Sottorete** per
+  vederne una sola, e l'elenco si raggruppa per sottorete. Sulle reti raggiunte in VPN la porta TCP `53` «aperta» su
+  ogni host, risposta del DNS del tunnel, viene scartata.
+- **Banner HTTPS con il certificato** sulle porte `443` e `8443`: anche il soggetto del certificato TLS (nome e
+  organizzazione), che fa riconoscere switch e controller Ubiquiti (EdgeSwitch, CloudKey, UniFi), inverter fotovoltaici
+  (Fronius, SMA, SolarEdge), controller Vantage, interfacce clima Daikin e apparati Modbus TCP (porta `502`, ora tra le
+  porte comuni). Le pagine di accesso vuote che rimandano via script (Hikvision e altri) mostrano il rinvio invece del
+  titolo vuoto; una porta che non parla HTTP non lascia più byte casuali nel banner.
+- **Un solo dispositivo con più IPv4**: più indirizzi sullo stesso MAC (telecamera con cavo e Wi-Fi, PC o router con più
+  indirizzi sulla scheda) sono una riga sola, con l'etichetta `+1 IP` e gli altri indirizzi in *Altri IPv4* nel
+  dettaglio, nella pagina *Rete* e nell'archivio *Dispositivi*; i ripetitori Wi-Fi in MAC-NAT e i proxy ARP, con molti
+  indirizzi dietro un solo MAC, restano righe separate. Nell'archivio le vecchie righe degli indirizzi secondari passano
+  nel principale con nome, note e storia, senza falsi «cambio di IP» o «assente».
+- **Più veloce**: porte TCP chiuse riconosciute all'istante anche nella pagina *Porte* (lo stesso connettore e lo stesso
+  lettore di banner della pagina *Rete*), produttore e MAC letti senza espressioni regolari (normalizzazione del MAC due
+  volte più rapida), una sola lettura dell'ultima scansione per ogni registrazione in archivio invece di una per riga, meno
+  scritture a metà scansione. Sulla stessa /24 di prova (52 host, porte e banner) la scansione dura come prima, tra 9 e
+  12 secondi a seconda del momento, e legge più banner (35-38 invece di 28); la riscansione di un singolo host costa
+  circa mezzo secondo in più per il tentativo HTTPS, che ha un tetto di mezzo secondo sulla stretta di mano TLS.
+- Per chi vuole rifare le stesse cose in un altro programma: [docs/guida-rilevamento-hikvision.md](docs/guida-rilevamento-hikvision.md).
+
 ## 2.7.0 · 31 ottobre 2026
 
 - **Un archivio per ogni rete**, per chi gira tra i clienti: la rete si riconosce dal MAC del router, non dalla sottorete

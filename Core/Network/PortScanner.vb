@@ -1,9 +1,10 @@
-﻿Imports System.Net
+Imports System.Net
 Imports System.Net.Sockets
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
 Imports WhoIsPro.Models
+Imports WhoIsPro.Network.Scan
 Imports WhoIsPro.Utils
 
 Namespace Network
@@ -25,6 +26,17 @@ Namespace Network
         Public Property TimeoutMs As Integer = 1200
         Public Property GrabBanner As Boolean = True
 
+        Private Shared Async Function ResolveTargetIpAsync(targetHost As String) As Task(Of IPAddress)
+            Dim parsed As IPAddress = Nothing
+            If IPAddress.TryParse(targetHost, parsed) Then Return parsed
+            Try
+                Dim addrs = Await Dns.GetHostAddressesAsync(targetHost).ConfigureAwait(False)
+                Return If(addrs.FirstOrDefault(Function(a) a.AddressFamily = AddressFamily.InterNetwork), addrs.FirstOrDefault())
+            Catch
+                Return Nothing
+            End Try
+        End Function
+
         Public Async Function ScanPortsAsync(targetHost As String,
                                              ports As List(Of Integer),
                                              scanTcp As Boolean,
@@ -36,6 +48,7 @@ Namespace Network
             Dim totalOperations As Integer = ports.Count * (If(scanTcp, 1, 0) + If(scanUdp, 1, 0))
             Dim scannedCount As Integer = 0
             Dim locker As New Object()
+            Dim targetIp = Await ResolveTargetIpAsync(targetHost).ConfigureAwait(False)
 
             Using semaphore As New SemaphoreSlim(Concurrency, Concurrency)
                 For Each port In ports
@@ -46,7 +59,7 @@ Namespace Network
                         Dim p = port
                         tasks.Add(Task.Run(Async Function()
                                                Try
-                                                   Dim res = Await ScanTcpPortAsync(targetHost, p, TimeoutMs, GrabBanner, cancellationToken)
+                                                   Dim res = Await ScanTcpPortAsync(targetHost, targetIp, p, TimeoutMs, GrabBanner, cancellationToken)
                                                    Dim cNow As Integer
                                                    SyncLock locker
                                                        scannedCount += 1
@@ -75,7 +88,7 @@ Namespace Network
                         Dim p = port
                         tasks.Add(Task.Run(Async Function()
                                                Try
-                                                   Dim res = Await ScanUdpPortAsync(targetHost, p, TimeoutMs, cancellationToken)
+                                                   Dim res = Await ScanUdpPortAsync(targetHost, targetIp, p, TimeoutMs, cancellationToken)
                                                    Dim cNow As Integer
                                                    SyncLock locker
                                                        scannedCount += 1
@@ -106,19 +119,25 @@ Namespace Network
             Return results.OrderBy(Function(p) p.PortNumber).ToList()
         End Function
 
-        Private Async Function ScanTcpPortAsync(host As String, port As Integer, timeout As Integer, grabBanner As Boolean, token As CancellationToken) As Task(Of PortInfo)
+        Private Async Function ScanTcpPortAsync(host As String, targetIp As IPAddress, port As Integer, timeout As Integer, grabBanner As Boolean, token As CancellationToken) As Task(Of PortInfo)
             Dim sw = Stopwatch.StartNew()
-            Dim client As New TcpClient()
+            Dim client As TcpClient = Nothing
             Try
-                Dim connectTask = client.ConnectAsync(host, port)
-                Dim delayTask = Task.Delay(timeout, token)
-                Dim completedTask = Await Task.WhenAny(connectTask, delayTask)
+                If targetIp IsNot Nothing AndAlso targetIp.AddressFamily = AddressFamily.InterNetwork Then
+                    client = Await TcpConnector.ConnectAsync(targetIp, port, timeout, token).ConfigureAwait(False)
+                Else
+                    client = New TcpClient()
+                    Using deadline = CancellationTokenSource.CreateLinkedTokenSource(token)
+                        deadline.CancelAfter(Math.Max(50, timeout))
+                        Await client.ConnectAsync(host, port, deadline.Token).ConfigureAwait(False)
+                    End Using
+                End If
 
-                If completedTask Is connectTask AndAlso client.Connected Then
+                If client IsNot Nothing AndAlso client.Connected Then
                     sw.Stop()
                     Dim bannerText As String = ""
                     If grabBanner Then
-                        bannerText = Await TryGrabBannerAsync(client, host, port)
+                        bannerText = Await TryGrabBannerAsync(client, host, port, token).ConfigureAwait(False)
                     End If
 
                     Return New PortInfo With {
@@ -133,11 +152,13 @@ Namespace Network
                 End If
             Catch
             Finally
-                Try
-                    client.Close()
-                    client.Dispose()
-                Catch
-                End Try
+                If client IsNot Nothing Then
+                    Try
+                        client.Close()
+                        client.Dispose()
+                    Catch
+                    End Try
+                End If
             End Try
 
             Return New PortInfo With {
@@ -150,55 +171,54 @@ Namespace Network
             }
         End Function
 
-        Private Async Function TryGrabBannerAsync(client As TcpClient, host As String, port As Integer) As Task(Of String)
+        Private Async Function TryGrabBannerAsync(client As TcpClient, host As String, port As Integer, token As CancellationToken) As Task(Of String)
             Try
-                Dim stream = client.GetStream()
-                stream.ReadTimeout = 1000
-                stream.WriteTimeout = 1000
-
-                ' Se HTTP o porte web, inviamo una richiesta HEAD per ottenere il Server banner
-                If port = 80 OrElse port = 8080 OrElse port = 8000 OrElse port = 8123 OrElse port = 8008 Then
-                    Dim req = Encoding.ASCII.GetBytes($"HEAD / HTTP/1.1" & vbCrLf & $"Host: {host}" & vbCrLf & "User-Agent: WhoIsPro-Scanner/1.0" & vbCrLf & "Connection: close" & vbCrLf & vbCrLf)
-                    Await stream.WriteAsync(req, 0, req.Length)
+                If BannerGrabber.Supports(port) Then
+                    Using deadline = CancellationTokenSource.CreateLinkedTokenSource(token)
+                        deadline.CancelAfter(1200)
+                        Dim grabbed = Await BannerGrabber.GrabFromConnectedClientAsync(client, host, port, deadline.Token, token).ConfigureAwait(False)
+                        If Not String.IsNullOrEmpty(grabbed) Then Return grabbed
+                    End Using
                 End If
 
+                Dim stream = client.GetStream()
+                stream.ReadTimeout = 800
+                stream.WriteTimeout = 800
                 Dim buffer(1024) As Byte
-                Dim readTask = stream.ReadAsync(buffer, 0, buffer.Length)
-                Dim completed = Await Task.WhenAny(readTask, Task.Delay(800))
-                If completed Is readTask Then
-                    Dim bytesRead = Await readTask
+                Using deadline = CancellationTokenSource.CreateLinkedTokenSource(token)
+                    deadline.CancelAfter(800)
+                    Dim bytesRead = Await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), deadline.Token).ConfigureAwait(False)
                     If bytesRead > 0 Then
                         ' Solo testo leggibile: i servizi binari (Telnet, RDP…) mandano byte di controllo
                         Dim chars = Encoding.ASCII.GetString(buffer, 0, bytesRead).Select(Function(c) If(c = ControlChars.Cr OrElse c = ControlChars.Lf OrElse (c >= " "c AndAlso c < ChrW(127)), c, " "c))
                         Dim raw = Regex.Replace(New String(chars.ToArray()), " {2,}", " ").Trim()
                         If raw = "" Then Return $"Risposta binaria: {bytesRead} byte"
-                        ' Estrai header o prima riga
                         Dim lines = raw.Split(New String() {vbCrLf, vbLf}, StringSplitOptions.RemoveEmptyEntries)
                         If lines.Length > 0 Then
-                            ' Cerca "Server:"
                             Dim serverLine = lines.FirstOrDefault(Function(l) l.StartsWith("Server:", StringComparison.OrdinalIgnoreCase))
-                            If Not String.IsNullOrEmpty(serverLine) Then
-                                Return serverLine.Trim()
-                            End If
+                            If Not String.IsNullOrEmpty(serverLine) Then Return serverLine.Trim()
                             Return lines(0).Trim()
                         End If
                     End If
-                End If
+                End Using
             Catch
             End Try
             Return ""
         End Function
 
-        Private Async Function ScanUdpPortAsync(host As String, port As Integer, timeout As Integer, token As CancellationToken) As Task(Of PortInfo)
+        Private Async Function ScanUdpPortAsync(host As String, targetIp As IPAddress, port As Integer, timeout As Integer, token As CancellationToken) As Task(Of PortInfo)
             Dim sw = Stopwatch.StartNew()
             Using udpClient As New UdpClient()
                 Try
                     udpClient.Client.ReceiveTimeout = timeout
-                    Dim ipAddresses = Await Dns.GetHostAddressesAsync(host)
-                    Dim targetIp = ipAddresses.FirstOrDefault(Function(a) a.AddressFamily = AddressFamily.InterNetwork)
-                    If targetIp Is Nothing Then Return Nothing
+                    Dim ipv4 = If(targetIp IsNot Nothing AndAlso targetIp.AddressFamily = AddressFamily.InterNetwork, targetIp, Nothing)
+                    If ipv4 Is Nothing Then
+                        Dim ipAddresses = Await Dns.GetHostAddressesAsync(host).ConfigureAwait(False)
+                        ipv4 = ipAddresses.FirstOrDefault(Function(a) a.AddressFamily = AddressFamily.InterNetwork)
+                    End If
+                    If ipv4 Is Nothing Then Return Nothing
 
-                    Dim endPoint As New IPEndPoint(targetIp, port)
+                    Dim endPoint As New IPEndPoint(ipv4, port)
                     Dim probeBytes = GetUdpProbe(port)
 
                     Await udpClient.SendAsync(probeBytes, probeBytes.Length, endPoint)

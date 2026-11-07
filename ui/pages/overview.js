@@ -1,13 +1,12 @@
 // Panoramica: il collegamento di rete dal vivo (traffico delle schede con i LED delle porte), la rete trovata
 // (host, nuovi arrivi, porte, Internet), le ultime scansioni e il sistema. Si aggiorna ogni due secondi.
 import { call, on } from '../core/bridge.js';
-import { $, $$, esc, fmtAgo, fmtBytes, fmtDateTime, fmtDuration, fmtLinkSpeed, fmtNumber, fmtRate, fmtSeconds, plural } from '../core/dom.js';
+import { $, $$, esc, fmtAgo, fmtBytes, fmtDateTime, fmtDuration, fmtLinkSpeed, fmtNumber, fmtRate, fmtSeconds, plural, shortVendor } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon, categoryOf } from '../core/categories.js';
 import { S, definePage, addScan, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { emptyState, pageHead, toastError } from '../core/ui.js';
-import { shortVendor } from './network.js';
 import { openSessionDrawer } from './session.js';
 import { openPcNetwork } from './settings.js';
 

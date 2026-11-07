@@ -1,4 +1,4 @@
-﻿Imports System.IO
+Imports System.IO
 Imports System.Net.Http
 Imports System.Text
 Imports System.Text.RegularExpressions
@@ -306,16 +306,24 @@ Namespace Utils
         ''' così un nome breve con uno spazio non sposta il nome completo). Senza tab, colonne separate da spazi.
         ''' </summary>
         Private Sub ParseManufLine(line As String)
-            If String.IsNullOrWhiteSpace(line) OrElse line.StartsWith("#"c) Then Return
+            If String.IsNullOrWhiteSpace(line) OrElse line(0) = "#"c Then Return
 
             Dim rawPrefix As String
             Dim vendorName As String
-            If line.Contains(ControlChars.Tab) Then
-                Dim cells = line.Split(ControlChars.Tab)
-                rawPrefix = cells(0).Trim()
-                Dim shortName = If(cells.Length > 1, cells(1).Trim(), "")
-                Dim fullName = If(cells.Length > 2, String.Join(" ", cells.Skip(2)).Trim(), "")
-                vendorName = If(fullName <> "", fullName, shortName)
+            Dim tab1 = line.IndexOf(ControlChars.Tab)
+            If tab1 >= 0 Then
+                rawPrefix = line.Substring(0, tab1).Trim()
+                Dim tab2 = line.IndexOf(ControlChars.Tab, tab1 + 1)
+                If tab2 < 0 Then
+                    vendorName = line.Substring(tab1 + 1).Trim()
+                Else
+                    Dim shortName = line.Substring(tab1 + 1, tab2 - tab1 - 1).Trim()
+                    Dim rest = line.Substring(tab2 + 1).Trim()
+                    If rest.IndexOf(ControlChars.Tab) >= 0 Then
+                        rest = String.Join(" ", rest.Split(ControlChars.Tab)).Trim()
+                    End If
+                    vendorName = If(rest <> "", rest, shortName)
+                End If
             Else
                 Dim tokens = line.Split(New Char() {" "c}, StringSplitOptions.RemoveEmptyEntries)
                 If tokens.Length < 2 Then Return
@@ -324,13 +332,13 @@ Namespace Utils
             End If
             If vendorName = "" Then Return
 
-            Dim cleanHex = Regex.Replace(rawPrefix.Split("/"c)(0), "[^0-9A-Fa-f]", "").ToUpperInvariant()
-            If rawPrefix.Contains("/28") AndAlso cleanHex.Length >= 7 Then
+            Dim cleanHex = ExtractHexUpper(rawPrefix, 9)
+            If rawPrefix.EndsWith("/28", StringComparison.Ordinal) AndAlso cleanHex.Length >= 7 Then
                 AddKey(cleanHex.Substring(0, 7), vendorName)
-            ElseIf rawPrefix.Contains("/36") AndAlso cleanHex.Length >= 9 Then
+            ElseIf rawPrefix.EndsWith("/36", StringComparison.Ordinal) AndAlso cleanHex.Length >= 9 Then
                 AddKey(cleanHex.Substring(0, 9), vendorName)
             ElseIf cleanHex.Length >= 6 Then
-                AddKey(cleanHex.Substring(0, 6), vendorName)
+                AddKey(If(cleanHex.Length = 6, cleanHex, cleanHex.Substring(0, 6)), vendorName)
             End If
         End Sub
 
@@ -340,37 +348,72 @@ Namespace Utils
             End If
         End Sub
 
+        ''' <summary>Estrae fino a <paramref name="maxLen"/> cifre esadecimali in maiuscolo, fermandosi a '/' se presente.</summary>
+        Private Function ExtractHexUpper(text As String, Optional maxLen As Integer = 12) As String
+            If String.IsNullOrEmpty(text) Then Return ""
+            Dim buf(maxLen - 1) As Char
+            Dim count = 0
+            For i = 0 To text.Length - 1
+                Dim c = text(i)
+                If c = "/"c Then Exit For
+                If (c >= "0"c AndAlso c <= "9"c) OrElse (c >= "A"c AndAlso c <= "F"c) Then
+                    buf(count) = c
+                    count += 1
+                ElseIf c >= "a"c AndAlso c <= "f"c Then
+                    buf(count) = ChrW(AscW(c) - 32)
+                    count += 1
+                End If
+                If count = maxLen Then Exit For
+            Next
+            Return If(count = 0, "", New String(buf, 0, count))
+        End Function
+
+        Private Function HexVal(c As Char) As Integer
+            If c >= "0"c AndAlso c <= "9"c Then Return AscW(c) - AscW("0"c)
+            If c >= "A"c AndAlso c <= "F"c Then Return AscW(c) - AscW("A"c) + 10
+            If c >= "a"c AndAlso c <= "f"c Then Return AscW(c) - AscW("a"c) + 10
+            Return -1
+        End Function
+
         ''' <summary>
         ''' MAC «amministrato localmente» (secondo bit del primo byte): di solito un indirizzo casuale per la privacy
         ''' (telefoni, tablet, PC recenti in Wi-Fi), oppure macchine virtuali e contenitori.
         ''' </summary>
         Public Function IsRandomMac(mac As String) As Boolean
-            Dim clean = Regex.Replace(If(mac, ""), "[^0-9A-Fa-f]", "")
-            If clean.Length < 2 Then Return False
-            Return (Convert.ToInt32(clean.Substring(0, 2), 16) And 2) <> 0
+            If String.IsNullOrEmpty(mac) Then Return False
+            Dim hi = -1
+            For i = 0 To mac.Length - 1
+                Dim v = HexVal(mac(i))
+                If v >= 0 Then
+                    If hi < 0 Then
+                        hi = v
+                    Else
+                        Return (((hi << 4) Or v) And 2) <> 0
+                    End If
+                End If
+            Next
+            Return False
         End Function
 
         Public Function GetVendor(mac As String) As String
             If String.IsNullOrWhiteSpace(mac) Then Return "Sconosciuto"
-            Dim cleanMac As String = Regex.Replace(mac.Trim(), "[^0-9A-Fa-f]", "").ToUpperInvariant()
+            Dim cleanMac As String = ExtractHexUpper(mac, 12)
 
             SyncLock LockObj
+                Dim found As String = Nothing
                 ' 1. Prova prefisso a 36-bit (9 caratteri hex)
-                If cleanMac.Length >= 9 Then
-                    Dim p36 = cleanMac.Substring(0, 9)
-                    If VendorDb.ContainsKey(p36) Then Return VendorDb(p36)
+                If cleanMac.Length >= 9 AndAlso VendorDb.TryGetValue(cleanMac.Substring(0, 9), found) Then
+                    Return found
                 End If
 
                 ' 2. Prova prefisso a 28-bit (7 caratteri hex)
-                If cleanMac.Length >= 7 Then
-                    Dim p28 = cleanMac.Substring(0, 7)
-                    If VendorDb.ContainsKey(p28) Then Return VendorDb(p28)
+                If cleanMac.Length >= 7 AndAlso VendorDb.TryGetValue(cleanMac.Substring(0, 7), found) Then
+                    Return found
                 End If
 
                 ' 3. Prova prefisso standard a 24-bit OUI (6 caratteri hex)
-                If cleanMac.Length >= 6 Then
-                    Dim p24 = cleanMac.Substring(0, 6)
-                    If VendorDb.ContainsKey(p24) Then Return VendorDb(p24)
+                If cleanMac.Length >= 6 AndAlso VendorDb.TryGetValue(If(cleanMac.Length = 6, cleanMac, cleanMac.Substring(0, 6)), found) Then
+                    Return found
                 End If
             End SyncLock
 
@@ -392,9 +435,45 @@ Namespace Utils
         ''' <summary>MAC normalizzato "aa:bb:cc:dd:ee:ff" (minuscolo, due punti); Nothing se assente, non valido, tutto zeri o broadcast.</summary>
         Public Function Normalize(mac As String) As String
             If String.IsNullOrWhiteSpace(mac) Then Return Nothing
-            Dim hex = New String(mac.Where(Function(c) Uri.IsHexDigit(c)).ToArray()).ToLowerInvariant()
-            If hex.Length <> 12 OrElse hex = "000000000000" OrElse hex = "ffffffffffff" Then Return Nothing
-            Return String.Join(":", Enumerable.Range(0, 6).Select(Function(i) hex.Substring(i * 2, 2)))
+            Dim hex(11) As Char
+            Dim count = 0
+            Dim allZero = True
+            Dim allFf = True
+            For i = 0 To mac.Length - 1
+                Dim c = mac(i)
+                Dim lo As Char
+                If (c >= "0"c AndAlso c <= "9"c) OrElse (c >= "a"c AndAlso c <= "f"c) Then
+                    lo = c
+                ElseIf c >= "A"c AndAlso c <= "F"c Then
+                    lo = ChrW(AscW(c) + 32)
+                Else
+                    Continue For
+                End If
+                If count >= 12 Then Return Nothing
+                If lo <> "0"c Then allZero = False
+                If lo <> "f"c Then allFf = False
+                hex(count) = lo
+                count += 1
+            Next
+            If count <> 12 OrElse allZero OrElse allFf Then Return Nothing
+            If mac.Length = 17 AndAlso mac(2) = ":"c AndAlso mac(5) = ":"c AndAlso mac(8) = ":"c AndAlso mac(11) = ":"c AndAlso mac(14) = ":"c Then
+                Dim alreadyLower = True
+                For i = 0 To 16
+                    Dim c = mac(i)
+                    If c >= "A"c AndAlso c <= "F"c Then
+                        alreadyLower = False
+                        Exit For
+                    End If
+                Next
+                If alreadyLower Then Return mac
+            End If
+            Dim out(16) As Char
+            For b = 0 To 5
+                If b > 0 Then out(b * 3 - 1) = ":"c
+                out(b * 3) = hex(b * 2)
+                out(b * 3 + 1) = hex(b * 2 + 1)
+            Next
+            Return New String(out)
         End Function
 
         ''' <summary>Sei byte che indicano una scheda vera: non tutti zeri, non broadcast, non multicast.</summary>
@@ -411,16 +490,26 @@ Namespace Utils
         ''' <summary>Bit "locally administered" acceso: indirizzo casuale (telefoni) o assegnato a mano, non un prefisso di produttore.</summary>
         Public Function IsLocallyAdministered(mac As String) As Boolean
             Dim n = Normalize(mac)
-            If n Is Nothing Then Return False
-            Return (Convert.ToInt32(n.Substring(0, 2), 16) And 2) <> 0
+            Return n IsNot Nothing AndAlso IsRandomMac(n)
+        End Function
+
+        ''' <summary>Produttore reale o Nothing se assente o segnaposto («Sconosciuto», «Produttore non catalogato», «N/D...»).</summary>
+        Public Function CleanVendor(vendor As String) As String
+            If String.IsNullOrWhiteSpace(vendor) OrElse
+               vendor = "Sconosciuto" OrElse
+               vendor = "Produttore non catalogato" OrElse
+               vendor = "Unknown" OrElse
+               vendor.StartsWith("N/D", StringComparison.Ordinal) Then
+                Return Nothing
+            End If
+            Return vendor
         End Function
 
         ''' <summary>Produttore dal prefisso, oppure Nothing se non catalogato; gli indirizzi casuali hanno PrivateAddressLabel.</summary>
         Public Function Lookup(mac As String) As String
             Dim n = Normalize(mac)
             If n Is Nothing Then Return Nothing
-            Dim vendor = GetVendor(n)
-            Return If(vendor <> "Produttore non catalogato" AndAlso vendor <> "Sconosciuto", vendor, Nothing)
+            Return CleanVendor(GetVendor(n))
         End Function
 
         Private Sub LoadBuiltinFallbacks()

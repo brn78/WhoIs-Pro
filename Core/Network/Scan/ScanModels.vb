@@ -32,7 +32,8 @@ Namespace Network.Scan
             Me.Done = done
             Me.Total = total
             Me.Detail = detail
-            Me.Host = host
+            ' Progress(Of T) recapita su un altro thread mentre la scansione continua ad arricchire l'host (porte, banner, unione MAC)
+            Me.Host = host?.Snapshot()
         End Sub
 
         Public ReadOnly Property Phase As String
@@ -120,7 +121,12 @@ Namespace Network.Scan
         Public Property OsGuess As String
         Public Property IsGateway As Boolean
         Public Property IsLocalMachine As Boolean
+        ''' <summary>Metadati SADP se il dispositivo ha risposto alla sonda multicast Hikvision; Nothing altrimenti.</summary>
+        <System.Text.Json.Serialization.JsonIgnore>
+        Public Property Sadp As SadpDeviceInfo
         Public ReadOnly Property Ports As New List(Of OpenPort)()
+        ''' <summary>Altri indirizzi IPv4 dello stesso dispositivo (stesso MAC) trovati nella scansione; vuoto se ne ha uno solo.</summary>
+        Public ReadOnly Property ExtraIps As New List(Of String)()
         Public Property SeenAt As DateTime = DateTime.Now
 
         ''' <summary>Nome migliore disponibile: NetBIOS, DNS, altrimenti IP.</summary>
@@ -131,6 +137,20 @@ Namespace Network.Scan
                 Return Ip
             End Get
         End Property
+
+        ''' <summary>Copia indipendente dell'host (con porte e altri IPv4), sicura da leggere su un altro thread mentre la scansione prosegue.</summary>
+        Public Function Snapshot() As DiscoveredHost
+            Dim copy As New DiscoveredHost With {
+                .Ip = Ip, .Mac = Mac, .Vendor = Vendor, .HostName = HostName, .NetBiosName = NetBiosName, .NetBiosWorkgroup = NetBiosWorkgroup,
+                .DeviceType = DeviceType, .Category = Category, .RespondsToPing = RespondsToPing, .LatencyMs = LatencyMs, .Ttl = Ttl,
+                .OsGuess = OsGuess, .IsGateway = IsGateway, .IsLocalMachine = IsLocalMachine, .Sadp = Sadp, .SeenAt = SeenAt
+            }
+            For Each p In Ports.ToArray()
+                If p IsNot Nothing Then copy.Ports.Add(New OpenPort(p.Port, p.Protocol, p.Service, p.Banner))
+            Next
+            copy.ExtraIps.AddRange(ExtraIps.ToArray())
+            Return copy
+        End Function
     End Class
 
     ''' <summary>
@@ -234,6 +254,7 @@ Namespace Network.Scan
             sb.AppendLine($"Scansione di {Target} del {StartedAt:dd/MM/yyyy HH:mm} ({Duration.TotalSeconds:N0} s): {Hosts.Count} host")
             For Each h In Hosts.OrderBy(Function(x) x.Ip, IpComparer.Instance)
                 sb.Append($"- {h.Ip}")
+                If h.ExtraIps.Count > 0 Then sb.Append($" (anche {String.Join(", ", h.ExtraIps)})")
                 If h.DisplayName <> h.Ip Then sb.Append($" {h.DisplayName}")
                 If h.Mac IsNot Nothing Then sb.Append($" [{h.Mac}{If(h.Vendor Is Nothing, "", " " & h.Vendor)}]")
                 sb.Append($" · {h.DeviceType}")
@@ -271,6 +292,9 @@ Namespace Network.Scan
         Public Shared ReadOnly Instance As New IpComparer()
 
         Public Function Compare(x As String, y As String) As Integer Implements IComparer(Of String).Compare
+            Dim ua As UInteger = 0
+            Dim ub As UInteger = 0
+            If Ipv4.TryParse(x, ua) AndAlso Ipv4.TryParse(y, ub) Then Return ua.CompareTo(ub)
             Dim a As IPAddress = Nothing
             Dim b As IPAddress = Nothing
             If Not IPAddress.TryParse(x, a) OrElse Not IPAddress.TryParse(y, b) Then Return String.CompareOrdinal(x, y)

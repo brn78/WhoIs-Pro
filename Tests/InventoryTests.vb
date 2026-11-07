@@ -64,6 +64,66 @@ Namespace WhoIsPro.Tests
 #End Region
 
         <Test>
+        Public Sub SameDeviceMerger_MergesSameMacButNotRepeatersOrDifferentSystems()
+            ' telecamera con cavo e Wi-Fi sullo stesso MAC: una riga, l'IP che ha risposto a SADP è il principale
+            Dim wired = Host("192.168.50.201", "bc:ad:28:00:00:c9", Nothing, 80, 554, 8000)
+            wired.Sadp = New SadpDeviceInfo With {.Ip = "192.168.50.201", .Model = "DS-2CD2442FWD-IW"}
+            Dim wifi = Host("192.168.50.202", "bc:ad:28:00:00:c9", Nothing, 80, 443)
+            Dim other = Host("192.168.50.10", "aa:bb:cc:00:00:10", "nas-prova", 22)
+            Dim r = SameDeviceMerger.MergeByMac({wifi, other, wired})
+            Assert.That(r.Hosts.Count, [Is].EqualTo(2), "due dispositivi reali")
+            Assert.That(r.Merged.Single().Ip, [Is].EqualTo("192.168.50.201"))
+            Assert.That(r.Merged.Single().ExtraIps, [Is].EqualTo({"192.168.50.202"}))
+            Assert.That(r.Merged.Single().Ports.Select(Function(p) p.Port), [Is].EqualTo({80, 443, 554, 8000}), "porte unite")
+
+            ' TTL diversi (Windows dietro un ripetitore MAC-NAT con un telefono): non è lo stesso dispositivo
+            Dim pc = Host("192.168.50.30", "11:22:33:44:55:66", Nothing) : pc.Ttl = 128
+            Dim phone = Host("192.168.50.31", "11:22:33:44:55:66", Nothing) : phone.Ttl = 64
+            Assert.That(SameDeviceMerger.MergeByMac({pc, phone}).Hosts.Count, [Is].EqualTo(2))
+
+            ' nomi NetBIOS diversi: due macchine
+            Dim a = Host("192.168.50.40", "22:22:22:22:22:22", Nothing) : a.NetBiosName = "PC-UNO"
+            Dim b = Host("192.168.50.41", "22:22:22:22:22:22", Nothing) : b.NetBiosName = "PC-DUE"
+            Assert.That(SameDeviceMerger.MergeByMac({a, b}).Hosts.Count, [Is].EqualTo(2))
+
+            ' più di 4 indirizzi sullo stesso MAC: ripetitore o proxy ARP, niente unione
+            Dim many = Enumerable.Range(50, 5).Select(Function(i) Host($"192.168.50.{i}", "33:33:33:33:33:33", Nothing)).ToArray()
+            Assert.That(SameDeviceMerger.MergeByMac(many).Hosts.Count, [Is].EqualTo(5))
+
+            ' PC con tre IPv4 sulla stessa scheda: un dispositivo, il gateway resta principale se c'è
+            Dim three = {Host("192.168.50.62", "44:44:44:44:44:44", Nothing), Host("192.168.50.60", "44:44:44:44:44:44", Nothing), Host("192.168.50.61", "44:44:44:44:44:44", Nothing)}
+            Dim m3 = SameDeviceMerger.MergeByMac(three)
+            Assert.That(m3.Hosts.Single().Ip, [Is].EqualTo("192.168.50.60"))
+            Assert.That(m3.Hosts.Single().ExtraIps, [Is].EqualTo({"192.168.50.61", "192.168.50.62"}))
+        End Sub
+
+        <Test>
+        Public Sub RecordScan_SameDeviceWithTwoIps_AbsorbsOldSecondaryRowAndKeepsCount()
+            ' prima (versioni precedenti): due righe, il secondo indirizzo salvato per IP, con un nome dato dall'utente
+            Dim first = Report(New DateTime(2026, 10, 1, 9, 0, 0), Host("192.168.50.201", "bc:ad:28:00:00:c9", Nothing, 80), Host("192.168.50.202", "bc:ad:28:00:00:c9", Nothing, 80))
+            store.Network.RecordScan(first)
+            Assert.That(store.Network.ListHosts().Count, [Is].EqualTo(2))
+            Dim secondary = store.Network.ListHosts().Single(Function(h) h.Ip = "192.168.50.202")
+            store.Network.SetAlias(secondary.Id, "Telecamera ingresso")
+
+            ' adesso: un solo dispositivo con due IPv4
+            Dim merged = Host("192.168.50.201", "bc:ad:28:00:00:c9", Nothing, 80)
+            merged.ExtraIps.Add("192.168.50.202")
+            Dim diff = store.Network.RecordScan(Report(New DateTime(2026, 10, 1, 10, 0, 0), merged))
+            Dim hosts = store.Network.ListHosts()
+            Assert.That(hosts.Count, [Is].EqualTo(1), "la vecchia riga dell'indirizzo secondario è assorbita")
+            Assert.That(hosts(0).ExtraIps, [Is].EqualTo({"192.168.50.202"}))
+            Assert.That(hosts(0).Alias, [Is].EqualTo("Telecamera ingresso"), "il nome dato dall'utente passa al principale")
+            Assert.That(diff.ChangedHosts, [Is].Empty, "nessun falso cambio di IP")
+            Assert.That(diff.GoneHosts, [Is].Empty)
+
+            ' la scansione dopo: niente «assente» per l'indirizzo secondario
+            Dim third = store.Network.RecordScan(Report(New DateTime(2026, 10, 1, 11, 0, 0), merged))
+            Assert.That(third.GoneHosts, [Is].Empty)
+            Assert.That(third.ChangedHosts, [Is].Empty)
+        End Sub
+
+        <Test>
         Public Sub RecordScan_FirstScan_EverythingIsNewAndMarkedFirst()
             Dim diff = store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
             Assert.That(diff.IsFirst, [Is].True)

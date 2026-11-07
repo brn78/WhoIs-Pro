@@ -18,8 +18,8 @@
     H('192.168.1.20', 'homeassistant', 'B8:27:EB:5C:44:20', 'Raspberry Pi Foundation', 'Home Assistant', 'Domotica / IoT', 3, 64, 'Linux / Android / iOS / macOS', 7000),
     H('192.168.1.31', 'shellyplus1-cucina', 'C8:F0:9E:31:00:31', 'Espressif Inc.', 'Modulo Shelly', 'Domotica / IoT', 18, 255, 'Cisco / Router / Network Device', 6000),
     H('192.168.1.32', 'shelly-tapparelle', 'C8:F0:9E:31:00:32', 'Espressif Inc.', 'Modulo Shelly', 'Domotica / IoT', 22, 255, 'Cisco / Router / Network Device', 6000),
-    H('192.168.1.40', 'cam-ingresso', 'BC:AD:28:40:40:40', 'Hangzhou Hikvision Digital Technology Co.,Ltd.', 'Telecamera Hikvision', 'Telecamera IP', 4, 64, 'Linux / Android / iOS / macOS', 5000),
-    H('192.168.1.41', 'cam-giardino', 'BC:AD:28:40:40:41', 'Hangzhou Hikvision Digital Technology Co.,Ltd.', 'Telecamera Hikvision', 'Telecamera IP', 5, 64, 'Linux / Android / iOS / macOS', 5000),
+    H('192.168.1.40', 'cam-ingresso', 'BC:AD:28:40:40:40', 'Hangzhou Hikvision Digital Technology Co.,Ltd.', 'Telecamera IP Hikvision DS-2CD2143G2-I', 'Telecamera', 4, 64, 'Firmware V5.7.3 build 220112', 5000),
+    H('192.168.1.41', 'nvr-videosorveglianza', 'BC:AD:28:40:40:41', 'Hangzhou Hikvision Digital Technology Co.,Ltd.', 'Videoregistratore di rete (NVR) Hikvision DS-7608NI-K2 (8 canali)', 'Telecamera', 5, 64, 'Firmware V4.30.085 build 210607', 5000),
     H('192.168.1.50', 'centrale-allarme', '00:1C:B3:50:50:50', 'Ksenia Security S.r.l.', 'Centrale Ksenia', "Centrale d'allarme", 6, 64, 'Linux / Android / iOS / macOS', 4000),
     { ...H('192.168.1.60', 'stampante-hp', '3C:52:82:60:60:60', 'HP Inc.', 'Stampante HP', 'Stampante', 9, 255, 'Cisco / Router / Network Device', 3000, 50), status: 'Offline' },
     H('192.168.1.70', 'samsung-tv-sala', '8C:79:F5:70:70:70', 'Samsung Electronics Co.,Ltd', 'Smart TV Samsung', 'Smart TV', 12, 64, 'Linux / Android / iOS / macOS', 2000),
@@ -32,8 +32,9 @@
   const ports = [
     P('192.168.1.1', 53, 'DNS'), P('192.168.1.1', 80, 'HTTP', 'HTTP/1.1 200 OK · Server: FRITZ!OS'), P('192.168.1.1', 443, 'HTTPS', 'TLS · FRITZ!Box 7590'),
     P('192.168.1.10', 22, 'SSH', 'SSH-2.0-OpenSSH_8.2'), P('192.168.1.10', 445, 'SMB'), P('192.168.1.10', 5000, 'Synology DSM', 'HTTP/1.1 200 OK · nginx'),
-    P('192.168.1.20', 8123, 'Home Assistant', 'HTTP/1.1 200 OK · Python/3.12 aiohttp'), P('192.168.1.40', 80, 'HTTP', 'HTTP/1.1 200 OK · Server: webs'),
-    P('192.168.1.40', 554, 'RTSP', 'RTSP/1.0 200 OK'), P('192.168.1.40', 8000, 'Hikvision SDK'), P('192.168.1.41', 554, 'RTSP', 'RTSP/1.0 200 OK'),
+    P('192.168.1.20', 8123, 'Home Assistant', 'HTTP/1.1 200 OK · Python/3.12 aiohttp'), P('192.168.1.40', 80, 'HTTP', 'Server: App-webs/'),
+    P('192.168.1.40', 554, 'RTSP', 'RTSP · Server: Hikvision'), P('192.168.1.40', 8000, 'Hikvision-SDK', 'Hikvision SDK · DS-2CD2143G2-I · FW V5.7.3 build 220112 · SN 20220315AAWR123456789'),
+    P('192.168.1.41', 80, 'HTTP', 'Server: DNVRS-Webs'), P('192.168.1.41', 554, 'RTSP', 'RTSP/1.0 200 OK'), P('192.168.1.41', 8000, 'Hikvision-SDK', 'Hikvision SDK · DS-7608NI-K2 · FW V4.30.085 build 210607 · SN 20210710CCRR987654321'),
     P('192.168.1.50', 443, 'HTTPS', 'TLS · Ksenia lares'), P('192.168.1.80', 3389, 'RDP'), P('192.168.1.1', 1900, 'SSDP / UPnP', '', 'UDP', 'Open|Filtered'),
   ];
   const whois = [{

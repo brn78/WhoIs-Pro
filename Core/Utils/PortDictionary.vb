@@ -1,4 +1,4 @@
-﻿Namespace Utils
+Namespace Utils
     Public Class PortEntry
         Public Property Port As Integer
         Public Property Protocol As String ' TCP, UDP, BOTH
@@ -51,6 +51,7 @@
             Add(443, "TCP", "HTTPS", "HTTP Secure (TLS/SSL)")
             Add(445, "TCP", "SMB / CIFS", "Microsoft-DS Condivisione File")
             Add(465, "TCP", "SMTPS", "SMTP sicuro su SSL")
+            Add(502, "TCP", "Modbus", "Modbus TCP (PLC / Automazione)")
             Add(514, "UDP", "Syslog", "System Logging Protocol")
             Add(515, "TCP", "LPD / LPR", "Line Printer Daemon")
             Add(554, "TCP", "RTSP", "Real-Time Streaming Protocol (Telecamere IP)")
@@ -127,7 +128,7 @@
         ''' dispositivi (6053 ESPHome, 6668 Tuya, 7000 AirPlay, 8001/8002 TV Samsung, 8009 Google Cast, 8554 RTSP).
         ''' </summary>
         Public ReadOnly CommonPorts As IReadOnlyList(Of Integer) = Array.AsReadOnly(New Integer() {
-            21, 22, 23, 25, 53, 80, 81, 88, 110, 135, 139, 143, 389, 443, 445, 515, 548, 554, 587, 631, 636, 873, 902,
+            21, 22, 23, 25, 53, 80, 81, 88, 110, 135, 139, 143, 389, 443, 445, 502, 515, 548, 554, 587, 631, 636, 873, 902,
             993, 995, 1433, 1521, 1883, 2049, 2179, 2375, 2376, 3268, 3306, 3389, 5000, 5001, 5060, 5432, 5900, 5985, 5986,
             6053, 6379, 6668, 7000, 8000, 8001, 8002, 8006, 8009, 8080, 8081, 8123, 8291, 8443, 8554, 9000, 9100, 9200,
             27017, 47808, 62078

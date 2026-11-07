@@ -11,9 +11,7 @@ Namespace Network.Scan
 #Region "Indirizzi IPv4"
 
     ''' <summary>Indirizzi IPv4 come numeri (a.b.c.d = a·2^24 + b·2^16 + c·2^8 + d), per intervalli e maschere.</summary>
-    Friend Module Ipv4
-        Private ReadOnly DottedQuad As New Regex("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", RegexOptions.CultureInvariant Or RegexOptions.Compiled)
-
+    Public Module Ipv4
         Public Function ToUInt32(address As IPAddress) As UInteger
             Dim b = address.MapToIPv4().GetAddressBytes()
             Return (CUInt(b(0)) << 24) Or (CUInt(b(1)) << 16) Or (CUInt(b(2)) << 8) Or CUInt(b(3))
@@ -46,11 +44,43 @@ Namespace Network.Scan
 
         ''' <summary>Solo la forma con quattro numeri: IPAddress.TryParse accetterebbe anche "192.168.1" come 192.168.0.1.</summary>
         Public Function TryParse(text As String, ByRef value As UInteger) As Boolean
-            value = 0
-            Dim address As IPAddress = Nothing
-            If String.IsNullOrWhiteSpace(text) OrElse Not DottedQuad.IsMatch(text.Trim()) OrElse
-               Not IPAddress.TryParse(text.Trim(), address) OrElse address.AddressFamily <> AddressFamily.InterNetwork Then Return False
-            value = ToUInt32(address)
+            value = 0UI
+            If String.IsNullOrEmpty(text) Then Return False
+            Dim startIdx = 0
+            Dim endIdx = text.Length - 1
+            While startIdx <= endIdx AndAlso Char.IsWhiteSpace(text(startIdx))
+                startIdx += 1
+            End While
+            While endIdx >= startIdx AndAlso Char.IsWhiteSpace(text(endIdx))
+                endIdx -= 1
+            End While
+            If startIdx > endIdx Then Return False
+
+            Dim acc As UInteger = 0UI
+            Dim octet As Integer = 0
+            Dim digits As Integer = 0
+            Dim dots As Integer = 0
+
+            For i = startIdx To endIdx
+                Dim ch = text(i)
+                If ch >= "0"c AndAlso ch <= "9"c Then
+                    If digits > 0 AndAlso octet = 0 Then Return False ' evita ambiguità ottale (es. 010)
+                    octet = octet * 10 + (AscW(ch) - AscW("0"c))
+                    If octet > 255 Then Return False
+                    digits += 1
+                ElseIf ch = "."c Then
+                    If digits = 0 OrElse dots = 3 Then Return False
+                    acc = (acc << 8) Or CUInt(octet)
+                    octet = 0
+                    digits = 0
+                    dots += 1
+                Else
+                    Return False
+                End If
+            Next
+
+            If dots <> 3 OrElse digits = 0 Then Return False
+            value = (acc << 8) Or CUInt(octet)
             Return True
         End Function
     End Module
@@ -226,7 +256,7 @@ Namespace Network.Scan
 
         ''' <summary>IPAddr di Windows: i quattro byte in ordine di rete letti come intero della macchina.</summary>
         Private Function ToNative(address As UInteger) As UInteger
-            Return BitConverter.ToUInt32(Ipv4.ToAddress(address).GetAddressBytes(), 0)
+            Return If(BitConverter.IsLittleEndian, Buffers.Binary.BinaryPrimitives.ReverseEndianness(address), address)
         End Function
     End Module
 

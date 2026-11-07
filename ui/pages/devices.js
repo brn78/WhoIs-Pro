@@ -2,14 +2,14 @@
 // (alias, fiducia, note), cambiamenti tra una scansione e l'altra (nuovo, ricomparso, cambiato, assente) e storico delle
 // scansioni. La rete è il router (MAC) o, in mancanza, la sottorete; si apre su quella in cui si trova il PC.
 import { call, on } from '../core/bridge.js';
-import { $, $$, esc, fmtDateTime, fmtNumber, fmtSeconds, plural } from '../core/dom.js';
+import { $, $$, esc, fmtDateTime, fmtNumber, fmtSeconds, plural, subnetOf, countSubnets, renderBySubnet, shortVendor } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { table } from '../core/table.js';
 import { confirmDialog, emptyState, note, openMenu, pageHead, promptDialog, toast, toastError } from '../core/ui.js';
-import { launchItems, shortVendor } from './network.js';
+import { isHikvision, launchItems } from './network.js';
 
 S.devices = {
   data: null,          // risposta di «inventory»: network, current, networks, hosts, events, scans, digest, watch
@@ -17,7 +17,7 @@ S.devices = {
   tab: 'hosts',
   network: '',         // rete mostrata: '' = quella in cui si trova il PC, '*' = tutte, altrimenti la chiave
   networkPinned: false, // vero se l'utente ha scelto una rete: non si segue più quella del PC finché non cambia pagina
-  q: '', onlyOnline: false,
+  q: '', subnet: '', onlyOnline: false,
   selectedId: null, detail: null, saved: false,
   pendingHost: null,   // scheda da aprire appena i dati arrivano (dall'avviso o da un evento)
   badgeSeen: false,    // il contatore «da vedere» si azzera quando si apre la pagina
@@ -120,13 +120,37 @@ function hostRow(h) {
       <span class="dev-name"><b class="trunc" title="${esc(h.displayName)}">${esc(h.displayName)}</b>
         ${h.trust ? `<span class="pill ${t.tone}">${t.label.toLowerCase()}</span>` : ''}${h.isNew ? '<span class="pill warning">nuovo</span>' : ''}${allNetworks() && h.networkName ? `<span class="tag" title="Rete">${esc(h.networkName)}</span>` : ''}</span>
       <small class="trunc" title="${esc(sub)}">${esc(sub)}</small></span>
-    <span class="dev-state"><span class="state"><span class="dot ${h.isOnline ? 'on' : ''}"></span>${h.isOnline ? 'presente' : `ultima volta ${fmtShort(h.lastSeen)}`}</span><span class="mono">${esc(h.ip)}</span></span>
+    <span class="dev-state"><span class="state"><span class="dot ${h.isOnline ? 'on' : ''}"></span>${h.isOnline ? 'presente' : `ultima volta ${fmtShort(h.lastSeen)}`}</span><span class="mono">${esc(h.ip)}</span>${(h.extraIps || []).length ? ` <span class="tag" title="Stesso dispositivo (stesso MAC) anche su: ${esc(h.extraIps.join(', '))}">+${h.extraIps.length} IP</span>` : ''}</span>
   </button>`;
+}
+
+function deviceSubnets() {
+  return countSubnets(S.devices.data && S.devices.data.hosts, (h) => h.ip);
+}
+
+function activeDeviceSubnet() {
+  const sub = S.devices.subnet || '';
+  if (!sub || !S.devices.data) return '';
+  return (S.devices.data.hosts || []).some((h) => subnetOf(h.ip) === sub) ? sub : '';
+}
+
+function visibleDeviceHosts() {
+  const hosts = (S.devices.data && S.devices.data.hosts) || [];
+  const sub = activeDeviceSubnet();
+  return sub ? hosts.filter((h) => subnetOf(h.ip) === sub) : hosts;
+}
+
+function renderDeviceRows(hosts) {
+  const subs = deviceSubnets();
+  if (subs.length <= 1 || activeDeviceSubnet()) return hosts.map(hostRow).join('');
+  return renderBySubnet(hosts, (h) => h.ip, hostRow, 'dispositivo', 'dispositivi');
 }
 
 function listCard() {
   const d = S.devices.data;
-  const hosts = d.hosts;
+  const hosts = visibleDeviceHosts();
+  const subs = deviceSubnets();
+  const curSub = activeDeviceSubnet();
   const others = (d.networks || []).filter((n) => n.key !== d.network && n.hostsCount > 0).length;
   // la stessa sottorete conosciuta solo per sottorete (vecchio registro, versioni precedenti): i suoi dispositivi passano qui appena ricompaiono
   const shown = shownNetwork() || d.current;
@@ -137,10 +161,18 @@ function listCard() {
       ? emptyState('server', 'Nessun dispositivo in archivio', 'Avvia una scansione: i dispositivi trovati restano qui anche quando si spengono, con la loro storia.')
       : emptyState('server', `Nessun dispositivo in «${shownNetworkName()}»`, `Avvia una scansione da qui o dalla pagina Rete: i dispositivi di questa rete restano in archivio con la loro storia.${legacy ? ` In archivio ci sono già ${plural(legacy.hostsCount, 'dispositivo', 'dispositivi')} della sottorete ${legacy.cidr} (versioni precedenti): passano qui appena la scansione li ritrova.` : others ? ` Le altre ${plural(others, 'rete conosciuta è', 'reti conosciute sono')} nel menu «Rete» qui sopra.` : ''}`);
   } else if (!hosts.length) body = emptyState('search', 'Nessun dispositivo corrisponde', 'Cambia le parole della ricerca o togli «solo presenti».');
-  else body = `<div class="dev-list" id="dev-list">${hosts.map(hostRow).join('')}</div>`;
+  else body = `<div class="dev-list" id="dev-list">${renderDeviceRows(hosts)}</div>`;
+  const subnetBox = subs.length > 1
+    ? `<div class="sort-box"><label for="d-subnet">Sottorete</label>
+        <select class="select input-sm" id="d-subnet" data-field="subnet" title="Filtra i dispositivi di una singola sottorete">
+          <option value="" ${!curSub ? 'selected' : ''}>Tutte (${subs.length})</option>
+          ${subs.map(([cidr, cnt]) => `<option value="${esc(cidr)}" ${cidr === curSub ? 'selected' : ''}>${esc(cidr)} (${cnt})</option>`).join('')}
+        </select></div>`
+    : '';
   return `<section class="card table-card">
     <div class="toolbar">
       <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.devices.q)}" placeholder="Cerca per nome, IP, MAC, produttore, tipo, alias o note" autocomplete="off"></div>
+      ${subnetBox}
       <label class="switch"><input type="checkbox" data-field="onlyOnline" ${S.devices.onlyOnline ? 'checked' : ''}><span class="track"></span><span>Solo presenti</span></label>
       <div class="toolbar-actions"><span class="toolbar-info">${hosts.length === d.total ? plural(d.total, 'dispositivo', 'dispositivi') : `${hosts.length} di ${d.total}`}</span></div>
     </div>
@@ -164,6 +196,7 @@ function detailCard() {
   const chip = (ic, text, title = '') => `<span class="chip" title="${esc(title || text)}">${icon(ic, { size: 13 })}${esc(text)}</span>`;
   const chips = [
     chip('mapPin', h.ip),
+    ...(h.extraIps || []).map((ip) => chip('mapPin', ip, `Altro IPv4 dello stesso dispositivo (stesso MAC): ${ip}`)),
     h.mac ? chip('tag', `${upperMac(h.mac)}${h.vendor ? ` · ${shortVendor(h.vendor)}` : ''}`, `${upperMac(h.mac)}${h.vendor ? ` · ${h.vendor}` : ''}`) : '',
     h.hostName ? chip('dns', h.hostName) : '',
     h.netBios ? chip('windows', `${h.netBios}${h.workgroup ? ` · ${h.workgroup}` : ''}`) : '',
@@ -271,7 +304,7 @@ function rerender() {
 
 function renderList() {
   const box = $('#dev-list');
-  if (box && S.devices.data) box.innerHTML = S.devices.data.hosts.map(hostRow).join(''); else rerender();
+  if (box && S.devices.data) box.innerHTML = renderDeviceRows(visibleDeviceHosts()); else rerender();
 }
 
 function renderDetail() {
@@ -438,13 +471,13 @@ async function startScan() {
 function hostMenu(anchor, id) {
   const h = (S.devices.data.hosts || []).find((x) => x.id === Number(id));
   if (!h) return;
-  const ports = (h.ports || []).map((p) => ({ portNumber: p.port, protocol: 'TCP' }));
+  const ports = (h.ports || []).map((p) => ({ portNumber: p.port, protocol: 'TCP', serviceName: p.service, banner: p.banner }));
   openMenu(anchor, [
     { header: `${h.displayName} · ${h.ip}` },
     { ic: 'plug', label: 'Scansiona le porte', run: () => navigate('ports', { host: h.ip, start: true }) },
     { ic: 'radar', label: 'Scansiona la sua rete', run: () => navigate('network', { target: h.ip.replace(/\.\d+$/, '.0/24') }) },
     { sep: true },
-    ...launchItems(h.ip, ports),
+    ...launchItems(h.ip, ports, { hikvision: isHikvision(h) }),
     { sep: true },
     { ic: 'copy', label: 'Copia l\'indirizzo IP', run: () => call('setClipboard', { text: h.ip }).then(() => toast('Indirizzo IP copiato.', { tone: 'success' })) },
     { ic: 'copy', label: 'Copia il MAC', disabled: !h.mac, run: () => call('setClipboard', { text: upperMac(h.mac) }).then(() => toast('MAC copiato.', { tone: 'success' })) },
@@ -463,7 +496,7 @@ const actions = {
   'host-tools': (el) => {
     const h = S.devices.detail && S.devices.detail.host;
     if (!h) return;
-    openMenu(el, [{ header: h.ip }, ...launchItems(h.ip, (h.ports || []).map((p) => ({ portNumber: p.port, protocol: 'TCP' })))], { above: true });
+    openMenu(el, [{ header: h.ip }, ...launchItems(h.ip, (h.ports || []).map((p) => ({ portNumber: p.port, protocol: 'TCP', serviceName: p.service, banner: p.banner })), { hikvision: isHikvision(h) })], { above: true });
   },
   'open-event': (el) => openEvent(Number(el.dataset.id), el.dataset.host),
   'ack-all': async () => {
@@ -521,7 +554,8 @@ definePage('devices', {
   },
   onChange: (el, field) => {
     if (field === 'onlyOnline') { S.devices.onlyOnline = el.checked; refreshList(); }
-    if (field === 'network') { S.devices.network = el.value; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; load(); }
+    if (field === 'subnet') { S.devices.subnet = el.value || ''; rerender(); if (S.devices.selectedId) renderDetail(); }
+    if (field === 'network') { S.devices.network = el.value; S.devices.subnet = ''; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; load(); }
   },
   onContext: (row, point) => hostMenu(point, row.dataset.id),
 });

@@ -1,4 +1,4 @@
-﻿Option Strict On
+Option Strict On
 
 Imports System.IO
 Imports System.Text.Json
@@ -95,6 +95,7 @@ Namespace UI
         Private ReadOnly _netFound As New Dictionary(Of String, HostInfo)(StringComparer.Ordinal)
         Private ReadOnly _netPorts As New List(Of PortInfo)()
         Private ReadOnly _netSeenIps As New HashSet(Of String)()
+        Private ReadOnly _netObservedIps As New HashSet(Of String)(StringComparer.Ordinal)
         Private ReadOnly _netNew As New List(Of HostInfo)()
         Private _netFirstCensus As Boolean
         Private _portProgress As PortScanProgress
@@ -928,8 +929,8 @@ Namespace UI
             Dim target = ArgText(args, "target").Trim()
             If target = "" Then Throw New UserMessageException("Indica la rete da scansionare, per esempio 192.168.1.0/24 oppure 192.168.1.1-50.")
             Dim targets = NetworkUtils.ParseTargets(target)
-            If targets.Count = 0 Then Throw New UserMessageException($"Nessun indirizzo IP valido in «{target}». Si accettano reti (192.168.1.0/24, al massimo /22), intervalli (192.168.1.1-50) e indirizzi singoli.")
-            If targets.Count > 1024 Then Throw New UserMessageException($"«{target}» ha {targets.Count:N0} indirizzi: il massimo è una /22 (1.024 indirizzi).")
+            If targets.Count = 0 Then Throw New UserMessageException($"Nessun indirizzo IP valido in «{target}». Si accettano una o più reti separate da virgola (es. 192.168.1.0/24, 192.168.2.0/24), intervalli (192.168.1.1-50) e indirizzi singoli.")
+            If targets.Count > 4096 Then Throw New UserMessageException($"«{target}» ha {targets.Count:N0} indirizzi: il massimo è 4.096 indirizzi complessivi (1.024 per singola sottorete /22).")
             ' porte degli host trovati: il gruppo scelto nella pagina, altrimenti le porte comuni del motore
             Dim scanPorts = ArgFlag(args, "autoPorts")
             Dim portList As List(Of Integer) = Nothing
@@ -954,6 +955,7 @@ Namespace UI
             _netFound.Clear()
             _netPorts.Clear()
             _netSeenIps.Clear()
+            _netObservedIps.Clear()
             _netNew.Clear()
             _netFirstCensus = _devices.Count = 0
             Dim observer As New Progress(Of ScanPhaseProgress)(AddressOf OnSessionScanProgress)
@@ -967,14 +969,17 @@ Namespace UI
             If p.Host IsNot Nothing Then
                 For Each port In p.Host.Ports
                     Dim pi = ToPortInfo(p.Host.Ip, port)
-                    AddPort(pi)
+                    AddPort(pi, touchSession:=False)
                     _netPorts.RemoveAll(Function(x) x.Host = pi.Host AndAlso x.PortNumber = pi.PortNumber)
                     _netPorts.Add(pi)
                 Next
                 Dim info = ToHostInfo(p.Host)
                 ' con le porte il tipo lo decide il motore (anche dai banner e dal NetBIOS); senza, aiutano quelle già nella sessione.
-                ' Nella fase ping il MAC non c'è ancora: l'archivio si aggiorna dalla fase ARP in poi, così niente doppioni per IP
-                If AddHost(info, classifyFromPorts:=Not _netOptions.ScanPorts, observe:=p.Phase <> "ping", network:=_watch.Network) Then _netNew.Add(info)
+                ' Nella fase ping il MAC non c'è ancora: l'archivio si aggiorna nella fase ARP, a fine scansione e la prima volta che
+                ' un host compare in un'altra fase, non a ogni fase (meno scritture SQLite a metà scansione)
+                Dim shouldObserve = p.Phase = "arp" OrElse p.Phase = "fine" OrElse (p.Phase <> "ping" AndAlso Not _netObservedIps.Contains(info.IPAddress))
+                If shouldObserve Then _netObservedIps.Add(info.IPAddress)
+                If AddHost(info, classifyFromPorts:=Not _netOptions.ScanPorts, observe:=shouldObserve, network:=_watch.Network) Then _netNew.Add(info)
                 _netFound(info.IPAddress) = info
                 _netSeenIps.Add(info.IPAddress)
             End If
@@ -1004,8 +1009,10 @@ Namespace UI
                 _sessionScan = False
                 _netWatch?.Stop()
                 FlushProgress(Nothing, EventArgs.Empty)
-                ' fermata a metà, il rapporto finale non c'è: contano gli host arrivati fin lì
-                Dim found = Math.Max(e.HostsFound, _netSeenIps.Count)
+                ' fermata a metà, il rapporto finale non c'è: contano gli host arrivati fin lì; a scansione completa vale il
+                ' rapporto, dove più IPv4 con lo stesso MAC sono un solo dispositivo
+                Dim complete = Not e.Cancelled AndAlso e.Error Is Nothing AndAlso e.HostsFound > 0
+                Dim found = If(complete, e.HostsFound, Math.Max(e.HostsFound, _netSeenIps.Count))
 
                 ' host della rete scansionata che questa volta non hanno risposto: restano nella sessione, segnati «Offline»
                 Dim offline As New List(Of String)()
@@ -1045,11 +1052,15 @@ Namespace UI
             Dim deviceType = h.DeviceType
             Dim category = h.Category
             If deviceType = "Dispositivo" AndAlso category = DeviceClassifier.CategoryOther Then
-                Dim probe As New DiscoveredHost With {.Ip = h.Ip, .Mac = h.Mac, .Vendor = vendor, .HostName = h.HostName, .NetBiosName = h.NetBiosName, .Ttl = h.Ttl, .IsGateway = h.IsGateway, .IsLocalMachine = h.IsLocalMachine}
+                Dim probe As New DiscoveredHost With {.Ip = h.Ip, .Mac = h.Mac, .Vendor = vendor, .HostName = h.HostName, .NetBiosName = h.NetBiosName, .Ttl = h.Ttl, .IsGateway = h.IsGateway, .IsLocalMachine = h.IsLocalMachine, .Sadp = h.Sadp}
                 probe.Ports.AddRange(h.Ports)
                 Dim c = DeviceClassifier.Classify(probe)
                 deviceType = c.DeviceType
                 category = c.Category
+            End If
+            Dim osGuess = h.OsGuess
+            If osGuess Is Nothing AndAlso h.Sadp IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(h.Sadp.SoftwareVersion) Then
+                osGuess = "Firmware " & h.Sadp.SoftwareVersion.Trim()
             End If
             Dim info As New HostInfo With {
                 .IPAddress = h.Ip,
@@ -1065,12 +1076,13 @@ Namespace UI
                 .RespondsToPing = h.RespondsToPing,
                 .ResponseTimeMs = CLng(If(h.LatencyMs, 0)),
                 .TTL = If(h.Ttl, 0),
-                .OSGuess = If(h.OsGuess, If(h.RespondsToPing, "Sconosciuto", "Host LAN (solo ARP)")),
+                .OSGuess = If(osGuess, If(h.RespondsToPing, "Sconosciuto", "Host LAN (solo ARP)")),
                 .IsGateway = h.IsGateway,
                 .IsLocalMachine = h.IsLocalMachine,
                 .OpenPortsCount = h.Ports.Count
             }
             info.OpenPorts.AddRange(h.Ports.Select(Function(p) p.Port))
+            info.OtherIpv4.AddRange(h.ExtraIps)
             Return info
         End Function
 
@@ -1180,26 +1192,60 @@ Namespace UI
                 h.Icon = _session.Hosts(idx).Icon
                 h.IconColor = _session.Hosts(idx).IconColor
                 If (h.Ipv6 Is Nothing OrElse h.Ipv6.Count = 0) AndAlso _session.Hosts(idx).Ipv6 IsNot Nothing Then h.Ipv6 = _session.Hosts(idx).Ipv6
+                ' riscansione del solo indirizzo principale: gli altri IPv4 dello stesso dispositivo restano
+                If (h.OtherIpv4 Is Nothing OrElse h.OtherIpv4.Count = 0) AndAlso _session.Hosts(idx).OtherIpv4 IsNot Nothing Then h.OtherIpv4 = _session.Hosts(idx).OtherIpv4
                 _session.Hosts(idx) = h
             Else
                 _session.Hosts.Add(h)
             End If
+            MergeOtherIpv4(h)
             ApplyOpenPorts(h, classifyFromPorts)
             Dim isNew = observe AndAlso _devices.Observe(h, network)
             Touch()
             Return isNew
         End Function
 
+        ''' <summary>
+        ''' Dispositivo con più IPv4 (stesso MAC): le righe della sessione degli indirizzi secondari spariscono nel principale,
+        ''' che prende nome, note e icona se non li ha. Le porte restano legate al loro indirizzo (pagina Porte).
+        ''' </summary>
+        Private Sub MergeOtherIpv4(h As HostInfo)
+            If h.OtherIpv4 Is Nothing OrElse h.OtherIpv4.Count = 0 Then Return
+            Dim mac = MacVendorLookup.Normalize(h.MacAddress)
+            For Each ip In h.OtherIpv4
+                Dim other = _session.Hosts.FirstOrDefault(Function(x) x IsNot h AndAlso x.IPAddress = ip)
+                If other Is Nothing Then Continue For
+                Dim otherMac = MacVendorLookup.Normalize(other.MacAddress)
+                If otherMac IsNot Nothing AndAlso Not String.Equals(otherMac, mac, StringComparison.OrdinalIgnoreCase) Then Continue For
+                If String.IsNullOrWhiteSpace(h.CustomName) Then h.CustomName = other.CustomName
+                If String.IsNullOrWhiteSpace(h.Notes) Then h.Notes = other.Notes
+                If String.IsNullOrWhiteSpace(h.Icon) Then
+                    h.Icon = other.Icon
+                    h.IconColor = other.IconColor
+                End If
+                If other.FirstSeen < h.FirstSeen Then h.FirstSeen = other.FirstSeen
+                _session.Hosts.Remove(other)
+                _netNew.RemoveAll(Function(x) x.IPAddress = ip)
+                _netFound.Remove(ip)
+            Next
+        End Sub
+
         ''' <summary>Porte aperte della sessione sull'host: il conteggio e, se richiesto, il tipo di dispositivo, che con le porte si riconosce meglio.</summary>
         Private Sub ApplyOpenPorts(h As HostInfo, Optional classify As Boolean = True)
-            Dim mine = _session.Ports.Where(Function(p) p.Host = h.IPAddress).ToList()
+            Dim addresses = New HashSet(Of String)(If(h.OtherIpv4, New List(Of String)())) From {h.IPAddress}
+            Dim mine = _session.Ports.Where(Function(p) addresses.Contains(p.Host)).GroupBy(Function(p) (p.PortNumber, p.Protocol)).Select(Function(g) g.First()).ToList()
             h.OpenPortsCount = mine.Count
-            Dim tcp = mine.Where(Function(p) p.Protocol = "TCP" AndAlso p.Status = "Open").Select(Function(p) p.PortNumber).Distinct().ToList()
-            If Not classify OrElse tcp.Count = 0 Then Return
-            Dim c = DeviceClassifier.Classify(h.MacVendor, h.Hostname, tcp, h.TTL, h.MacAddress)
+            Dim tcpPorts = mine.Where(Function(p) p.Protocol = "TCP" AndAlso p.Status = "Open").ToList()
+            If Not classify OrElse tcpPorts.Count = 0 Then Return
+            Dim probe = DeviceRegistry.ToDiscovered(h, tcpPorts.Select(Function(p) New OpenPort(p.PortNumber, "TCP", p.ServiceName, p.Banner)))
+            Dim c = DeviceClassifier.Classify(probe)
             h.DeviceType = c.DeviceType
             h.DeviceCategory = c.Category
             h.DeviceIcon = c.Icon
+            Dim os = DeviceClassifier.GuessOs(probe)
+            If os IsNot Nothing AndAlso (String.IsNullOrWhiteSpace(h.OSGuess) OrElse h.OSGuess = "Sconosciuto" OrElse os.StartsWith("Firmware ", StringComparison.Ordinal)) Then
+                h.OSGuess = os
+            End If
         End Sub
 
 #End Region
@@ -1261,14 +1307,14 @@ Namespace UI
             })
         End Function
 
-        Private Sub AddPort(p As PortInfo)
+        Private Sub AddPort(p As PortInfo, Optional touchSession As Boolean = True)
             Dim idx = _session.Ports.FindIndex(Function(x) x.Host = p.Host AndAlso x.PortNumber = p.PortNumber AndAlso x.Protocol = p.Protocol)
             If idx >= 0 Then
                 _session.Ports(idx) = p
             Else
                 _session.Ports.Add(p)
             End If
-            Touch()
+            If touchSession Then Touch()
         End Sub
 
         ''' <summary>Manda alla pagina l'avanzamento accumulato (timer da 120 ms, o subito alla fine della scansione).</summary>
@@ -1343,7 +1389,7 @@ Namespace UI
             Dim networkName As String = Nothing
             If networkNames IsNot Nothing AndAlso h.NetworkKey IsNot Nothing Then networkNames.TryGetValue(h.NetworkKey, networkName)
             Return New With {
-                .id = h.Id, .hostKey = h.HostKey, .mac = If(h.Mac, "").ToUpperInvariant(), .ip = h.Ip, .hostName = h.HostName, .netBios = h.NetBios, .workgroup = h.Workgroup,
+                .id = h.Id, .hostKey = h.HostKey, .mac = If(h.Mac, "").ToUpperInvariant(), .ip = h.Ip, .extraIps = h.ExtraIps, .hostName = h.HostName, .netBios = h.NetBios, .workgroup = h.Workgroup,
                 .vendor = h.Vendor, .deviceType = h.DeviceType, .category = h.Category, .osGuess = h.OsGuess, .isGateway = h.IsGateway, .isLocal = h.IsLocal,
                 .firstSeen = h.FirstSeen, .lastSeen = h.LastSeen, .seenCount = h.SeenCount, .missCount = h.MissCount, .ports = h.Ports, .latencyMs = h.LatencyMs,
                 .alias = h.[Alias], .trust = CInt(h.Trust), .notes = h.Notes, .icon = If(h.Icon, ""), .iconColor = If(h.IconColor, ""),

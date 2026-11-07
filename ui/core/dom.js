@@ -112,6 +112,50 @@ export function ipToNumber(s) {
   return ((+m[1]) * 16777216) + ((+m[2]) * 65536) + ((+m[3]) * 256) + (+m[4]);
 }
 
+/** Sottorete /24 di un indirizzo IPv4: «192.168.30.12» → «192.168.30.0/24». */
+export function subnetOf(ip) {
+  const m = IPV4.exec(String(ip || '').trim());
+  return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : '';
+}
+
+/** Elenco delle sottoreti /24 presenti in una lista, ordinate per indirizzo con il conteggio. */
+export function countSubnets(items, getIp) {
+  const counts = new Map();
+  for (const item of items || []) {
+    const sub = subnetOf(getIp(item));
+    if (sub) counts.set(sub, (counts.get(sub) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => (ipToNumber(a[0].split('/')[0]) || 0) - (ipToNumber(b[0].split('/')[0]) || 0));
+}
+
+/** Renderizza gli elementi raggruppati per sottorete /24 quando appartengono a più sottoreti. */
+export function renderBySubnet(items, getIp, renderItem, one, many) {
+  const groups = new Map();
+  for (const item of items) {
+    const g = subnetOf(getIp(item)) || '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(item);
+  }
+  if (groups.size <= 1) return items.map(renderItem).join('');
+  return [...groups.entries()]
+    .map(([g, list]) => `${g ? `<div class="subnet-head"><span class="mono"><b>${esc(g)}</b></span><span class="tag primary">${plural(list.length, one, many)}</span></div>` : ''}${list.map(renderItem).join('')}`)
+    .join('');
+}
+
+// forme giuridiche in coda al nome del produttore (GmbH, Co., Ltd., Inc., S.p.A., …): tolte una alla volta
+const LEGAL = /[\s,.]+(gmbh|co\.?,?\s*ltd\.?|ltd\.?|limited|inc\.?|incorporated|corp\.?|corporation|llc|l\.l\.c\.?|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?a\.?|a\.?g\.?|b\.?v\.?|n\.?v\.?|oy|ab|a\/s|kg|k\.?k\.?|co\.?|company|pty\.?|plc|technology\s+co\.?,?\s*ltd\.?)\s*$/i;
+
+/** Produttore senza le forme giuridiche: «Samsung Electronics Co.,Ltd» → «Samsung Electronics». */
+export function shortVendor(name) {
+  let s = String(name || '').trim();
+  for (let i = 0; i < 4; i++) {
+    const t = s.replace(LEGAL, '').replace(/[\s,]+$/, '');
+    if (t === s || t.length < 2) break;
+    s = t;
+  }
+  return s || String(name || '');
+}
+
 /** Indirizzo utile per scansioni e WHOIS (niente 0.0.0.0, loopback o "*"). */
 export function isRemoteAddress(s) {
   const v = String(s || '').trim();

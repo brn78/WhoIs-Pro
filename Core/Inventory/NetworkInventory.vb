@@ -1,7 +1,8 @@
-﻿Option Strict On
+Option Strict On
 
 Imports System.Text
 Imports System.Text.Json
+Imports System.Text.RegularExpressions
 Imports Microsoft.Data.Sqlite
 Imports WhoIsPro.Network.Scan
 Imports WhoIsPro.Utils
@@ -25,6 +26,8 @@ Namespace Inventory
         Public Property HostKey As String
         Public Property Mac As String
         Public Property Ip As String
+        ''' <summary>Altri indirizzi IPv4 dello stesso dispositivo (stesso MAC) nell'ultima scansione; vuoto se ne ha uno solo.</summary>
+        Public Property ExtraIps As IReadOnlyList(Of String) = Array.Empty(Of String)()
         Public Property HostName As String
         Public Property NetBios As String
         Public Property Workgroup As String
@@ -69,14 +72,34 @@ Namespace Inventory
             End Get
         End Property
 
-        ''' <summary>Porte sensibili esposte (Telnet, FTP, SMB, RDP, VNC, WinRM…): da verificare.</summary>
+        ''' <summary>Anno (due cifre) della build nei firmware Hikvision: «V5.5.82 build 190510» → 19.</summary>
+        Private Shared ReadOnly HikBuildYearPattern As New Regex("build\s*(\d{2})\d{4}\b", RegexOptions.IgnoreCase Or RegexOptions.CultureInvariant Or RegexOptions.Compiled)
+
+        ''' <summary>Porte sensibili esposte (Telnet, FTP, SMB, RDP, VNC, WinRM…) e avvisi di sicurezza Hikvision: da verificare.</summary>
         Public ReadOnly Property SensitivePorts As IReadOnlyList(Of String)
             Get
                 Dim found As New List(Of String)()
                 For Each p In Ports
                     Dim why As String = Nothing
                     If PortDictionary.SensitivePorts.TryGetValue(p.Port, why) Then found.Add($"{p.Port} · {why}")
+                    If Not String.IsNullOrEmpty(p.Banner) AndAlso p.Banner.Contains("NON ATTIVATO", StringComparison.OrdinalIgnoreCase) Then
+                        found.Add($"{p.Port} · Dispositivo Hikvision non attivato (senza password)")
+                    End If
                 Next
+                Dim isHik = (DeviceType IsNot Nothing AndAlso DeviceType.Contains("Hikvision", StringComparison.OrdinalIgnoreCase)) OrElse
+                            (Vendor IsNot Nothing AndAlso Vendor.Contains("Hikvision", StringComparison.OrdinalIgnoreCase)) OrElse
+                            Ports.Any(Function(p) p.Banner IsNot Nothing AndAlso p.Banner.Contains("Hikvision", StringComparison.OrdinalIgnoreCase))
+                If isHik Then
+                    Dim fwText = String.Join(" ", {OsGuess}.Concat(Ports.Select(Function(p) p.Banner)).Where(Function(s) Not String.IsNullOrEmpty(s)))
+                    Dim m = HikBuildYearPattern.Match(fwText)
+                    Dim yy As Integer
+                    If m.Success AndAlso Integer.TryParse(m.Groups(1).Value, yy) Then
+                        Dim buildYear = 2000 + yy
+                        If buildYear >= 2010 AndAlso buildYear <= DateTime.Now.Year - 5 Then
+                            found.Add($"Firmware datato (build {buildYear})")
+                        End If
+                    End If
+                End If
                 Return found
             End Get
         End Property
@@ -212,7 +235,7 @@ Namespace Inventory
 
 #Region "Campi"
 
-        Private Const HostColumns As String = "id, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, network_key"
+        Private Const HostColumns As String = "id, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, network_key, extra_ips"
         ''' <summary>Scansioni consecutive senza risposta prima di dichiarare un dispositivo assente.</summary>
         Public Const MissesBeforeGone As Integer = 2
         Private ReadOnly _store As InventoryStore
@@ -248,15 +271,25 @@ Namespace Inventory
 
         ''' <summary>Le reti conosciute con i loro numeri, dalla più recente.</summary>
         Public Function ListNetworks() As IReadOnlyList(Of NetNetworkRecord)
+            Return QueryNetworks(Nothing)
+        End Function
+
+        Public Function GetNetwork(key As String) As NetNetworkRecord
+            If String.IsNullOrEmpty(key) Then Return Nothing
+            Return QueryNetworks(key).FirstOrDefault()
+        End Function
+
+        Private Function QueryNetworks(onlyKey As String) As IReadOnlyList(Of NetNetworkRecord)
             SyncLock _lock
                 Dim list As New List(Of NetNetworkRecord)()
-                Using cmd = _store.Command("SELECT n.key, n.label, n.cidr, n.gateway_ip, n.gateway_mac, n.alias, n.first_seen, n.last_seen,
+                Dim sql = "SELECT n.key, n.label, n.cidr, n.gateway_ip, n.gateway_mac, n.alias, n.first_seen, n.last_seen,
                         (SELECT COUNT(*) FROM net_hosts h WHERE h.network_key = n.key),
                         (SELECT COUNT(*) FROM net_hosts h WHERE h.network_key = n.key AND h.last_scan_id IS NOT NULL AND h.last_scan_id = (SELECT MAX(s.id) FROM net_scans s WHERE s.network_key = n.key)),
                         (SELECT COUNT(*) FROM net_scans s WHERE s.network_key = n.key),
                         (SELECT s.started_at FROM net_scans s WHERE s.network_key = n.key ORDER BY s.id DESC LIMIT 1),
                         (SELECT COUNT(*) FROM net_events e WHERE e.network_key = n.key AND e.acknowledged = 0)
-                    FROM net_networks n ORDER BY n.last_seen DESC")
+                    FROM net_networks n" & If(onlyKey Is Nothing, " ORDER BY n.last_seen DESC", " WHERE n.key = $k")
+                Using cmd = If(onlyKey Is Nothing, _store.Command(sql), _store.Command(sql, ("$k", onlyKey)))
                     Using r = cmd.ExecuteReader()
                         While r.Read()
                             list.Add(New NetNetworkRecord With {
@@ -270,11 +303,6 @@ Namespace Inventory
                 End Using
                 Return list
             End SyncLock
-        End Function
-
-        Public Function GetNetwork(key As String) As NetNetworkRecord
-            If String.IsNullOrEmpty(key) Then Return Nothing
-            Return ListNetworks().FirstOrDefault(Function(n) n.Key = key)
         End Function
 
         ''' <summary>Nome dato dall'utente alla rete («Cliente Rossi»); vuoto = torna l'etichetta della scansione.</summary>
@@ -322,12 +350,16 @@ Namespace Inventory
                     _store.Execute("INSERT INTO net_scans(started_at, duration_ms, target, hosts_count, new_count, gone_count, changed_count, summary, network_key) VALUES ($t, $d, $g, $h, 0, 0, 0, '', $n)",
                                    ("$t", InventoryStore.ToIso(report.StartedAt)), ("$d", CLng(report.Duration.TotalMilliseconds)), ("$g", report.Target), ("$h", report.Hosts.Count), ("$n", net.Key))
                     Dim scanId = _store.LastInsertId()
+                    Dim lastScans = LastScanIds()
+                    lastScans(net.Key) = scanId
                     Dim diff As New ScanDiff With {.ScanId = scanId, .IsFirst = Not previousScanId.HasValue, .NetworkKey = net.Key, .NetworkLabel = net.Label}
                     Dim presentIds As New HashSet(Of Long)()
                     Dim keysThisScan As New HashSet(Of String)(StringComparer.Ordinal)
                     Dim nowIso = InventoryStore.ToIso(report.StartedAt)
                     ' porte provate in questa scansione (Nothing = non si sa: si confronta tutto); quelle non provate restano com'erano
                     Dim probed = If(report.ProbedPorts Is Nothing, Nothing, report.ProbedPorts.ToHashSet())
+                    ' dispositivi con più IPv4: le vecchie righe «ip:…» dei loro indirizzi secondari si assorbono nel principale
+                    Dim absorbed As New List(Of (Host As DiscoveredHost, Id As Long))()
 
                     For Each h In report.Hosts
                         ' lo stesso MAC su due indirizzi nella stessa scansione (router con più IP, alias): il secondo si tiene per IP
@@ -338,7 +370,7 @@ Namespace Inventory
                             byMac = False
                             keysThisScan.Add(key)
                         End If
-                        Dim existing = Locate(net, key, h.Ip, byMac)
+                        Dim existing = Locate(net, key, h.Ip, byMac, lastScans)
                         If existing IsNot Nothing AndAlso presentIds.Contains(existing.Id) Then existing = Nothing
                         Dim portsJson = JsonSerializer.Serialize(h.Ports)
                         Dim vendor = If(h.Vendor = MacVendorLookup.PrivateAddressLabel, Nothing, h.Vendor)
@@ -347,22 +379,26 @@ Namespace Inventory
 
                         If existing Is Nothing Then
                             _store.Execute("INSERT INTO net_hosts(network_key, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, os_guess, is_gateway, is_local,
-                                                                  first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, trust)
-                                            VALUES ($n, $k, $m, $ip, $hn, $nb, $wg, $v, $dt, $cat, $os, $gw, $loc, $t, $t, 1, 0, $s, $pj, $lat, 0)",
+                                                                  first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, trust, extra_ips)
+                                            VALUES ($n, $k, $m, $ip, $hn, $nb, $wg, $v, $dt, $cat, $os, $gw, $loc, $t, $t, 1, 0, $s, $pj, $lat, 0, $x)",
                                            ("$n", net.Key), ("$k", key), ("$m", MacVendorLookup.Normalize(h.Mac)), ("$ip", h.Ip), ("$hn", h.HostName), ("$nb", h.NetBiosName), ("$wg", h.NetBiosWorkgroup),
                                            ("$v", vendor), ("$dt", h.DeviceType), ("$cat", h.Category), ("$os", h.OsGuess), ("$gw", If(h.IsGateway, 1, 0)), ("$loc", If(h.IsLocalMachine, 1, 0)),
-                                           ("$t", nowIso), ("$s", scanId), ("$pj", portsJson), ("$lat", h.LatencyMs))
+                                           ("$t", nowIso), ("$s", scanId), ("$pj", portsJson), ("$lat", h.LatencyMs), ("$x", JoinIps(h)))
                             Dim id = _store.LastInsertId()
                             presentIds.Add(id)
-                            Dim record = [Get](id)
+                            If h.ExtraIps.Count > 0 Then absorbed.Add((h, id))
+                            Dim record = [Get](id, lastScans)
                             diff.NewHosts.Add(record)
                             AddEvent(net.Key, scanId, id, report.StartedAt, "nuovo", $"Nuovo dispositivo: {record.DisplayName}", NewDeviceDetails(h, vendor))
                             Continue For
                         End If
 
                         presentIds.Add(existing.Id)
+                        If h.ExtraIps.Count > 0 Then absorbed.Add((h, existing.Id))
                         Dim changes As New List(Of String)()
-                        If Not String.Equals(existing.Ip, h.Ip, StringComparison.Ordinal) Then changes.Add($"IP {existing.Ip} → {h.Ip}")
+                        ' l'indirizzo principale cambia tra quelli dello stesso dispositivo: non è un cambio di IP
+                        If Not String.Equals(existing.Ip, h.Ip, StringComparison.Ordinal) AndAlso Not h.ExtraIps.Contains(existing.Ip) AndAlso
+                           Not existing.ExtraIps.Contains(h.Ip) Then changes.Add($"IP {existing.Ip} → {h.Ip}")
                         Dim newName = If(h.NetBiosName, h.HostName)
                         Dim oldName = If(existing.NetBios, existing.HostName)
                         If newName IsNot Nothing AndAlso oldName IsNot Nothing AndAlso Not String.Equals(newName, oldName, StringComparison.OrdinalIgnoreCase) Then changes.Add($"nome {oldName} → {newName}")
@@ -381,13 +417,13 @@ Namespace Inventory
 
                         _store.Execute("UPDATE net_hosts SET network_key = $n, host_key = $k, mac = COALESCE($m, mac), ip = $ip, hostname = COALESCE($hn, hostname), netbios = COALESCE($nb, netbios),
                                             workgroup = COALESCE($wg, workgroup), vendor = COALESCE($v, vendor), device_type = $dt, category = $cat, os_guess = COALESCE($os, os_guess),
-                                            is_gateway = $gw, is_local = $loc, last_seen = $t, seen_count = seen_count + 1, miss_count = 0, last_scan_id = $s, ports_json = $pj, latency_ms = $lat
+                                            is_gateway = $gw, is_local = $loc, last_seen = $t, seen_count = seen_count + 1, miss_count = 0, last_scan_id = $s, ports_json = $pj, latency_ms = $lat, extra_ips = $x
                                         WHERE id = $id",
                                        ("$n", net.Key), ("$k", key), ("$m", MacVendorLookup.Normalize(h.Mac)), ("$ip", h.Ip), ("$hn", h.HostName), ("$nb", h.NetBiosName), ("$wg", h.NetBiosWorkgroup), ("$v", vendor),
                                        ("$dt", h.DeviceType), ("$cat", h.Category), ("$os", h.OsGuess), ("$gw", If(h.IsGateway, 1, 0)), ("$loc", If(h.IsLocalMachine, 1, 0)),
-                                       ("$t", nowIso), ("$s", scanId), ("$pj", portsJson), ("$lat", h.LatencyMs), ("$id", existing.Id))
+                                       ("$t", nowIso), ("$s", scanId), ("$pj", portsJson), ("$lat", h.LatencyMs), ("$x", JoinIps(h)), ("$id", existing.Id))
 
-                        Dim updated = [Get](existing.Id)
+                        Dim updated = [Get](existing.Id, lastScans)
                         If neverRecorded Then
                             diff.NewHosts.Add(updated)
                             AddEvent(net.Key, scanId, updated.Id, report.StartedAt, "nuovo", $"Nuovo dispositivo: {updated.DisplayName}", NewDeviceDetails(h, vendor))
@@ -404,9 +440,13 @@ Namespace Inventory
                         End If
                     Next
 
+                    For Each item In absorbed
+                        AbsorbSecondaryRecords(net.Key, item.Host, item.Id, presentIds, lastScans)
+                    Next
+
                     ' chi manca, in questa rete: un conteggio in più; «assente» alla seconda scansione consecutiva senza risposta (mai per questa macchina)
                     For Each id In knownBefore.Where(Function(x) Not presentIds.Contains(x))
-                        Dim host = [Get](id)
+                        Dim host = [Get](id, lastScans)
                         If host Is Nothing OrElse host.IsLocal OrElse host.NetworkKey <> net.Key Then Continue For
                         Dim misses = host.MissCount + 1
                         _store.Execute("UPDATE net_hosts SET miss_count = $n WHERE id = $id", ("$n", misses), ("$id", id))
@@ -423,6 +463,30 @@ Namespace Inventory
                 End Using
             End SyncLock
         End Function
+
+        ''' <summary>
+        ''' Le righe «ip:…» degli indirizzi secondari di un dispositivo (salvate quando ogni IP era una riga a sé) passano nel
+        ''' principale: nome, note e icona se il principale non li ha, la storia degli eventi; poi si tolgono, così non
+        ''' diventano «assenti» e non contano come dispositivi in più.
+        ''' </summary>
+        Private Sub AbsorbSecondaryRecords(networkKey As String, h As DiscoveredHost, primaryId As Long, presentIds As HashSet(Of Long), Optional lastScans As Dictionary(Of String, Long) = Nothing)
+            Dim mac = MacVendorLookup.Normalize(h.Mac)
+            Dim primary = [Get](primaryId, lastScans)
+            If primary Is Nothing Then Return
+            For Each ip In h.ExtraIps
+                Dim old = FindByKey(networkKey, "ip:" & ip, lastScans)
+                If old Is Nothing OrElse old.Id = primaryId Then Continue For
+                If old.Mac IsNot Nothing AndAlso Not String.Equals(old.Mac, mac, StringComparison.OrdinalIgnoreCase) Then Continue For
+                If String.IsNullOrWhiteSpace(primary.Alias) AndAlso Not String.IsNullOrWhiteSpace(old.Alias) Then SetAlias(primaryId, old.Alias)
+                If String.IsNullOrWhiteSpace(primary.Notes) AndAlso Not String.IsNullOrWhiteSpace(old.Notes) Then SetNotes(primaryId, old.Notes)
+                If String.IsNullOrWhiteSpace(primary.Icon) AndAlso Not String.IsNullOrWhiteSpace(old.Icon) Then SetIcon(primaryId, old.Icon, old.IconColor)
+                If old.FirstSeen < primary.FirstSeen Then _store.Execute("UPDATE net_hosts SET first_seen = $t WHERE id = $id", ("$t", InventoryStore.ToIso(old.FirstSeen)), ("$id", primaryId))
+                _store.Execute("UPDATE net_events SET host_id = $p WHERE host_id = $a", ("$p", primaryId), ("$a", old.Id))
+                _store.Execute("DELETE FROM net_hosts WHERE id = $a", ("$a", old.Id))
+                presentIds.Remove(old.Id)
+                primary = [Get](primaryId, lastScans)
+            Next
+        End Sub
 
         Private Shared Function NewDeviceDetails(h As DiscoveredHost, vendor As String) As String
             Return $"{h.Ip}{If(h.Mac Is Nothing, "", " · " & h.Mac)}{If(vendor Is Nothing, "", " · " & vendor)} · {h.DeviceType}" &
@@ -443,10 +507,10 @@ Namespace Inventory
         ''' riconosciuta solo dalla sottorete (vecchio registro, scansione senza il MAC del router). Una riga «ip:…» mai
         ''' confermata per lo stesso indirizzo (fase ping, senza MAC) si toglie: era lo stesso dispositivo.
         ''' </summary>
-        Private Function Locate(net As NetworkIdentity, key As String, ip As String, byMac As Boolean) As NetHostRecord
-            Dim existing = FindByKey(net.Key, key)
-            If existing Is Nothing AndAlso byMac Then existing = FindByKey(net.Key, "ip:" & ip)
-            If existing Is Nothing Then existing = Adopt(net, key, ip, byMac)
+        Private Function Locate(net As NetworkIdentity, key As String, ip As String, byMac As Boolean, Optional lastScans As Dictionary(Of String, Long) = Nothing) As NetHostRecord
+            Dim existing = FindByKey(net.Key, key, lastScans)
+            If existing Is Nothing AndAlso byMac Then existing = FindByKey(net.Key, "ip:" & ip, lastScans)
+            If existing Is Nothing Then existing = Adopt(net, key, ip, byMac, lastScans)
             If existing IsNot Nothing AndAlso byMac Then
                 _store.Execute("DELETE FROM net_hosts WHERE network_key = $n AND host_key = $k AND seen_count = 0 AND id <> $id", ("$n", net.Key), ("$k", "ip:" & ip), ("$id", existing.Id))
             End If
@@ -458,15 +522,15 @@ Namespace Inventory
         ''' precedenti, scansione con il router muto) che adesso compare nella rete con il router riconosciuto: passa a quella
         ''' rete con la sua storia, nome e note, invece di diventare un doppione. Un'altra sottorete è un'altra sede: non si tocca.
         ''' </summary>
-        Private Function Adopt(net As NetworkIdentity, key As String, ip As String, byMac As Boolean) As NetHostRecord
+        Private Function Adopt(net As NetworkIdentity, key As String, ip As String, byMac As Boolean, Optional lastScans As Dictionary(Of String, Long) = Nothing) As NetHostRecord
             If Not net.HasGateway Then Return Nothing
             For Each source In {"net:" & net.Cidr, NetworkIdentity.ForIp(ip).Key}.Distinct()
-                Dim candidate = FindByKey(source, key)
-                If candidate Is Nothing AndAlso byMac Then candidate = FindByKey(source, "ip:" & ip)
+                Dim candidate = FindByKey(source, key, lastScans)
+                If candidate Is Nothing AndAlso byMac Then candidate = FindByKey(source, "ip:" & ip, lastScans)
                 If candidate Is Nothing Then Continue For
                 _store.Execute("UPDATE net_hosts SET network_key = $n WHERE id = $id", ("$n", net.Key), ("$id", candidate.Id))
                 _store.Execute("UPDATE net_events SET network_key = $n WHERE host_id = $id", ("$n", net.Key), ("$id", candidate.Id))
-                Return [Get](candidate.Id)
+                Return [Get](candidate.Id, lastScans)
             Next
             Return Nothing
         End Function
@@ -486,9 +550,10 @@ Namespace Inventory
             Dim net = If(network, NetworkIdentity.ForIp(h.Ip))
             SyncLock _lock
                 EnsureNetworkCore(net, seenAt)
+                Dim lastScans = LastScanIds()
                 Dim key = KeyFor(h.Mac, h.Ip)
                 Dim byMac = Not key.StartsWith("ip:", StringComparison.Ordinal)
-                Dim existing = Locate(net, key, h.Ip, byMac)
+                Dim existing = Locate(net, key, h.Ip, byMac, lastScans)
                 Dim vendor = If(h.Vendor = MacVendorLookup.PrivateAddressLabel, Nothing, h.Vendor)
                 ' le porte si sommano a quelle note: solo una scansione registrata (RecordScan) decide quali si sono chiuse
                 Dim ports = h.Ports.ToList()
@@ -502,16 +567,19 @@ Namespace Inventory
                                    ("$n", net.Key), ("$k", key), ("$m", MacVendorLookup.Normalize(h.Mac)), ("$ip", h.Ip), ("$hn", h.HostName), ("$nb", h.NetBiosName), ("$wg", h.NetBiosWorkgroup),
                                    ("$v", vendor), ("$dt", h.DeviceType), ("$cat", h.Category), ("$os", h.OsGuess), ("$gw", If(h.IsGateway, 1, 0)), ("$loc", If(h.IsLocalMachine, 1, 0)),
                                    ("$t", nowIso), ("$pj", portsJson), ("$lat", h.LatencyMs))
-                    Return ([Get](_store.LastInsertId()), True)
+                    Return ([Get](_store.LastInsertId(), lastScans), True)
                 End If
+                ' un indirizzo secondario già noto dello stesso dispositivo non sposta il principale
+                Dim ip = If(existing.ExtraIps.Contains(h.Ip), existing.Ip, h.Ip)
                 _store.Execute("UPDATE net_hosts SET network_key = $n, host_key = $k, mac = COALESCE($m, mac), ip = $ip, hostname = COALESCE($hn, hostname), netbios = COALESCE($nb, netbios),
                                     workgroup = COALESCE($wg, workgroup), vendor = COALESCE($v, vendor), device_type = $dt, category = $cat, os_guess = COALESCE($os, os_guess),
-                                    is_gateway = $gw, is_local = $loc, last_seen = $t, ports_json = COALESCE($pj, ports_json), latency_ms = COALESCE($lat, latency_ms)
+                                    is_gateway = $gw, is_local = $loc, last_seen = $t, ports_json = COALESCE($pj, ports_json), latency_ms = COALESCE($lat, latency_ms),
+                                    extra_ips = COALESCE($x, extra_ips)
                                 WHERE id = $id",
-                               ("$n", net.Key), ("$k", key), ("$m", MacVendorLookup.Normalize(h.Mac)), ("$ip", h.Ip), ("$hn", h.HostName), ("$nb", h.NetBiosName), ("$wg", h.NetBiosWorkgroup), ("$v", vendor),
+                               ("$n", net.Key), ("$k", key), ("$m", MacVendorLookup.Normalize(h.Mac)), ("$ip", ip), ("$hn", h.HostName), ("$nb", h.NetBiosName), ("$wg", h.NetBiosWorkgroup), ("$v", vendor),
                                ("$dt", h.DeviceType), ("$cat", h.Category), ("$os", h.OsGuess), ("$gw", If(h.IsGateway, 1, 0)), ("$loc", If(h.IsLocalMachine, 1, 0)),
-                               ("$t", nowIso), ("$pj", portsJson), ("$lat", h.LatencyMs), ("$id", existing.Id))
-                Return ([Get](existing.Id), False)
+                               ("$t", nowIso), ("$pj", portsJson), ("$lat", h.LatencyMs), ("$x", JoinIps(h)), ("$id", existing.Id))
+                Return ([Get](existing.Id, lastScans), False)
             End SyncLock
         End Function
 
@@ -557,12 +625,13 @@ Namespace Inventory
             If items Is Nothing Then Return 0
             Dim imported = 0
             SyncLock _lock
+                Dim lastScans = LastScanIds()
                 Using tx = _store.BeginTransaction()
                     For Each d In items
                         Dim key = If(MacVendorLookup.Normalize(d.Mac), If(String.IsNullOrEmpty(d.Ip), Nothing, "ip:" & d.Ip))
                         If key Is Nothing Then Continue For
                         Dim net = NetworkIdentity.ForIp(d.Ip)
-                        If FindByKey(net.Key, key) IsNot Nothing Then Continue For
+                        If FindByKey(net.Key, key, lastScans) IsNot Nothing Then Continue For
                         EnsureNetworkCore(net, d.LastSeen)
                         _store.Execute("INSERT INTO net_hosts(network_key, host_key, mac, ip, hostname, vendor, device_type, category, first_seen, last_seen, seen_count, miss_count, trust, alias, notes, icon, icon_color)
                                         VALUES ($n, $k, $m, $ip, $hn, $v, $dt, $cat, $f, $l, $c, 0, 0, $a, $no, $ic, $col)",
@@ -609,10 +678,10 @@ Namespace Inventory
             End SyncLock
         End Function
 
-        Public Function [Get](id As Long) As NetHostRecord
+        Public Function [Get](id As Long, Optional lastScans As Dictionary(Of String, Long) = Nothing) As NetHostRecord
             Using cmd = _store.Command($"SELECT {HostColumns} FROM net_hosts WHERE id = $id", ("$id", id))
                 Using r = cmd.ExecuteReader()
-                    Return If(r.Read(), Read(r, LastScanIds()), Nothing)
+                    Return If(r.Read(), Read(r, If(lastScans, LastScanIds())), Nothing)
                 End Using
             End Using
         End Function
@@ -784,10 +853,10 @@ Namespace Inventory
             Return ids
         End Function
 
-        Private Function FindByKey(networkKey As String, key As String) As NetHostRecord
+        Private Function FindByKey(networkKey As String, key As String, Optional lastScans As Dictionary(Of String, Long) = Nothing) As NetHostRecord
             Using cmd = _store.Command($"SELECT {HostColumns} FROM net_hosts WHERE network_key = $n AND host_key = $k", ("$n", networkKey), ("$k", key))
                 Using r = cmd.ExecuteReader()
-                    Return If(r.Read(), Read(r, LastScanIds()), Nothing)
+                    Return If(r.Read(), Read(r, If(lastScans, LastScanIds())), Nothing)
                 End Using
             End Using
         End Function
@@ -810,7 +879,7 @@ Namespace Inventory
                 .IsGateway = r.GetInt32(11) = 1, .IsLocal = r.GetInt32(12) = 1, .FirstSeen = InventoryStore.Parse(r.GetString(13)), .LastSeen = InventoryStore.Parse(r.GetString(14)),
                 .SeenCount = r.GetInt32(15), .MissCount = r.GetInt32(16), .LastScanId = lastScan, .Ports = ports,
                 .LatencyMs = If(r.IsDBNull(19), CType(Nothing, Double?), r.GetDouble(19)), .[Alias] = Text(r, 20), .Trust = CType(r.GetInt32(21), HostTrust), .Notes = Text(r, 22),
-                .Icon = Text(r, 23), .IconColor = Text(r, 24), .NetworkKey = networkKey,
+                .Icon = Text(r, 23), .IconColor = Text(r, 24), .NetworkKey = networkKey, .ExtraIps = SplitIps(Text(r, 26)),
                 .IsOnline = lastScan.HasValue AndAlso lastScans.TryGetValue(networkKey, networkLast) AndAlso networkLast = lastScan.Value
             }
         End Function
@@ -819,9 +888,20 @@ Namespace Inventory
             Return If(r.IsDBNull(index), Nothing, r.GetString(index))
         End Function
 
+        ''' <summary>Elenco «a, b» della colonna extra_ips.</summary>
+        Private Shared Function SplitIps(value As String) As IReadOnlyList(Of String)
+            If String.IsNullOrWhiteSpace(value) Then Return Array.Empty(Of String)()
+            Return value.Split(","c, StringSplitOptions.RemoveEmptyEntries Or StringSplitOptions.TrimEntries)
+        End Function
+
+        ''' <summary>Valore della colonna extra_ips (Nothing se il dispositivo ha un solo indirizzo).</summary>
+        Private Shared Function JoinIps(h As DiscoveredHost) As String
+            Return If(h.ExtraIps.Count = 0, Nothing, String.Join(",", h.ExtraIps))
+        End Function
+
         Private Shared Function MatchesQuery(h As NetHostRecord, query As String) As Boolean
             Dim words = query.Split(" "c, StringSplitOptions.RemoveEmptyEntries Or StringSplitOptions.TrimEntries)
-            Dim hay = String.Join(" ", {h.Ip, h.Mac, h.HostName, h.NetBios, h.Workgroup, h.Vendor, h.DeviceType, h.Category, h.[Alias], h.Notes, h.OsGuess}.Where(Function(x) x IsNot Nothing))
+            Dim hay = String.Join(" ", {h.Ip, h.Mac, h.HostName, h.NetBios, h.Workgroup, h.Vendor, h.DeviceType, h.Category, h.[Alias], h.Notes, h.OsGuess}.Concat(h.ExtraIps).Where(Function(x) x IsNot Nothing))
             Dim compact = hay.Replace(":", "").Replace("-", "")
             Return words.All(Function(w) hay.Contains(w, StringComparison.OrdinalIgnoreCase) OrElse compact.Contains(w.Replace(":", "").Replace("-", ""), StringComparison.OrdinalIgnoreCase))
         End Function
