@@ -2,7 +2,7 @@
 // la fa il motore DiscoveryScanner (Core\Network\Scan) tramite il servizio di sorveglianza: alla fine aggiorna anche
 // l'archivio della rete (pagina Dispositivi) e qui arrivano le differenze.
 import { call, on } from '../core/bridge.js';
-import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp, subnetOf, countSubnets, renderBySubnet, shortVendor } from '../core/dom.js';
+import { $, esc, fmtMs, fmtNumber, fmtSeconds, fmtDateTime, matchesAll, plural, isIp, subnetOf, countSubnets, renderBySubnet, shortVendor, dhcpKind, dhcpTag } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, addScan, markDirty, bus, emit } from '../core/store.js';
@@ -144,7 +144,7 @@ function filteredHosts() {
   const sub = activeSubnetFilter();
   return S.data.hosts.filter((h) => (!sub || subnetOf(h.ipAddress) === sub)
     && byStatus(h, status)
-    && matchesAll(q, [h.customName, h.notes, h.ipAddress, subnetOf(h.ipAddress), h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || []), ...(h.otherIpv4 || [])]));
+    && matchesAll(q, [h.customName, h.notes, h.ipAddress, subnetOf(h.ipAddress), dhcpKind(h.ipAddress, currentNet()), h.hostname, h.netBiosName, h.workgroup, h.macAddress, h.macVendor, h.deviceType, h.deviceCategory, h.osGuess, ...(h.ipv6 || []), ...(h.otherIpv4 || [])]));
 }
 
 /** Nome del dispositivo da mostrare: NetBIOS, poi DNS. */
@@ -182,7 +182,7 @@ const columns = [
       <b class="trunc" title="${esc(h.customName ? `${h.customName} · ${h.deviceType}` : h.deviceType)}">${h.customName ? `<span class="custom-name">${esc(h.customName)}</span>` : esc(h.deviceType)}</b>
       <small class="trunc" title="${esc(h.deviceCategory || 'Altro')}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}">${isOffline(h) ? '<span class="offline-tag">non risponde</span> · ' : ''}${esc(h.deviceCategory || 'Altro')}${osShort(h.osGuess) ? ` · ${esc(osShort(h.osGuess))}` : ''}${h.isGateway ? ' · gateway' : ''}${h.isLocalMachine ? ' · questo PC' : ''}${nPorts ? ` · <b class="ports-count">${plural(nPorts, 'porta', 'porte')}</b>` : ''}</small></div></div>`;
   } },
-  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${otherIpsTag(h)}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
+  { key: 'ipAddress', label: 'Indirizzo IP', cls: 'mono strong-cell', cell: (h) => `${esc(h.ipAddress)}${otherIpsTag(h)}${dhcpTag(h.ipAddress, currentNet())}${(h.ipv6 || []).length ? ` <span class="tag v6" title="IPv6: ${esc(h.ipv6.join(', '))}">v6</span>` : ''}` },
   { key: 'hostname', label: 'Nome', value: hostName, cell: (h) => hostName(h) ? `<span class="trunc w-name" title="${esc(allNames(h))}">${esc(hostName(h))}</span>` : '<span class="faint">—</span>' },
   { key: 'macVendor', label: 'Produttore e MAC', cell: (h) => `<div class="cell-text">${vendorCell(h).replace('<span', '<b').replace(/<\/span>$/, '</b>')}<small class="mono">${h.macAddress ? esc(h.macAddress) : 'senza MAC'}</small></div>` },
   { key: 'responseTimeMs', label: 'Latenza', cls: 'num', cell: (h) => `<div class="cell-text cell-num">${latencyOrArp(h)}<small>${h.ttl ? `TTL ${h.ttl}` : 'TTL —'}</small></div>` },
@@ -333,7 +333,7 @@ function hostCard(h) {
     <div class="hc-main">
       <div class="hc-line hc-title" title="${esc(name)}${sub ? ` · ${esc(sub)}` : ''}${h.notes ? `\n${esc(h.notes)}` : ''}">${h.customName ? icon('tag', { size: 14 }) : ''}<b>${esc(name)}</b>${sub ? `<span class="hc-type">${esc(sub)}</span>` : ''}${tags}</div>
       <div class="hc-line">
-        <span class="hc-ip mono">${esc(h.ipAddress)}${otherIpsTag(h)}</span>
+        <span class="hc-ip mono">${esc(h.ipAddress)}${otherIpsTag(h)}${dhcpTag(h.ipAddress, currentNet())}</span>
         ${fact('Tipo', esc(tipo), '', tipo)}
         ${fact('MAC', h.macAddress ? `<span class="mono">${esc(h.macAddress)}</span> · ${vendor}` : '<span class="muted">non disponibile</span>', 'grow', macText)}
         ${fact('Risposta', `${h.respondsToPing === false ? '<span class="muted" title="Non risponde al ping: trovato nella tabella ARP">solo ARP</span>' : `<b class="tone-${latTone}">${lat > 0 ? fmtMs(lat) : '< 1 ms'}</b>`}${h.ttl ? ` · TTL ${h.ttl}` : ''}`)}
@@ -590,6 +590,8 @@ async function stop() {
 }
 
 function hostByIp(ip) { return S.data.hosts.find((h) => h.ipAddress === ip); }
+/** La rete in cui si trova il PC (dall'archivio), con l'eventuale intervallo DHCP dichiarato: per le etichette DHCP / fisso. */
+const currentNet = () => (S.st && S.st.inventory && S.st.inventory.network) || null;
 
 /** Telecamera, NVR o altro apparato Hikvision, dal tipo riconosciuto: per gli indirizzi RTSP nel formato Hikvision. */
 export const isHikvision = (h) => !!h && /hikvision/i.test(h.deviceType || '');

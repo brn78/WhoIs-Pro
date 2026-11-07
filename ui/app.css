@@ -481,8 +481,6 @@ input.input.has-value.on-clear {
   border-bottom: 1px solid var(--border);
 }
 .topbar .menu-toggle { display: none; }
-/* pulsante del tema (luna / sole) all'inizio della barra, prima del titolo della pagina */
-.topbar .theme-btn { flex: 0 0 auto; margin-left: -8px; }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 13px; }
 .crumbs .crumb-current { color: var(--text); font-weight: 620; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumbs .icon { width: 14px; height: 14px; color: var(--faint); }

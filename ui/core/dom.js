@@ -118,6 +118,48 @@ export function subnetOf(ip) {
   return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : '';
 }
 
+const CIDR = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/;
+
+/** Vero se l'indirizzo IPv4 sta nella rete «a.b.c.d/n». */
+export function inCidr(ip, cidr) {
+  const m = CIDR.exec(String(cidr || '').trim());
+  const n = ipToNumber(ip);
+  if (!m || n == null) return false;
+  const bits = +m[2];
+  const mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+  return ((ipToNumber(m[1]) & mask) >>> 0) === ((n & mask) >>> 0);
+}
+
+/** Vero se l'indirizzo sta nell'intervallo «primo-ultimo» (due IPv4 completi). */
+export function inIpRange(ip, range) {
+  const parts = String(range || '').split('-');
+  const n = ipToNumber(ip);
+  if (parts.length !== 2 || n == null) return false;
+  const a = ipToNumber(parts[0]);
+  const b = ipToNumber(parts[1]);
+  return a != null && b != null && n >= Math.min(a, b) && n <= Math.max(a, b);
+}
+
+/**
+ * «dhcp» se l'indirizzo sta nell'intervallo DHCP dichiarato per la rete (net.dhcpRange), «fisso» se sta fuori ma dentro
+ * la rete, '' se l'intervallo non è impostato o l'indirizzo è di un'altra rete.
+ */
+export function dhcpKind(ip, net) {
+  if (!net || !net.dhcpRange) return '';
+  const cidr = String(net.cidr || '').trim();
+  if (CIDR.test(cidr) && !inCidr(ip, cidr)) return '';
+  return inIpRange(ip, net.dhcpRange) ? 'dhcp' : 'fisso';
+}
+
+/** Etichetta «DHCP» o «fisso» da mettere accanto a un indirizzo, oppure niente. */
+export function dhcpTag(ip, net) {
+  const k = dhcpKind(ip, net);
+  if (!k) return '';
+  return k === 'dhcp'
+    ? ` <span class="tag" title="Indirizzo assegnato dal router: nell'intervallo DHCP ${esc(net.dhcpRange)}">DHCP</span>`
+    : ` <span class="tag primary" title="Indirizzo fisso: fuori dall'intervallo DHCP ${esc(net.dhcpRange)}">fisso</span>`;
+}
+
 /** Elenco delle sottoreti /24 presenti in una lista, ordinate per indirizzo con il conteggio. */
 export function countSubnets(items, getIp) {
   const counts = new Map();

@@ -111,6 +111,7 @@
       whoisServers: ['whois.nic.it', 'whois.verisign-grs.com', 'whois.ripe.net', 'whois.iana.org'],
     },
     running: { network: false, ports: false, trace: false, oui: false },
+    inventory: invWatch(),
     update: { current: '2.4.0', version: '2.4.0', available: false, checkedAt: ago(300), publishedAt: ago(3000), installed: true, hasSetup: true, pageUrl: 'https://github.com/brn78/WhoIs-Pro/releases/latest' },
     online: true, theme: 'auto', copyright: '© 2026 Bruno Leonardi. Tutti i diritti riservati.',
   });
@@ -156,7 +157,7 @@
   // archivio della rete (pagina Dispositivi): gli stessi host della sessione come li vede l'archivio, una seconda rete
   // visitata in passato, qualche cambiamento e le scansioni registrate
   const NET = 'gw:3c:a6:2f:11:22:01';
-  const invCurrent = { key: NET, label: '192.168.1.0/24 · FRITZ!Box', alias: 'Villa Bianchi', name: 'Villa Bianchi', hasGateway: true, cidr: '192.168.1.0/24' };
+  const invCurrent = { key: NET, label: '192.168.1.0/24 · FRITZ!Box', alias: 'Villa Bianchi', name: 'Villa Bianchi', hasGateway: true, cidr: '192.168.1.0/24', dhcpRange: '192.168.1.100-192.168.1.199' };
   const invNetworks = [
     { ...invCurrent, gatewayIp: '192.168.1.1', hostsCount: hosts.length, onlineCount: hosts.length - 1, scansCount: 6, lastScanAt: ago(4), lastSeen: ago(4), unseen: 2, isCurrent: true, isSession: true },
     { key: 'gw:aa:bb:cc:00:00:01', label: '192.168.50.0/24 · router', alias: 'Studio Verdi', name: 'Studio Verdi', hasGateway: true, cidr: '192.168.50.0/24', gatewayIp: '192.168.50.1', hostsCount: 3, onlineCount: 0, scansCount: 2, lastScanAt: ago(3000), lastSeen: ago(3000), unseen: 0, isCurrent: false, isSession: false },
@@ -221,6 +222,18 @@
     inventoryForget: (a) => { const h = invHost(a.id); invHosts.splice(invHosts.indexOf(h), 1); return inventory({ network: a.network }); },
     inventoryAck: (a) => { for (const e of invEvents) if (a.all || e.id === Number(a.id)) e.acknowledged = true; return { unseen: invEvents.filter((e) => !e.acknowledged).length, state: state() }; },
     inventoryNetwork: (a) => { const n = invNetworks.find((x) => x.key === a.key); if (n) { n.alias = a.alias || ''; n.name = n.alias || n.label; if (n.isCurrent) { invCurrent.alias = n.alias; invCurrent.name = n.name; } } return inventory({ network: a.key }); },
+    inventoryNetworkDhcp: (a) => {
+      const parts = String(a.range || '').replace(/\s+/g, '').split('-');
+      let range = null;
+      if (parts.length === 2 && parts[0]) {
+        const end = parts[1].includes('.') ? parts[1] : parts[0].replace(/\.\d+$/, `.${parts[1]}`);
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(parts[0]) || !/^\d+\.\d+\.\d+\.\d+$/.test(end)) throw new Error('Intervallo DHCP non valido: scrivi il primo e l\'ultimo indirizzo, per esempio «192.168.1.100-192.168.1.199» oppure «192.168.1.100-199».');
+        range = `${parts[0]}-${end}`;
+      } else if (a.range && String(a.range).trim()) throw new Error('Intervallo DHCP non valido: scrivi il primo e l\'ultimo indirizzo, per esempio «192.168.1.100-192.168.1.199» oppure «192.168.1.100-199».');
+      const n = invNetworks.find((x) => x.key === a.key);
+      if (n) { n.dhcpRange = range; if (n.isCurrent) invCurrent.dhcpRange = range; }
+      return inventory({ network: a.key });
+    },
     inventoryForgetNetwork: () => inventory({}),
     inventoryScan: () => ({ started: true, state: state() }),
     inventoryStop: () => null,

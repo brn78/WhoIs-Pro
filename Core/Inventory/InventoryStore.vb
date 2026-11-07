@@ -86,6 +86,7 @@ Namespace Inventory
                     gateway_ip   TEXT,
                     gateway_mac  TEXT,
                     alias        TEXT,
+                    dhcp_range   TEXT,
                     first_seen   TEXT NOT NULL,
                     last_seen    TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS net_hosts (
@@ -134,6 +135,8 @@ Namespace Inventory
             ' 2.8: altri IPv4 dello stesso dispositivo (stesso MAC), prima della ricostruzione per rete che copia tutte le colonne
             If Not hostColumns.Contains("extra_ips") Then Execute("ALTER TABLE net_hosts ADD COLUMN extra_ips TEXT")
             If Not hostColumns.Contains("network_key") Then MigrateToNetworks()
+            ' 2.8.2: intervallo DHCP dichiarato dall'utente per ogni rete
+            If Not Columns("net_networks").Contains("dhcp_range") Then Execute("ALTER TABLE net_networks ADD COLUMN dhcp_range TEXT")
         End Sub
 
         ''' <summary>

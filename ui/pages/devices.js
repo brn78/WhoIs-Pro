@@ -2,7 +2,7 @@
 // (alias, fiducia, note), cambiamenti tra una scansione e l'altra (nuovo, ricomparso, cambiato, assente) e storico delle
 // scansioni. La rete è il router (MAC) o, in mancanza, la sottorete; si apre su quella in cui si trova il PC.
 import { call, on } from '../core/bridge.js';
-import { $, $$, esc, fmtDateTime, fmtNumber, fmtSeconds, plural, subnetOf, countSubnets, renderBySubnet, shortVendor } from '../core/dom.js';
+import { $, $$, esc, fmtDateTime, fmtNumber, fmtSeconds, plural, subnetOf, countSubnets, renderBySubnet, shortVendor, dhcpKind, dhcpTag } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
@@ -84,7 +84,7 @@ function networkBar() {
   else if (selected && selected.isCurrent) where = '<span class="pill success pill-dot" title="L\'archivio di questa rete si aggiorna con le scansioni di adesso">Sei in questa rete</span>';
   else where = `<span class="pill warning pill-dot" title="Adesso sei in «${esc(cur.name)}»: questo è l'archivio di un'altra sede">Non sei in questa rete</span>`;
   const info = selected
-    ? `${selected.hasGateway ? `router ${esc(selected.label.split(' · ').slice(1).join(' · ') || selected.cidr || '')}` : 'riconosciuta dalla sottorete'}${selected.scansCount ? ` · ${plural(selected.scansCount, 'scansione', 'scansioni')}` : ''}${selected.lastScanAt ? ` · ultima ${fmtShort(selected.lastScanAt)}` : ''}`
+    ? `${selected.hasGateway ? `router ${esc(selected.label.split(' · ').slice(1).join(' · ') || selected.cidr || '')}` : 'riconosciuta dalla sottorete'}${selected.scansCount ? ` · ${plural(selected.scansCount, 'scansione', 'scansioni')}` : ''}${selected.lastScanAt ? ` · ultima ${fmtShort(selected.lastScanAt)}` : ''}${selected.dhcpRange ? ` · DHCP <span class="mono">${esc(selected.dhcpRange)}</span>` : ''}`
     : sel === '*' ? `${plural(nets.length, 'rete', 'reti')} in archivio` : '';
   return `<div class="net-bar">
     <span class="net-bar-label">${icon('network')} Rete</span>
@@ -92,6 +92,7 @@ function networkBar() {
       ${nets.map(opt).join('')}<option value="*" ${sel === '*' ? 'selected' : ''}>Tutte le reti · ${plural(total, 'dispositivo', 'dispositivi')}</option></select>
     ${where}
     ${sel !== '*' ? `<button class="btn btn-sm" data-action="net-rename" title="Dai un nome alla rete: il cliente, la sede. Vale anche per il file della sessione.">${icon('edit')} Rinomina</button>` : ''}
+    ${sel !== '*' ? `<button class="btn btn-sm" data-action="net-dhcp" title="Il primo e l'ultimo indirizzo che il router assegna da solo (DHCP), se li conosci: nelle liste compare «DHCP» o «fisso» accanto a ogni indirizzo">${icon('mapPin')} DHCP</button>` : ''}
     ${sel !== '*' && selected && !selected.isCurrent ? `<button class="btn btn-sm btn-danger-ghost" data-action="net-forget" title="Toglie dall'archivio la rete con i suoi dispositivi, la loro storia e le sue scansioni">${icon('trash')} Dimentica la rete</button>` : ''}
     <span class="net-bar-info muted">${info}</span>
   </div>`;
@@ -123,8 +124,15 @@ function hostRow(h) {
       <span class="dev-name"><b class="trunc" title="${esc(h.displayName)}">${esc(h.displayName)}</b>
         ${h.trust ? `<span class="pill ${t.tone}">${t.label.toLowerCase()}</span>` : ''}${h.isNew ? '<span class="pill warning">nuovo</span>' : ''}${allNetworks() && h.networkName ? `<span class="tag" title="Rete">${esc(h.networkName)}</span>` : ''}</span>
       <small class="trunc" title="${esc(sub)}">${esc(sub)}</small></span>
-    <span class="dev-state"><span class="state"><span class="dot ${h.isOnline ? 'on' : ''}"></span>${h.isOnline ? 'presente' : `ultima volta ${fmtShort(h.lastSeen)}`}</span><span class="mono">${esc(h.ip)}</span>${(h.extraIps || []).length ? ` <span class="tag" title="Stesso dispositivo (stesso MAC) anche su: ${esc(h.extraIps.join(', '))}">+${h.extraIps.length} IP</span>` : ''}</span>
+    <span class="dev-state"><span class="state"><span class="dot ${h.isOnline ? 'on' : ''}"></span>${h.isOnline ? 'presente' : `ultima volta ${fmtShort(h.lastSeen)}`}</span><span class="mono">${esc(h.ip)}</span>${(h.extraIps || []).length ? ` <span class="tag" title="Stesso dispositivo (stesso MAC) anche su: ${esc(h.extraIps.join(', '))}">+${h.extraIps.length} IP</span>` : ''}${dhcpTag(h.ip, networkOf(h))}</span>
   </button>`;
+}
+
+/** La rete di un dispositivo dell'archivio (per l'intervallo DHCP): tra quelle conosciute, oppure quella in cui si trova il PC. */
+function networkOf(h) {
+  const d = S.devices.data;
+  if (!d) return null;
+  return (d.networks || []).find((n) => n.key === h.network) || (d.current && d.current.key === h.network ? d.current : null);
 }
 
 function deviceSubnets() {
@@ -263,8 +271,10 @@ function detailCard() {
   const t = TRUST[h.trust] || TRUST[0];
   const sensitive = new Set((h.sensitivePorts || []).map((s) => Number(String(s).split(' ')[0])));
   const chip = (ic, text, title = '') => `<span class="chip" title="${esc(title || text)}">${icon(ic, { size: 13 })}${esc(text)}</span>`;
+  const addrKind = dhcpKind(h.ip, networkOf(h));
   const chips = [
     chip('mapPin', h.ip),
+    ...(addrKind ? [chip('mapPin', addrKind === 'dhcp' ? 'assegnato dal router (DHCP)' : 'indirizzo fisso', `Intervallo DHCP della rete: ${networkOf(h).dhcpRange}`)] : []),
     ...(h.extraIps || []).map((ip) => chip('mapPin', ip, `Altro IPv4 dello stesso dispositivo (stesso MAC): ${ip}`)),
     h.mac ? chip('tag', `${upperMac(h.mac)}${h.vendor ? ` · ${shortVendor(h.vendor)}` : ''}`, `${upperMac(h.mac)}${h.vendor ? ` · ${h.vendor}` : ''}`) : '',
     h.hostName ? chip('dns', h.hostName) : '',
@@ -496,6 +506,29 @@ async function renameNetwork() {
   } catch (err) { toastError(err, 'Nome non salvato'); }
 }
 
+/** «DHCP»: il primo e l'ultimo indirizzo che il router assegna da solo in questa rete; campo vuoto = intervallo tolto. */
+async function setDhcpRange() {
+  const d = S.devices.data;
+  if (!d || d.network === '*') return;
+  const n = shownNetwork();
+  const range = await promptDialog({
+    title: 'Intervallo DHCP della rete', sub: n ? n.label : shownNetworkName(),
+    label: 'Dal primo all\'ultimo indirizzo che il router assegna da solo (gli altri sono fissi)',
+    value: (n && n.dhcpRange) || '', placeholder: '192.168.1.100-192.168.1.199 oppure 192.168.1.100-199 · vuoto = non impostato',
+    ic: 'network', confirmText: 'Salva',
+  });
+  if (range == null) return;
+  try {
+    S.devices.data = await call('inventoryNetworkDhcp', { key: d.network, range: range.trim() });
+    S.devices.network = S.devices.data.network;
+    if (S.st) S.st.inventory = S.devices.data.watch;
+    rerender();
+    if (S.devices.selectedId) loadDetail(S.devices.selectedId);
+    toast(range.trim() ? 'Intervallo DHCP salvato: nelle liste gli indirizzi fuori dall\'intervallo sono segnati «fisso».' : 'Intervallo DHCP tolto.', { tone: 'success' });
+    bus.dispatchEvent(new Event('state'));
+  } catch (err) { toastError(err, 'Intervallo non salvato'); }
+}
+
 async function forgetNetwork() {
   const d = S.devices.data;
   const n = shownNetwork();
@@ -567,6 +600,7 @@ const actions = {
   'save-host': () => save(),
   'forget-host': () => forget(),
   'net-rename': () => renameNetwork(),
+  'net-dhcp': () => setDhcpRange(),
   'net-forget': () => forgetNetwork(),
   'host-ports': () => { const h = S.devices.detail && S.devices.detail.host; if (h) navigate('ports', { host: h.ip, start: true }); },
   'host-tools': (el) => {

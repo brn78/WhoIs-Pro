@@ -17,6 +17,13 @@ Su GitHub restano solo le ultime due release: le novità di tutte le versioni so
 - **Selezione multipla anche nella pagina Rete**, in Elenco e in Schede: **Seleziona** accanto a «Svuota», spunta sulle
   righe, **Tutti** (gli host visibili con ricerca e filtri) e **Nessuno**; poi **Riscansiona** i selezionati (quattro
   alla volta, un solo avviso alla fine con quanti rispondono) oppure **Rimuovi dalla sessione**, con conferma.
+- **Intervallo DHCP della rete**, facoltativo: in *Dispositivi*, accanto a «Rinomina», **DHCP** chiede il primo e
+  l'ultimo indirizzo che il router assegna da solo (`192.168.1.100-192.168.1.199`, o in breve `192.168.1.100-199`), per
+  chi lo conosce perché ha configurato lui il router. Da lì in poi, nell'archivio e nella pagina *Rete* (Elenco e
+  Schede), accanto all'indirizzo compare **DHCP** se sta nell'intervallo e **fisso** se sta fuori, e nella pagina Rete
+  si cerca anche scrivendo `dhcp` o `fisso`. Si toglie salvando il campo vuoto.
+- Il pulsante del tema (luna / sole) della 2.8.1 passa **in alto a destra**, accanto a *Rete del PC* e *Impostazioni*,
+  insieme agli altri comandi sempre a portata di mano.
 
 ## 2.8.1 · 7 novembre 2026
 

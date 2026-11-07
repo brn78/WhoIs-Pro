@@ -124,6 +124,24 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub DhcpRange_NormalizedStoredAndCleared()
+            Assert.That(NetworkInventory.NormalizeDhcpRange("192.168.1.100-199"), [Is].EqualTo("192.168.1.100-192.168.1.199"))
+            Assert.That(NetworkInventory.NormalizeDhcpRange(" 192.168.1.199 - 192.168.1.100 "), [Is].EqualTo("192.168.1.100-192.168.1.199"), "in ordine anche se scritto al contrario")
+            Assert.That(NetworkInventory.NormalizeDhcpRange("   "), [Is].Null)
+            Assert.Throws(Of ArgumentException)(Sub() NetworkInventory.NormalizeDhcpRange("192.168.1.100"))
+            Assert.Throws(Of ArgumentException)(Sub() NetworkInventory.NormalizeDhcpRange("192.168.1.100-300"))
+            Assert.Throws(Of ArgumentException)(Sub() NetworkInventory.NormalizeDhcpRange("casa-ufficio"))
+
+            store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
+            Dim net = store.Network.ListNetworks().Single()
+            Assert.That(net.DhcpRange, [Is].Null)
+            store.Network.SetNetworkDhcpRange(net.Key, "192.168.50.100-150")
+            Assert.That(store.Network.GetNetwork(net.Key).DhcpRange, [Is].EqualTo("192.168.50.100-192.168.50.150"))
+            store.Network.SetNetworkDhcpRange(net.Key, "")
+            Assert.That(store.Network.GetNetwork(net.Key).DhcpRange, [Is].Null, "campo vuoto = intervallo tolto")
+        End Sub
+
+        <Test>
         Public Sub BulkTrustAndDeleteHosts_ApplyToAllSelected()
             store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
             Dim all = store.Network.ListHosts()

@@ -215,7 +215,7 @@ Namespace UI
         Public Function NetworkView(network As NetworkIdentity) As Object
             If network Is Nothing Then Return Nothing
             Dim known = Inventory.GetNetwork(network.Key)
-            Return New With {.key = network.Key, .label = network.Label, .alias = known?.[Alias], .name = If(known?.DisplayName, network.Label), .hasGateway = network.HasGateway, .cidr = network.Cidr}
+            Return New With {.key = network.Key, .label = network.Label, .alias = known?.[Alias], .name = If(known?.DisplayName, network.Label), .hasGateway = network.HasGateway, .cidr = network.Cidr, .dhcpRange = known?.DhcpRange}
         End Function
 
         Public Event StateChanged As EventHandler

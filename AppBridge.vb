@@ -178,6 +178,7 @@ Namespace UI
                     If ArgFlag(args, "all") Then _store.Network.AcknowledgeAll(NetworkFilter(ArgText(args, "network"))) Else _store.Network.Acknowledge(ArgLong(args, "id"))
                     Return New With {.unseen = _store.Network.UnacknowledgedCount(NetworkFilter("")), .state = State()}
                 Case "inventoryNetwork" : Return RenameNetwork(ArgText(args, "key"), ArgText(args, "alias"))
+                Case "inventoryNetworkDhcp" : Return SetNetworkDhcp(ArgText(args, "key"), ArgText(args, "range"))
                 Case "inventoryForgetNetwork"
                     If _watch.IsScanning Then Throw New UserMessageException("C'è una scansione in corso: aspetta che finisca prima di dimenticare una rete.")
                     _store.Network.DeleteNetwork(ArgText(args, "key"))
@@ -1373,7 +1374,7 @@ Namespace UI
                 .network = If(filter, "*"),
                 .current = _watch.NetworkView(current),
                 .networks = networks.Select(Function(n) New With {
-                    .key = n.Key, .label = n.Label, .alias = n.[Alias], .name = n.DisplayName, .hasGateway = n.HasGateway, .cidr = n.Cidr, .gatewayIp = n.GatewayIp,
+                    .key = n.Key, .label = n.Label, .alias = n.[Alias], .name = n.DisplayName, .hasGateway = n.HasGateway, .cidr = n.Cidr, .gatewayIp = n.GatewayIp, .dhcpRange = n.DhcpRange,
                     .hostsCount = n.HostsCount, .onlineCount = n.OnlineCount, .scansCount = n.ScansCount, .lastScanAt = n.LastScanAt, .lastSeen = n.LastSeen, .unseen = n.Unseen,
                     .isCurrent = current IsNot Nothing AndAlso n.Key = current.Key, .isSession = n.Key = _session.NetworkKey
                 }).ToList(),
@@ -1431,6 +1432,17 @@ Namespace UI
             If String.IsNullOrEmpty(key) Then Throw New UserMessageException("Rete non indicata.")
             _store.Network.SetNetworkAlias(key, [alias])
             If String.Equals(_session.NetworkKey, key, StringComparison.Ordinal) Then _session.NetworkName = SessionNetworkName()
+            Return InventoryView("", False, key)
+        End Function
+
+        ''' <summary>Intervallo DHCP dichiarato dall'utente per una rete (vuoto = toglierlo): le pagine distinguono gli indirizzi assegnati dal router da quelli fissi.</summary>
+        Private Function SetNetworkDhcp(key As String, range As String) As Object
+            If String.IsNullOrEmpty(key) Then Throw New UserMessageException("Rete non indicata.")
+            Try
+                _store.Network.SetNetworkDhcpRange(key, range)
+            Catch ex As ArgumentException
+                Throw New UserMessageException(ex.Message)
+            End Try
             Return InventoryView("", False, key)
         End Function
 

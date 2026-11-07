@@ -121,6 +121,8 @@ Namespace Inventory
         Public Property GatewayMac As String
         ''' <summary>Nome dato dall'utente («Cliente Rossi», «Casa»).</summary>
         Public Property [Alias] As String
+        ''' <summary>Intervallo DHCP dichiarato dall'utente («192.168.1.100-192.168.1.199»): dentro gli indirizzi assegnati dal router, fuori quelli fissi. Nothing se non impostato.</summary>
+        Public Property DhcpRange As String
         Public Property FirstSeen As DateTime
         Public Property LastSeen As DateTime
         Public Property HostsCount As Integer
@@ -287,7 +289,8 @@ Namespace Inventory
                         (SELECT COUNT(*) FROM net_hosts h WHERE h.network_key = n.key AND h.last_scan_id IS NOT NULL AND h.last_scan_id = (SELECT MAX(s.id) FROM net_scans s WHERE s.network_key = n.key)),
                         (SELECT COUNT(*) FROM net_scans s WHERE s.network_key = n.key),
                         (SELECT s.started_at FROM net_scans s WHERE s.network_key = n.key ORDER BY s.id DESC LIMIT 1),
-                        (SELECT COUNT(*) FROM net_events e WHERE e.network_key = n.key AND e.acknowledged = 0)
+                        (SELECT COUNT(*) FROM net_events e WHERE e.network_key = n.key AND e.acknowledged = 0),
+                        n.dhcp_range
                     FROM net_networks n" & If(onlyKey Is Nothing, " ORDER BY n.last_seen DESC", " WHERE n.key = $k")
                 Using cmd = If(onlyKey Is Nothing, _store.Command(sql), _store.Command(sql, ("$k", onlyKey)))
                     Using r = cmd.ExecuteReader()
@@ -296,7 +299,8 @@ Namespace Inventory
                                 .Key = r.GetString(0), .Label = r.GetString(1), .Cidr = Text(r, 2), .GatewayIp = Text(r, 3), .GatewayMac = Text(r, 4), .[Alias] = Text(r, 5),
                                 .FirstSeen = InventoryStore.Parse(r.GetString(6)), .LastSeen = InventoryStore.Parse(r.GetString(7)),
                                 .HostsCount = r.GetInt32(8), .OnlineCount = r.GetInt32(9), .ScansCount = r.GetInt32(10),
-                                .LastScanAt = If(r.IsDBNull(11), CType(Nothing, DateTime?), InventoryStore.Parse(r.GetString(11))), .Unseen = r.GetInt32(12)
+                                .LastScanAt = If(r.IsDBNull(11), CType(Nothing, DateTime?), InventoryStore.Parse(r.GetString(11))), .Unseen = r.GetInt32(12),
+                                .DhcpRange = Text(r, 13)
                             })
                         End While
                     End Using
@@ -309,6 +313,34 @@ Namespace Inventory
         Public Sub SetNetworkAlias(key As String, [alias] As String)
             _store.Execute("UPDATE net_networks SET alias = $a WHERE key = $k", ("$a", Blank([alias])), ("$k", key))
         End Sub
+
+        ''' <summary>Intervallo DHCP della rete, già normalizzato con <see cref="NormalizeDhcpRange"/>; vuoto = non impostato.</summary>
+        Public Sub SetNetworkDhcpRange(key As String, range As String)
+            _store.Execute("UPDATE net_networks SET dhcp_range = $r WHERE key = $k", ("$r", NormalizeDhcpRange(range)), ("$k", key))
+        End Sub
+
+        ''' <summary>
+        ''' Intervallo DHCP scritto dall'utente, in forma «192.168.1.100-192.168.1.199» oppure «192.168.1.100-199» (anche con
+        ''' spazi attorno al trattino): torna «primo-ultimo» con i due indirizzi completi e in ordine; Nothing se vuoto.
+        ''' Testo non valido: ArgumentException con il messaggio per l'utente.
+        ''' </summary>
+        Public Shared Function NormalizeDhcpRange(text As String) As String
+            If String.IsNullOrWhiteSpace(text) Then Return Nothing
+            Dim parts = text.Replace(" ", "").Split("-"c)
+            Dim first As UInteger, last As UInteger, lastOctet As Integer
+            Dim ok = parts.Length = 2 AndAlso Ipv4.TryParse(parts(0), first)
+            If ok Then
+                If parts(1).Contains("."c) Then
+                    ok = Ipv4.TryParse(parts(1), last)
+                ElseIf Integer.TryParse(parts(1), lastOctet) AndAlso lastOctet >= 0 AndAlso lastOctet <= 255 Then
+                    last = (first And &HFFFFFF00UI) Or CUInt(lastOctet)
+                Else
+                    ok = False
+                End If
+            End If
+            If Not ok Then Throw New ArgumentException("Intervallo DHCP non valido: scrivi il primo e l'ultimo indirizzo, per esempio «192.168.1.100-192.168.1.199» oppure «192.168.1.100-199».", NameOf(text))
+            Return $"{Ipv4.Format(Math.Min(first, last))}-{Ipv4.Format(Math.Max(first, last))}"
+        End Function
 
         ''' <summary>«Dimentica la rete»: i suoi dispositivi, la loro storia e le sue scansioni spariscono.</summary>
         Public Sub DeleteNetwork(key As String)

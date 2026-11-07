@@ -114,7 +114,7 @@ campo per **ping e nslookup** al volo.
 **🎨 Un'interfaccia da tecnico**<br>
 Barra laterale grafite (chiara con il tema chiaro), LED quadrati come quelli delle porte di rete, numeri grandi e
 leggibili; tabelle ordinabili con le colonne **larghe quanto il contenuto** e le righe alternate, pannelli di dettaglio,
-menu e notifiche; **tema** automatico, chiaro o scuro, con il cambio al volo in alto a sinistra; **Impostazioni** e
+menu e notifiche; **tema** automatico, chiaro o scuro, con il cambio al volo in alto a destra; **Impostazioni** e
 **Rete del PC** sempre in alto; **icona nell'area di notifica** e avvio con Windows;
 scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 

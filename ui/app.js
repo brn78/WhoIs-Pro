@@ -102,7 +102,6 @@ function shell() {
     </aside>
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn theme-btn" id="theme-toggle" data-action="theme-toggle" title="${esc(themeButton().title)}">${themeButton().html}</button>
         <div class="topbar-title" id="topbar-title"></div>
         <div class="topbar-middle" id="topbar-middle">${activityChip()}</div>
         <div class="topbar-actions" id="topbar-actions">${topbarActions()}</div>
@@ -224,8 +223,8 @@ function sessionChip() {
 }
 
 /**
- * Pulsante del tema in alto a sinistra: mostra il tema a cui si passa con un clic (luna = scuro, sole = chiaro).
- * La scelta completa (anche «Automatico», che segue Windows) resta in Impostazioni → Generale → Tema.
+ * Pulsante del tema in alto a destra, accanto a Rete del PC e Impostazioni: mostra il tema a cui si passa con un clic
+ * (luna = scuro, sole = chiaro). La scelta completa (anche «Automatico», che segue Windows) resta in Impostazioni → Generale → Tema.
  */
 function themeButton() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -250,6 +249,7 @@ function topbarActions() {
   const st = S.st;
   return `${internetPill()}${sessionChip()}
     <span class="topbar-sep"></span>
+    <button class="icon-btn" id="theme-toggle" data-action="theme-toggle" title="${esc(themeButton().title)}">${themeButton().html}</button>
     <button class="icon-btn" data-action="pc-network" title="Rete del PC: schede, IP, gateway, DNS e profili">${icon('network')}</button>
     <button class="icon-btn ${S.page === 'settings' ? 'is-active' : ''}" data-action="go" data-page="settings" title="Impostazioni${st.update && st.update.available ? ' · nuova versione disponibile' : ''}">${icon('settings')}${st.update && st.update.available ? '<span class="dot-badge"></span>' : ''}</button>`;
 }
