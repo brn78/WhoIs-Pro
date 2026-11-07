@@ -5,6 +5,19 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.8.2 · 7 novembre 2026
+
+- **Dispositivi: la lista resta dov'era** quando si apre la scheda di un dispositivo. Prima, mentre la scheda si
+  caricava, la pagina veniva ridisegnata per intero e l'elenco tornava in cima: ora la scheda si sostituisce sul posto
+  e, nei casi in cui la pagina si ridisegna, l'elenco riprende dalla stessa posizione.
+- **Selezione multipla nell'archivio**: in *Dispositivi* il pulsante **Seleziona** accanto al conteggio fa spuntare più
+  dispositivi (anche **Tutti** quelli visibili, per esempio dopo una ricerca o con «solo presenti»); la barra sopra
+  l'elenco dà a tutti insieme la stessa fiducia (**Affidabile**, **Sospetto**, **Da classificare**) oppure li
+  **dimentica**, con conferma. **Fine** chiude la selezione e si torna ad aprire le schede con un clic.
+- **Selezione multipla anche nella pagina Rete**, in Elenco e in Schede: **Seleziona** accanto a «Svuota», spunta sulle
+  righe, **Tutti** (gli host visibili con ricerca e filtri) e **Nessuno**; poi **Riscansiona** i selezionati (quattro
+  alla volta, un solo avviso alla fine con quanti rispondono) oppure **Rimuovi dalla sessione**, con conferma.
+
 ## 2.8.1 · 7 novembre 2026
 
 - **Righe alternate** in tutte le tabelle (Rete in Elenco, Porte, DNS, Traceroute, Connessioni, Pacchetti, scansioni

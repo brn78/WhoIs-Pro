@@ -169,6 +169,7 @@ Namespace UI
                     Return Nothing
                 Case "inventory" : Return InventoryView(ArgText(args, "query"), ArgFlag(args, "onlyOnline"), ArgText(args, "network"))
                 Case "inventoryHost" : Return InventoryHost(ArgLong(args, "id"))
+                Case "inventoryBulk" : Return InventoryBulk(args)
                 Case "inventorySave" : Return InventorySave(args)
                 Case "inventoryForget"
                     _store.Network.DeleteHost(ArgLong(args, "id"))
@@ -1407,6 +1408,24 @@ Namespace UI
             Return New With {.host = HostView(h, isNew, names), .history = _store.Network.ListEvents(30, hostId:=id)}
         End Function
 
+        ''' <summary>
+        ''' Selezione multipla nell'elenco dei dispositivi: la stessa fiducia a tutti i selezionati, oppure «dimentica» per tutti.
+        ''' Torna l'archivio della rete mostrata, aggiornato.
+        ''' </summary>
+        Private Function InventoryBulk(args As JsonElement) As Object
+            Dim ids = ArgLongs(args, "ids")
+            If ids.Count = 0 Then Throw New UserMessageException("Nessun dispositivo selezionato.")
+            Select Case ArgText(args, "action")
+                Case "trust"
+                    _store.Network.SetTrust(ids, CType(Clamp(ArgNumber(args, "trust", 0), 0, 2), HostTrust))
+                Case "forget"
+                    _store.Network.DeleteHosts(ids)
+                Case Else
+                    Throw New UserMessageException("Operazione sconosciuta sui dispositivi selezionati.")
+            End Select
+            Return InventoryView("", False, ArgText(args, "network"))
+        End Function
+
         ''' <summary>Nome dato dall'utente a una rete («Cliente Rossi»): nell'archivio e, se è la rete della sessione, anche nella sessione.</summary>
         Private Function RenameNetwork(key As String, [alias] As String) As Object
             If String.IsNullOrEmpty(key) Then Throw New UserMessageException("Rete non indicata.")
@@ -2109,6 +2128,19 @@ Namespace UI
                 If value.ValueKind = JsonValueKind.String AndAlso Integer.TryParse(value.GetString(), n) Then Return n
             End If
             Return fallback
+        End Function
+
+        ''' <summary>Elenco di numeri interi (es. gli id dei dispositivi selezionati); vuoto se il campo manca o non è un elenco.</summary>
+        Private Shared Function ArgLongs(args As JsonElement, name As String) As List(Of Long)
+            Dim list As New List(Of Long)()
+            Dim value As JsonElement
+            If args.ValueKind = JsonValueKind.Object AndAlso args.TryGetProperty(name, value) AndAlso value.ValueKind = JsonValueKind.Array Then
+                For Each item In value.EnumerateArray()
+                    Dim n As Long
+                    If item.ValueKind = JsonValueKind.Number AndAlso item.TryGetInt64(n) Then list.Add(n)
+                Next
+            End If
+            Return list
         End Function
 
         Private Shared Function ArgLong(args As JsonElement, name As String) As Long

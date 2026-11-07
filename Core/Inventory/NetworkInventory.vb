@@ -705,6 +705,18 @@ Namespace Inventory
             _store.Execute("UPDATE net_hosts SET trust = $t WHERE id = $id", ("$t", CInt(trust)), ("$id", id))
         End Sub
 
+        ''' <summary>La stessa fiducia a più dispositivi (selezione multipla nell'elenco), in una transazione sola.</summary>
+        Public Sub SetTrust(ids As IEnumerable(Of Long), trust As HostTrust)
+            SyncLock _lock
+                Using tx = _store.BeginTransaction()
+                    For Each id In ids
+                        SetTrust(id, trust)
+                    Next
+                    tx.Commit()
+                End Using
+            End SyncLock
+        End Sub
+
         Public Sub SetNotes(id As Long, notes As String)
             _store.Execute("UPDATE net_hosts SET notes = $n WHERE id = $id", ("$n", Blank(notes)), ("$id", id))
         End Sub
@@ -720,6 +732,18 @@ Namespace Inventory
             SyncLock _lock
                 _store.Execute("DELETE FROM net_events WHERE host_id = $id", ("$id", id))
                 _store.Execute("DELETE FROM net_hosts WHERE id = $id", ("$id", id))
+            End SyncLock
+        End Sub
+
+        ''' <summary>«Dimentica» più dispositivi insieme (selezione multipla nell'elenco), con la loro storia, in una transazione sola.</summary>
+        Public Sub DeleteHosts(ids As IEnumerable(Of Long))
+            SyncLock _lock
+                Using tx = _store.BeginTransaction()
+                    For Each id In ids
+                        DeleteHost(id)
+                    Next
+                    tx.Commit()
+                End Using
             End SyncLock
         End Sub
 

@@ -57,8 +57,8 @@ Ogni scansione aggiorna l'archivio dei **dispositivi conosciuti** della rete in 
 **MAC del router** (la stessa 192.168.1.0/24 esiste in mille sedi), i dispositivi dal MAC (un cambio di IP resta lo
 stesso dispositivo). Nella pagina *Dispositivi* scegli la rete («qui» quella attuale, poi le altre visitate, o tutte),
 le dai un **nome** («Cliente Rossi», «Casa») e vedi i **cambiamenti** di quella sede: nuovo, ricomparso, cambiato,
-assente. A ogni dispositivo dai **nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**;
-la scheda mostra porte, storia e i servizi esposti **da verificare**. **Scansioni automatiche** a intervalli e
+assente. A ogni dispositivo dai **nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**,
+anche a più dispositivi insieme con **Seleziona**; la scheda mostra porte, storia e i servizi esposti **da verificare**. **Scansioni automatiche** a intervalli e
 **avvisi** in basso a destra quando compare un dispositivo nuovo o ne ricompare uno sospetto. La **sessione si salva
 da sola**, una per rete, e si riapre quando torni in quella rete.
 

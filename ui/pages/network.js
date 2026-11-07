@@ -17,6 +17,8 @@ S.net = {
   autoPorts: true,     // porte TCP degli host trovati, nella stessa scansione (servono anche a riconoscere il dispositivo)
   autoPreset: 'TOP20', // gruppo di porte per autoPorts
   q: '', subnet: '', sort: { key: 'ipAddress', dir: 1 },
+  selectMode: false,   // selezione multipla: le righe (o le schede) si spuntano e la barra sopra l'elenco agisce su tutte
+  selected: new Set(), // indirizzi degli host spuntati
   progress: null, done: null, fresh: new Set(),
   rescanning: new Set(), // indirizzi riscansionati uno per uno, in corso
   nextAt: 0, repeatTimer: 0,
@@ -236,11 +238,13 @@ function rescanButton(ip, big = false) {
 }
 
 /** Riscansione di un solo indirizzo: aggiorna la riga (e il pannello di dettaglio, se è aperto). */
-async function rescan(ip) {
-  if (S.net.rescanning.has(ip)) return;
+/** Riscansione di un host; con quiet niente avvisi (li dà chi riscansiona più host insieme). Torna vero se risponde. */
+async function rescan(ip, { quiet = false } = {}) {
+  if (S.net.rescanning.has(ip)) return false;
   S.net.rescanning.add(ip);
   renderTable();
   refreshDrawer(ip);
+  let online = false;
   try {
     const res = await call('rescanHost', { ip, timeout: S.net.timeout, resolveDns: S.net.resolveDns });
     adopt({ state: res.state });
@@ -251,10 +255,12 @@ async function rescan(ip) {
     addScan(res.scan);
     markDirty();
     emit('data', { list: 'hosts' });
-    if (res.online) toast(`${ip}${res.host && res.host.hostname ? ` (${res.host.hostname})` : ''} risponde${res.host.responseTimeMs > 0 ? ` in ${fmtMs(res.host.responseTimeMs)}` : ' in meno di 1 ms'}.`, { tone: 'success', title: 'Host aggiornato' });
+    online = !!res.online;
+    if (quiet) { /* un solo avviso alla fine, da chi ha chiesto la riscansione di gruppo */ }
+    else if (res.online) toast(`${ip}${res.host && res.host.hostname ? ` (${res.host.hostname})` : ''} risponde${res.host.responseTimeMs > 0 ? ` in ${fmtMs(res.host.responseTimeMs)}` : ' in meno di 1 ms'}.`, { tone: 'success', title: 'Host aggiornato' });
     else toast(res.host ? 'Non risponde né ad ARP né al ping: resta nella sessione segnato come «non risponde».' : 'Non risponde né ad ARP né al ping.', { tone: 'warning', title: `${ip} non risponde` });
   } catch (err) {
-    toastError(err, 'Riscansione non riuscita');
+    if (!quiet) toastError(err, 'Riscansione non riuscita');
   }
   S.net.rescanning.delete(ip);
   // la riga resta dov'era (lo scorrimento non torna in cima) e si illumina per un attimo
@@ -262,6 +268,7 @@ async function rescan(ip) {
   renderTable();
   setTimeout(() => { S.net.fresh.delete(ip); }, 2000);
   refreshDrawer(ip);
+  return online;
 }
 
 /** Il pannello di dettaglio aperto su quell'host si ridisegna con i dati nuovi. */
@@ -320,8 +327,9 @@ function hostCard(h) {
   const tipo = `${h.deviceCategory || 'Altro'}${h.osGuess ? ` · ${osShort(h.osGuess)}` : ''}`;
   const macText = h.macAddress ? `${h.macAddress} · ${h.macVendor === PRIVATE_MAC ? 'MAC privato, produttore non noto' : h.macVendor}` : 'non disponibile, host fuori dalla rete locale';
   const seen = `${shortWhen(h.firstSeen)}${h.lastSeen && shortWhen(h.lastSeen) !== shortWhen(h.firstSeen) ? ` · visto ${shortWhen(h.lastSeen)}` : ''}`;
-  return `<article class="host-card ${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}" data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}">
-    ${catIcon(h, true)}
+  const checked = S.net.selectMode && S.net.selected.has(h.ipAddress);
+  return `<article class="host-card ${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''} ${checked ? 'is-checked' : ''}" data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}">
+    ${S.net.selectMode ? checkMark(checked) : ''}${catIcon(h, true)}
     <div class="hc-main">
       <div class="hc-line hc-title" title="${esc(name)}${sub ? ` · ${esc(sub)}` : ''}${h.notes ? `\n${esc(h.notes)}` : ''}">${h.customName ? icon('tag', { size: 14 }) : ''}<b>${esc(name)}</b>${sub ? `<span class="hc-type">${esc(sub)}</span>` : ''}${tags}</div>
       <div class="hc-line">
@@ -361,10 +369,83 @@ function tableHtml() {
     return `<div class="table-wrap scan-h host-cards">${html}</div>`;
   }
   return table({
-    columns, rows, sort: S.net.sort, cls: 'scan-h',
+    columns: S.net.selectMode ? [SELECT_COLUMN, ...columns] : columns, rows, sort: S.net.sort, cls: 'scan-h',
     groupBy: groupSubnets ? (h) => subnetOf(h.ipAddress) : null,
-    rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''}"`,
+    rowAttrs: (h) => `data-action="host-details" data-ctx="host" data-ip="${esc(h.ipAddress)}" class="${S.net.fresh.has(h.ipAddress) ? 'is-new' : ''} ${isOffline(h) ? 'is-offline' : ''} ${S.net.selectMode && S.net.selected.has(h.ipAddress) ? 'is-checked' : ''}"`,
   }).replace('<table class="dt">', '<table class="dt clickable">');
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Selezione multipla: spunta sulle righe o sulle schede, barra con Tutti / Nessuno, Riscansiona e Rimuovi dalla sessione
+// ---------------------------------------------------------------------------------------------------------------------
+const checkMark = (on) => `<span class="dev-check ${on ? 'is-on' : ''}" aria-hidden="true">${icon('check', { size: 12 })}</span>`;
+const SELECT_COLUMN = { key: 'sel', label: '', sortable: false, cls: 'dt-sel', cell: (h) => checkMark(S.net.selected.has(h.ipAddress)) };
+
+/** Pulsante Seleziona / Fine accanto a «Svuota»; nella barra sotto, quanti sono spuntati e le azioni su tutti insieme. */
+function selectToggleHtml() {
+  const on = S.net.selectMode;
+  return `${icon(on ? 'close' : 'check', { size: 14 })} ${on ? 'Fine' : 'Seleziona'}`;
+}
+
+function netBulkBar() {
+  for (const ip of [...S.net.selected]) if (!hostByIp(ip)) S.net.selected.delete(ip);
+  const n = S.net.selected.size;
+  const dis = n ? '' : 'disabled';
+  const busy = S.net.rescanning.size ? 'disabled' : '';
+  return `<div class="bulk-bar" id="net-bulk-bar">
+    <span class="bulk-count">${n ? `<b>${n}</b> ${n === 1 ? 'selezionato' : 'selezionati'}` : 'Spunta gli host nell\'elenco'}</span>
+    <button class="btn btn-sm btn-ghost" data-action="net-sel-all" title="Spunta tutti gli host visibili (con la ricerca e i filtri attuali)">Tutti</button>
+    <button class="btn btn-sm btn-ghost" data-action="net-sel-none" ${dis}>Nessuno</button>
+    <span class="spacer"></span>
+    <button class="btn btn-sm" data-action="net-bulk-rescan" ${dis || busy} title="Ping, ARP, nomi e porte di nuovo, solo sugli host selezionati">${icon('refresh', { size: 14 })} Riscansiona</button>
+    <button class="btn btn-sm btn-danger-ghost" data-action="net-bulk-remove" ${dis} title="Toglie gli host selezionati dalla sessione (le porte trovate restano)">${icon('trash', { size: 14 })} Rimuovi dalla sessione</button>
+  </div>`;
+}
+
+function refreshNetBulk() {
+  const box = $('#net-bulk');
+  if (box) box.innerHTML = S.net.selectMode ? netBulkBar() : '';
+  const btn = $('#net-select-btn');
+  if (btn) {
+    btn.innerHTML = selectToggleHtml();
+    btn.classList.toggle('is-active', S.net.selectMode);
+    btn.title = S.net.selectMode ? 'Chiude la selezione multipla' : 'Spunta più host per riscansionarli o toglierli dalla sessione insieme';
+  }
+}
+
+function netToggleSelect(ip) {
+  if (S.net.selected.has(ip)) S.net.selected.delete(ip); else S.net.selected.add(ip);
+  renderTable();
+  refreshNetBulk();
+}
+
+/** Riscansione degli host selezionati, quattro alla volta, con un solo avviso alla fine. */
+async function netBulkRescan() {
+  const ips = [...S.net.selected].filter((ip) => !S.net.rescanning.has(ip));
+  if (!ips.length) return;
+  refreshNetBulk();
+  let online = 0;
+  const queue = ips.slice();
+  const worker = async () => { while (queue.length) { if (await rescan(queue.shift(), { quiet: true })) online += 1; } };
+  await Promise.all([0, 1, 2, 3].map(worker));
+  refreshNetBulk();
+  const silent = ips.length - online;
+  toast(`${plural(ips.length, 'host riscansionato', 'host riscansionati')}: ${online} ${online === 1 ? 'risponde' : 'rispondono'}${silent ? `, ${silent} no` : ''}.`, { tone: silent ? 'warning' : 'success', title: 'Riscansione completata' });
+}
+
+async function netBulkRemove() {
+  const ips = [...S.net.selected];
+  if (!ips.length) return;
+  const ok = await confirmDialog({ title: `Togliere ${plural(ips.length, 'host', 'host')} dalla sessione?`, message: 'Gli host selezionati spariscono dall\'elenco di questa sessione; le porte trovate restano e l\'archivio della rete non cambia.', confirmText: 'Rimuovi', tone: 'danger' });
+  if (!ok) return;
+  try {
+    for (const ip of ips) adopt(await call('removeHost', { ip }));
+    S.net.selected.clear();
+    closeOverlays();
+    renderTable();
+    refreshNetBulk();
+    toast(`${plural(ips.length, 'host tolto', 'host tolti')} dalla sessione.`, { tone: 'success' });
+  } catch (err) { toastError(err); }
 }
 
 /** Ordina per, verso e Schede / Tabella, accanto alla ricerca. */
@@ -410,8 +491,10 @@ function tableCard() {
       <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.net.q)}" placeholder="Cerca IP, nome, MAC, produttore, tipo…" title="Più parole: devono comparire tutte. Cerca anche negli indirizzi IPv6." autocomplete="off"></div>
       <div class="view-controls" id="view-controls">${viewControls()}</div>
       <div class="toolbar-actions"><span class="toolbar-info" id="hosts-info"></span>
+        <button class="btn btn-sm ${S.net.selectMode ? 'is-active' : ''}" id="net-select-btn" data-action="net-select" title="${S.net.selectMode ? 'Chiude la selezione multipla' : 'Spunta più host per riscansionarli o toglierli dalla sessione insieme'}">${selectToggleHtml()}</button>
         <button class="btn btn-sm" data-action="clear-hosts" ${S.data.hosts.length ? '' : 'disabled'}>${icon('trash')} Svuota</button></div>
     </div>
+    <div id="net-bulk">${S.net.selectMode ? netBulkBar() : ''}</div>
     <div id="hosts-table">${tableHtml()}</div>
     <div class="table-foot">${icon('info', { size: 14 })} Clic su un dispositivo per i dettagli; tasto destro (o ⋯) per porte, WHOIS, traceroute, browser, cartelle condivise, Desktop remoto, SSH e ping.</div>
   </section>`;
@@ -666,14 +749,19 @@ const actions = {
   },
   'clear-hosts': async () => {
     if (!(await confirmDialog({ title: 'Svuotare l\'elenco degli host?', message: `${plural(S.data.hosts.length, 'host', 'host')} verranno tolti dalla sessione. Le porte trovate restano.`, confirmText: 'Svuota', tone: 'danger' }))) return;
-    try { adopt(await call('clearList', { list: 'hosts' })); S.net.done = null; S.net.editing = false; renderTable(); renderForm(); } catch (err) { toastError(err); }
+    try { adopt(await call('clearList', { list: 'hosts' })); S.net.done = null; S.net.editing = false; S.net.selected.clear(); renderTable(); renderForm(); refreshNetBulk(); } catch (err) { toastError(err); }
   },
   'host-menu': (el) => hostMenu(el, el.dataset.ip),
   'host-rescan': (el) => rescan(el.dataset.ip),
   'sort-dir': () => { const s = S.net.sort || { key: 'ipAddress', dir: 1 }; S.net.sort = { key: s.key, dir: -s.dir }; saveView(); renderTable(); refreshControls(); },
   'net-status': (el) => { S.net.status = el.dataset.status; saveView(); renderTable(); refreshControls(); },
   'net-view': (el) => { S.net.view = el.dataset.view; saveView(); renderTable(); refreshControls(); },
-  'host-details': (el) => details(el.dataset.ip),
+  'host-details': (el) => { if (S.net.selectMode) netToggleSelect(el.dataset.ip); else details(el.dataset.ip); },
+  'net-select': () => { S.net.selectMode = !S.net.selectMode; S.net.selected.clear(); renderTable(); refreshNetBulk(); },
+  'net-sel-all': () => { for (const h of filteredHosts()) S.net.selected.add(h.ipAddress); renderTable(); refreshNetBulk(); },
+  'net-sel-none': () => { S.net.selected.clear(); renderTable(); refreshNetBulk(); },
+  'net-bulk-rescan': () => netBulkRescan(),
+  'net-bulk-remove': () => netBulkRemove(),
   'host-ports': (el) => navigate('ports', { host: el.dataset.ip, start: true }),
   'host-whois': (el) => navigate('whois', { target: el.dataset.ip, start: true }),
   'host-trace': (el) => navigate('trace', { target: el.dataset.ip, start: true }),

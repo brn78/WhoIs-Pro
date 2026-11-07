@@ -24,15 +24,16 @@ export function sortRows(rows, columns, sort) {
 }
 
 /**
- * Ridisegna una tabella dentro box (innerHTML) tenendo la posizione di scorrimento: senza, ogni aggiornamento
- * (riscansione di un host, porte che arrivano) riporterebbe l'elenco all'inizio.
+ * Ridisegna il contenuto di box (innerHTML) tenendo la posizione di scorrimento dell'elemento che scorre al suo interno
+ * (la tabella, oppure un altro contenitore indicato con selector): senza, ogni aggiornamento (riscansione di un host,
+ * porte che arrivano, scheda di un dispositivo) riporterebbe l'elenco all'inizio.
  */
-export function replaceKeepingScroll(box, html) {
-  const old = box.querySelector('.table-wrap');
+export function replaceKeepingScroll(box, html, selector = '.table-wrap') {
+  const old = box.querySelector(selector);
   const top = old ? old.scrollTop : 0;
   const left = old ? old.scrollLeft : 0;
   box.innerHTML = html;
-  const wrap = box.querySelector('.table-wrap');
+  const wrap = box.querySelector(selector);
   if (wrap) { wrap.scrollTop = top; wrap.scrollLeft = left; }
 }
 

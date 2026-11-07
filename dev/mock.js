@@ -153,7 +153,77 @@
     gpu: 'Intel(R) Iris(R) Xe Graphics', serialPorts: [{ port: 'COM3', device: 'USB Serial Port', bus: 'USB', driver: 'FTDI' }],
   });
 
+  // archivio della rete (pagina Dispositivi): gli stessi host della sessione come li vede l'archivio, una seconda rete
+  // visitata in passato, qualche cambiamento e le scansioni registrate
+  const NET = 'gw:3c:a6:2f:11:22:01';
+  const invCurrent = { key: NET, label: '192.168.1.0/24 · FRITZ!Box', alias: 'Villa Bianchi', name: 'Villa Bianchi', hasGateway: true, cidr: '192.168.1.0/24' };
+  const invNetworks = [
+    { ...invCurrent, gatewayIp: '192.168.1.1', hostsCount: hosts.length, onlineCount: hosts.length - 1, scansCount: 6, lastScanAt: ago(4), lastSeen: ago(4), unseen: 2, isCurrent: true, isSession: true },
+    { key: 'gw:aa:bb:cc:00:00:01', label: '192.168.50.0/24 · router', alias: 'Studio Verdi', name: 'Studio Verdi', hasGateway: true, cidr: '192.168.50.0/24', gatewayIp: '192.168.50.1', hostsCount: 3, onlineCount: 0, scansCount: 2, lastScanAt: ago(3000), lastSeen: ago(3000), unseen: 0, isCurrent: false, isSession: false },
+  ];
+  const invHosts = hosts.map((h, i) => ({
+    id: i + 1, hostKey: `mac:${h.macAddress.toLowerCase()}`, mac: h.macAddress, ip: h.ipAddress, extraIps: h.ipAddress === '192.168.1.40' ? ['192.168.1.42'] : [],
+    hostName: h.hostname, netBios: h.hostname === 'PC-UFFICIO' ? 'PC-UFFICIO' : '', workgroup: h.hostname === 'PC-UFFICIO' ? 'WORKGROUP' : '',
+    vendor: h.macVendor === 'MAC privato (casuale)' ? null : h.macVendor, deviceType: h.deviceType, category: h.deviceCategory, osGuess: h.osGuess,
+    isGateway: h.ipAddress === '192.168.1.1', isLocal: h.ipAddress === '192.168.1.80', firstSeen: h.firstSeen, lastSeen: h.lastSeen,
+    seenCount: h.status === 'Offline' ? 4 : 6, missCount: h.status === 'Offline' ? 2 : 0,
+    ports: ports.filter((p) => p.host === h.ipAddress && p.protocol === 'TCP').map((p) => ({ port: p.portNumber, protocol: 'TCP', service: p.serviceName, banner: p.banner })),
+    latencyMs: h.responseTimeMs, alias: '', trust: 0, notes: '', icon: '', iconColor: '', isOnline: h.status !== 'Offline',
+    displayName: h.hostname || h.ipAddress, isNew: i >= hosts.length - 2, sensitivePorts: [], network: NET, networkName: 'Villa Bianchi',
+  }));
+  Object.assign(invHosts.find((h) => h.ip === '192.168.1.10'), { alias: 'NAS ufficio', trust: 1, displayName: 'NAS ufficio', sensitivePorts: ['445 · SMB: condivisioni di file esposte'] });
+  Object.assign(invHosts.find((h) => h.ip === '192.168.1.80'), { sensitivePorts: ['3389 · Desktop remoto (RDP)'] });
+  Object.assign(invHosts.find((h) => h.ip === '192.168.1.102'), { trust: 2, notes: 'Telefono mai visto prima, compare la sera' });
+  const invEvents = [
+    { id: 1, kind: 'nuovo', title: 'Nuovo dispositivo: echo-cucina', details: '192.168.1.150 · 44:00:49:50:50:50 · Amazon Technologies Inc. · Amazon Echo', at: ago(12), acknowledged: false, hostId: 15 },
+    { id: 2, kind: 'nuovo', title: 'Nuovo dispositivo: 192.168.1.102', details: '192.168.1.102 · D2:45:11:02:02:02 · Telefono', at: ago(25), acknowledged: false, hostId: 14 },
+    { id: 3, kind: 'assente', title: 'Assente: stampante-hp', details: 'Non risponde da 2 scansioni', at: ago(50), acknowledged: true, hostId: 10 },
+    { id: 4, kind: 'cambiato', title: 'Cambiato: NAS ufficio', details: 'porte aperte 5000', at: ago(1500), acknowledged: true, hostId: 3 },
+    { id: 5, kind: 'ricomparso', title: 'Ricomparso: samsung-tv-sala', details: 'Era assente dal 04/11 09:10', at: ago(2800), acknowledged: true, hostId: 11 },
+  ];
+  const invScans = [0, 1, 2, 3, 4, 5].map((i) => ({
+    id: 6 - i, startedAt: ago(4 + i * 180), target: '192.168.1.0/24', hostsCount: hosts.length - (i > 3 ? 1 : 0), durationMs: 8400 + i * 300,
+    newCount: i === 0 ? 2 : i === 4 ? 1 : 0, changedCount: i === 2 ? 1 : 0, goneCount: i === 1 ? 1 : 0,
+    summary: i === 0 ? '2 nuovi' : i === 1 ? '1 assente' : i === 2 ? '1 cambiato' : i === 4 ? '1 nuovo' : 'Nessuna differenza',
+  }));
+  const invWatch = () => ({ scanning: false, automatic: false, status: '', percent: 0, phase: null, target: null, lastScanAt: ago(4), nextScanAt: null, enabled: false, intervalMinutes: 30, unseen: invEvents.filter((e) => !e.acknowledged).length, network: invCurrent });
+  const invHistory = (id) => invEvents.filter((e) => e.hostId === id);
+  const inventory = (a = {}) => {
+    const all = a.network === '*';
+    const words = String(a.query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    let list = invHosts.slice();
+    if (a.onlyOnline) list = list.filter((h) => h.isOnline);
+    if (words.length) list = list.filter((h) => words.every((w) => [h.ip, h.mac, h.hostName, h.vendor, h.deviceType, h.alias, h.notes].join(' ').toLowerCase().includes(w)));
+    const present = invHosts.filter((h) => h.isOnline).length;
+    return {
+      network: all ? '*' : NET, current: invCurrent, networks: invNetworks, hosts: list, total: invHosts.length, events: invEvents, scans: invScans,
+      digest: `${invHosts.length} dispositivi conosciuti (${present} presenti nell'ultima scansione), 2 nuovi nelle ultime 24 ore, ${invHosts.filter((h) => !h.trust).length} da classificare`,
+      watch: invWatch(),
+    };
+  };
+  const invHost = (id) => { const h = invHosts.find((x) => x.id === Number(id)); if (!h) throw new Error('Il dispositivo non è più nell\'archivio.'); return h; };
+
   const handlers = {
+    inventory,
+    inventoryHost: (a) => ({ host: invHost(a.id), history: invHistory(Number(a.id)) }),
+    inventorySave: (a) => {
+      const h = invHost(a.id);
+      Object.assign(h, { alias: String(a.alias || '').trim(), notes: String(a.notes || '').trim(), trust: Number(a.trust) || 0 });
+      h.displayName = h.alias || h.hostName || h.ip;
+      return { host: h, history: invHistory(h.id) };
+    },
+    inventoryBulk: (a) => {
+      const ids = new Set((a.ids || []).map(Number));
+      if (a.action === 'forget') { for (const h of invHosts.filter((x) => ids.has(x.id))) invHosts.splice(invHosts.indexOf(h), 1); }
+      else for (const h of invHosts) if (ids.has(h.id)) h.trust = Number(a.trust) || 0;
+      return inventory({ network: a.network });
+    },
+    inventoryForget: (a) => { const h = invHost(a.id); invHosts.splice(invHosts.indexOf(h), 1); return inventory({ network: a.network }); },
+    inventoryAck: (a) => { for (const e of invEvents) if (a.all || e.id === Number(a.id)) e.acknowledged = true; return { unseen: invEvents.filter((e) => !e.acknowledged).length, state: state() }; },
+    inventoryNetwork: (a) => { const n = invNetworks.find((x) => x.key === a.key); if (n) { n.alias = a.alias || ''; n.name = n.alias || n.label; if (n.isCurrent) { invCurrent.alias = n.alias; invCurrent.name = n.name; } } return inventory({ network: a.key }); },
+    inventoryForgetNetwork: () => inventory({}),
+    inventoryScan: () => ({ started: true, state: state() }),
+    inventoryStop: () => null,
     // ?autoscan=5 nell'indirizzo dell'anteprima: avviso della scansione all'avvio con 5 secondi
     start: () => ({ state: state(), session, autoScan: Number(new URLSearchParams(location.search).get('autoscan') ?? -1) }),
     state, adapters: () => adapters, settings: () => settings, adapterConfigs: () => configs,
@@ -182,6 +252,7 @@
       const scan = { kind: 'host', target: a.ip, at: new Date().toISOString(), seconds: 0.4, found: h ? 1 : 0, cancelled: false, error: '' };
       return { ip: a.ip, online: !!h, host: h || null, scan, state: state() };
     },
+    removeHost: (a) => { const i = hosts.findIndex((h) => h.ipAddress === a.ip); if (i >= 0) hosts.splice(i, 1); return { session, state: state() }; },
     saveSettings: (a) => Object.assign(settings, a),
     sessionInfo: (a) => { const s = state(); s.session.title = a.title; s.session.notes = a.notes; return { state: s }; },
     checkInternet: () => null, setClipboard: () => null, openUrl: () => null, launch: () => null,

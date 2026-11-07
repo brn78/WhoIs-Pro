@@ -7,7 +7,7 @@ import { icon } from '../core/icons.js';
 import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
-import { table } from '../core/table.js';
+import { replaceKeepingScroll, table } from '../core/table.js';
 import { confirmDialog, emptyState, note, openMenu, pageHead, promptDialog, toast, toastError } from '../core/ui.js';
 import { isHikvision, launchItems } from './network.js';
 
@@ -19,6 +19,8 @@ S.devices = {
   networkPinned: false, // vero se l'utente ha scelto una rete: non si segue più quella del PC finché non cambia pagina
   q: '', subnet: '', onlyOnline: false,
   selectedId: null, detail: null, saved: false,
+  selectMode: false,   // selezione multipla: le righe si spuntano e la barra sopra l'elenco agisce su tutte insieme
+  selected: new Set(), // id dei dispositivi spuntati
   pendingHost: null,   // scheda da aprire appena i dati arrivano (dall'avviso o da un evento)
   badgeSeen: false,    // il contatore «da vedere» si azzera quando si apre la pagina
 };
@@ -114,8 +116,9 @@ function footerText() {
 function hostRow(h) {
   const t = TRUST[h.trust] || TRUST[0];
   const sub = [h.vendor ? shortVendor(h.vendor) : '', h.deviceType, h.isGateway ? 'gateway' : '', h.isLocal ? 'questa macchina' : ''].filter(Boolean).join(' · ');
-  return `<button class="dev-row ${h.id === S.devices.selectedId ? 'is-active' : ''} ${h.isOnline ? '' : 'is-off'}" data-action="pick-host" data-id="${h.id}" data-ctx="device">
-    ${catIcon(h)}
+  const checked = S.devices.selectMode && S.devices.selected.has(h.id);
+  return `<button class="dev-row ${h.id === S.devices.selectedId && !S.devices.selectMode ? 'is-active' : ''} ${checked ? 'is-checked' : ''} ${h.isOnline ? '' : 'is-off'}" data-action="pick-host" data-id="${h.id}" data-ctx="device">
+    ${S.devices.selectMode ? `<span class="dev-check ${checked ? 'is-on' : ''}" aria-hidden="true">${icon('check', { size: 12 })}</span>` : ''}${catIcon(h)}
     <span class="dev-text">
       <span class="dev-name"><b class="trunc" title="${esc(h.displayName)}">${esc(h.displayName)}</b>
         ${h.trust ? `<span class="pill ${t.tone}">${t.label.toLowerCase()}</span>` : ''}${h.isNew ? '<span class="pill warning">nuovo</span>' : ''}${allNetworks() && h.networkName ? `<span class="tag" title="Rete">${esc(h.networkName)}</span>` : ''}</span>
@@ -174,10 +177,75 @@ function listCard() {
       <div class="search">${icon('search')}<input class="input" data-field="q" value="${esc(S.devices.q)}" placeholder="Cerca per nome, IP, MAC, produttore, tipo, alias o note" autocomplete="off"></div>
       ${subnetBox}
       <label class="switch"><input type="checkbox" data-field="onlyOnline" ${S.devices.onlyOnline ? 'checked' : ''}><span class="track"></span><span>Solo presenti</span></label>
-      <div class="toolbar-actions"><span class="toolbar-info">${hosts.length === d.total ? plural(d.total, 'dispositivo', 'dispositivi') : `${hosts.length} di ${d.total}`}</span></div>
+      <div class="toolbar-actions"><span class="toolbar-info">${hosts.length === d.total ? plural(d.total, 'dispositivo', 'dispositivi') : `${hosts.length} di ${d.total}`}</span>
+        ${d.total ? `<button class="btn btn-sm ${S.devices.selectMode ? 'is-active' : ''}" data-action="select-mode" title="${S.devices.selectMode ? 'Chiude la selezione multipla' : 'Spunta più dispositivi e cambia la fiducia o dimenticali tutti insieme'}">${icon(S.devices.selectMode ? 'close' : 'check')} ${S.devices.selectMode ? 'Fine' : 'Seleziona'}</button>` : ''}</div>
     </div>
+    ${S.devices.selectMode ? bulkBar() : ''}
     ${body}
   </section>`;
+}
+
+/** Barra della selezione multipla: quanti sono spuntati, Tutti / Nessuno e le azioni su tutti insieme (fiducia, dimentica). */
+function bulkBar() {
+  const n = S.devices.selected.size;
+  const dis = n ? '' : 'disabled';
+  return `<div class="bulk-bar" id="bulk-bar">
+    <span class="bulk-count">${n ? `<b>${n}</b> ${n === 1 ? 'selezionato' : 'selezionati'}` : 'Spunta i dispositivi nell\'elenco'}</span>
+    <button class="btn btn-sm btn-ghost" data-action="sel-all" title="Spunta tutti i dispositivi visibili">Tutti</button>
+    <button class="btn btn-sm btn-ghost" data-action="sel-none" ${dis}>Nessuno</button>
+    <span class="spacer"></span>
+    <span class="bulk-label muted">Fiducia</span>
+    <button class="btn btn-sm" data-action="bulk-trust" data-trust="1" ${dis} title="Segna i selezionati come affidabili">${icon('shield', { size: 14 })} Affidabile</button>
+    <button class="btn btn-sm" data-action="bulk-trust" data-trust="2" ${dis} title="Segna i selezionati come sospetti">${icon('alert', { size: 14 })} Sospetto</button>
+    <button class="btn btn-sm" data-action="bulk-trust" data-trust="0" ${dis} title="Riporta i selezionati a «da classificare»">Da classificare</button>
+    <button class="btn btn-sm btn-danger-ghost" data-action="bulk-forget" ${dis} title="Toglie i selezionati e la loro storia dall'archivio">${icon('trash', { size: 14 })} Dimentica</button>
+  </div>`;
+}
+
+/** Spunta o toglie la spunta a una riga senza ridisegnare l'elenco; poi aggiorna la barra. */
+function toggleSelected(id) {
+  const sel = S.devices.selected;
+  if (sel.has(id)) sel.delete(id); else sel.add(id);
+  const row = $(`.dev-row[data-id="${id}"]`);
+  if (row) {
+    row.classList.toggle('is-checked', sel.has(id));
+    const mark = $('.dev-check', row);
+    if (mark) mark.classList.toggle('is-on', sel.has(id));
+  }
+  refreshBulkBar();
+}
+
+function refreshBulkBar() {
+  const bar = $('#bulk-bar');
+  if (bar) bar.outerHTML = bulkBar();
+}
+
+async function bulkTrust(trust) {
+  const ids = [...S.devices.selected];
+  if (!ids.length) return;
+  try {
+    S.devices.data = await call('inventoryBulk', { ids, action: 'trust', trust, network: S.devices.network });
+    if (S.st) S.st.inventory = S.devices.data.watch;
+    rerender();
+    if (S.devices.selectedId && ids.includes(S.devices.selectedId)) loadDetail(S.devices.selectedId);
+    toast(`${plural(ids.length, 'dispositivo segnato', 'dispositivi segnati')} «${TRUST[trust].label.toLowerCase()}».`, { tone: 'success' });
+  } catch (err) { toastError(err, 'Fiducia non salvata'); }
+}
+
+async function bulkForget() {
+  const ids = [...S.devices.selected];
+  if (!ids.length) return;
+  const ok = await confirmDialog({ title: `Dimenticare ${plural(ids.length, 'dispositivo', 'dispositivi')}?`, message: 'I dispositivi selezionati e la loro storia spariscono dall\'archivio. Se ricompaiono nella rete vengono segnalati come nuovi.', confirmText: 'Dimentica', tone: 'danger' });
+  if (!ok) return;
+  try {
+    S.devices.data = await call('inventoryBulk', { ids, action: 'forget', network: S.devices.network });
+    if (S.st) S.st.inventory = S.devices.data.watch;
+    S.devices.selected.clear();
+    if (ids.includes(S.devices.selectedId)) { S.devices.selectedId = null; S.devices.detail = null; }
+    rerender();
+    toast(`${plural(ids.length, 'dispositivo dimenticato', 'dispositivi dimenticati')}.`, { tone: 'success' });
+    bus.dispatchEvent(new Event('state'));
+  } catch (err) { toastError(err); }
 }
 
 function portPill(p, sensitive) {
@@ -188,8 +256,9 @@ function portPill(p, sensitive) {
 
 function detailCard() {
   const det = S.devices.detail;
-  if (!S.devices.selectedId) return `<section class="card"><div class="empty"><div class="empty-icon">${icon('monitor')}</div><h3>Scegli un dispositivo</h3><p>La scheda mostra identità, porte, storia e i campi che puoi compilare: alias, fiducia e note.</p></div></section>`;
-  if (!det) return `<section class="card"><div class="loading-block"><span class="spinner"></span> Lettura della scheda…</div></section>`;
+  // sempre con l'id: così la scheda si sostituisce sul posto e la lista accanto non viene ridisegnata (e non torna in cima)
+  if (!S.devices.selectedId) return `<section class="card" id="dev-detail"><div class="empty"><div class="empty-icon">${icon('monitor')}</div><h3>Scegli un dispositivo</h3><p>La scheda mostra identità, porte, storia e i campi che puoi compilare: alias, fiducia e note.</p></div></section>`;
+  if (!det) return `<section class="card" id="dev-detail"><div class="loading-block"><span class="spinner"></span> Lettura della scheda…</div></section>`;
   const h = det.host;
   const t = TRUST[h.trust] || TRUST[0];
   const sensitive = new Set((h.sensitivePorts || []).map((s) => Number(String(s).split(' ')[0])));
@@ -299,7 +368,8 @@ function render() {
 function rerender() {
   if (S.page !== 'devices') return;
   const content = $('#content');
-  if (content) content.innerHTML = render();
+  // la lista dei dispositivi scorre dentro la sua scheda: dopo un ridisegno deve restare dov'era
+  if (content) replaceKeepingScroll(content, render(), '.dev-list');
 }
 
 function renderList() {
@@ -330,6 +400,7 @@ async function load() {
     s.data = await fetchInventory();
     if (s.pendingHost) { s.selectedId = s.pendingHost; s.pendingHost = null; s.tab = 'hosts'; }
     const ids = new Set(s.data.hosts.map((h) => h.id));
+    for (const id of [...s.selected]) if (!ids.has(id)) s.selected.delete(id);
     if (s.selectedId && !ids.has(s.selectedId) && !s.q && !s.onlyOnline) s.selectedId = null;
     if (!s.selectedId && s.data.hosts.length) s.selectedId = s.data.hosts[0].id;
     rerender();
@@ -486,7 +557,12 @@ function hostMenu(anchor, id) {
 
 const actions = {
   'tab': (el) => { S.devices.tab = el.dataset.tab; rerender(); },
-  'pick-host': (el) => select(el.dataset.id),
+  'pick-host': (el) => { if (S.devices.selectMode) toggleSelected(Number(el.dataset.id)); else select(el.dataset.id); },
+  'select-mode': () => { S.devices.selectMode = !S.devices.selectMode; S.devices.selected.clear(); rerender(); },
+  'sel-all': () => { for (const h of visibleDeviceHosts()) S.devices.selected.add(h.id); renderList(); refreshBulkBar(); },
+  'sel-none': () => { S.devices.selected.clear(); renderList(); refreshBulkBar(); },
+  'bulk-trust': (el) => bulkTrust(Number(el.dataset.trust) || 0),
+  'bulk-forget': () => bulkForget(),
   'trust': (el) => { $$('.trust-seg button').forEach((b) => b.classList.toggle('is-active', b === el)); },
   'save-host': () => save(),
   'forget-host': () => forget(),

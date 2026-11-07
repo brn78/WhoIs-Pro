@@ -124,6 +124,26 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub BulkTrustAndDeleteHosts_ApplyToAllSelected()
+            store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
+            Dim all = store.Network.ListHosts()
+            Assert.That(all.Count, [Is].EqualTo(3))
+            Dim nas = all.Single(Function(h) h.HostName = "nas-prova")
+            Dim printer = all.Single(Function(h) h.HostName = "stampante-prova")
+
+            ' selezione multipla: la stessa fiducia a due dispositivi, il terzo non cambia
+            store.Network.SetTrust({nas.Id, printer.Id}, HostTrust.Trusted)
+            Assert.That(store.Network.Get(nas.Id).Trust, [Is].EqualTo(HostTrust.Trusted))
+            Assert.That(store.Network.Get(printer.Id).Trust, [Is].EqualTo(HostTrust.Trusted))
+            Assert.That(store.Network.ListHosts().Single(Function(h) h.HostName = "pc-prova").Trust, [Is].EqualTo(HostTrust.Unknown))
+
+            ' «dimentica» su due insieme: restano uno e nessun evento orfano
+            store.Network.DeleteHosts({nas.Id, printer.Id})
+            Assert.That(store.Network.ListHosts().Select(Function(h) h.HostName), [Is].EqualTo({"pc-prova"}))
+            Assert.That(store.Network.ListEvents(100).All(Function(e) Not e.HostId.HasValue OrElse e.HostId.Value <> nas.Id AndAlso e.HostId.Value <> printer.Id), [Is].True)
+        End Sub
+
+        <Test>
         Public Sub RecordScan_FirstScan_EverythingIsNewAndMarkedFirst()
             Dim diff = store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
             Assert.That(diff.IsFirst, [Is].True)
