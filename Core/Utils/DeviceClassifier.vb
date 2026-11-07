@@ -1,6 +1,7 @@
 Option Strict On
 
 Imports System.Text.RegularExpressions
+Imports Microsoft.Win32
 Imports WhoIsPro.Network.Scan
 
 Namespace Utils
@@ -120,7 +121,14 @@ Namespace Utils
 
         Private Function Hypervisor(s As Signals) As Result
             ' solo porte, nomi e banner: il produttore del MAC (Proxmox, Nutanix, VMware) è anche quello delle VM ospitate
-            If s.Port(2179) Then Return New Result("Host Hyper-V", CategoryVirtualization)
+            If s.Port(2179) Then
+                ' VMConnect (2179) è aperta anche su un Windows 10/11 Pro con Hyper-V, WSL2 o Docker Desktop: con un nome da
+                ' postazione, o senza segni di server, è un PC con Hyper-V, non un host di virtualizzazione
+                If LooksLikeClientPc(s) OrElse Not LooksLikeServer(s) Then
+                    Return New Result(If(LooksLikeLaptop(s), "Portatile Windows con Hyper-V", "PC Windows con Hyper-V"), CategoryWorkstation)
+                End If
+                Return New Result("Host Hyper-V", CategoryVirtualization)
+            End If
             If s.Port(8006) OrElse s.InNamesOrBanners("proxmox") Then Return New Result("Host Proxmox VE", CategoryVirtualization)
             If s.InNamesOrBanners("esxi") OrElse (s.Port(902) AndAlso s.Port(443) AndAlso Not s.Port(445) AndAlso Not s.TtlWindows) Then Return New Result("Host VMware ESXi", CategoryVirtualization)
             If s.InNamesOrBanners("vcenter", "vsphere") Then Return New Result("VMware vCenter", CategoryVirtualization)
@@ -524,14 +532,43 @@ Namespace Utils
 
         Private Function Windows(s As Signals) As Result
             If Not s.WindowsLike Then Return Nothing
-            Dim clientName = s.Labels.Any(Function(l) l.StartsWith("desktop-", StringComparison.Ordinal) OrElse l.StartsWith("laptop-", StringComparison.Ordinal)) OrElse
-                             s.InNames("notebook", "portatile", "=pc", "=laptop", "=desktop", "=workstation")
+            If Not LooksLikeClientPc(s) AndAlso LooksLikeServer(s) Then Return New Result("Server Windows", CategoryServer)
+            Return New Result(If(LooksLikeLaptop(s), "Portatile Windows", "Postazione Windows"), CategoryWorkstation)
+        End Function
+
+        ''' <summary>Edizione di Windows di questa macchina dal registro: True = Server, False = client, Nothing se non si legge.</summary>
+        Private ReadOnly LocalWindowsIsServer As New Lazy(Of Boolean?)(
+            Function()
+                Try
+                    If Not OperatingSystem.IsWindows() Then Return Nothing
+                    Using key = Registry.LocalMachine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                        Dim kind = TryCast(key?.GetValue("InstallationType"), String)
+                        If String.IsNullOrWhiteSpace(kind) Then Return Nothing
+                        Return kind.StartsWith("Server", StringComparison.OrdinalIgnoreCase)
+                    End Using
+                Catch
+                    Return Nothing
+                End Try
+            End Function)
+
+        ''' <summary>Postazione: nome da PC (DESKTOP-…, LAPTOP-…, «pc», «notebook»…) oppure, per questa macchina, un Windows client.</summary>
+        Private Function LooksLikeClientPc(s As Signals) As Boolean
+            If s.IsLocalMachine AndAlso LocalWindowsIsServer.Value.HasValue Then Return Not LocalWindowsIsServer.Value.Value
+            Return s.Labels.Any(Function(l) l.StartsWith("desktop-", StringComparison.Ordinal) OrElse l.StartsWith("laptop-", StringComparison.Ordinal)) OrElse
+                   s.InNames("notebook", "portatile", "=pc", "=laptop", "=desktop", "=workstation")
+        End Function
+
+        ''' <summary>Server: nome da server (WIN-…, «srv», «dc»…) o porte da server (WinRM, oppure RDP con SMB e RPC); per questa macchina l'edizione di Windows.</summary>
+        Private Function LooksLikeServer(s As Signals) As Boolean
+            If s.IsLocalMachine AndAlso LocalWindowsIsServer.Value.HasValue Then Return LocalWindowsIsServer.Value.Value
             Dim serverName = s.Labels.Any(Function(l) l.StartsWith("win-", StringComparison.Ordinal)) OrElse
                              s.InNames("=srv", "server", "=dc", "=sql", "=fs", "=rds", "=exch", "=hv")
             Dim serverPorts = s.AnyPort(5985, 5986) OrElse (s.Port(3389) AndAlso s.Port(445) AndAlso s.Port(135))
-            If Not clientName AndAlso (serverName OrElse serverPorts) Then Return New Result("Server Windows", CategoryServer)
-            Dim laptop = s.InNames("laptop", "notebook", "portatile", "surface")
-            Return New Result(If(laptop, "Portatile Windows", "Postazione Windows"), CategoryWorkstation)
+            Return serverName OrElse serverPorts
+        End Function
+
+        Private Function LooksLikeLaptop(s As Signals) As Boolean
+            Return s.InNames("laptop", "notebook", "portatile", "surface")
         End Function
 
         Private Function Unix(s As Signals) As Result
@@ -967,6 +1004,7 @@ Namespace Utils
         Private NotInheritable Class Signals
             Public Sub New(host As DiscoveredHost)
                 IsGateway = host.IsGateway
+                IsLocalMachine = host.IsLocalMachine
                 Sadp = host.Sadp
                 Ttl = If(host.Ttl.HasValue AndAlso host.Ttl.Value > 0, host.Ttl, Nothing)
                 Ports = host.Ports.Select(Function(p) p.Port).ToHashSet()
@@ -980,6 +1018,7 @@ Namespace Utils
             End Sub
 
             Public ReadOnly Property IsGateway As Boolean
+            Public ReadOnly Property IsLocalMachine As Boolean
             Public ReadOnly Property Sadp As SadpDeviceInfo
             Public ReadOnly Property Ttl As Integer?
             Public ReadOnly Property Ports As HashSet(Of Integer)

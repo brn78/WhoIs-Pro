@@ -34,6 +34,7 @@
   --surface-2: #f5f7f8;
   --surface-3: #e8ecef;
   --surface-hover: #f1f4f6;
+  --stripe: #f7f9fa;           /* riga alternata di tabelle e liste: più tenue dell'hover */
   --border: #d8dde2;
   --border-strong: #bfc7cf;
   --text: #11171e;
@@ -83,17 +84,19 @@
   --shadow-lg: 0 4px 10px rgba(17, 23, 30, .08), 0 22px 44px -12px rgba(17, 23, 30, .30);
   --overlay: rgba(12, 17, 22, .46);
 
-  /* barra laterale grafite anche nel tema chiaro: è il «rack» del programma */
-  --side-bg: #161d25;
-  --side-bg-2: #121820;
-  --side-text: #aab5c0;
-  --side-text-strong: #f2f6f9;
-  --side-muted: #6f7d8a;
-  --side-hover: rgba(255, 255, 255, .055);
-  --side-active: rgba(44, 197, 182, .13);
-  --side-accent: #33c9ba;
-  --side-border: #232c36;
-  --brand-fluo: #33c9ba;
+  /* barra laterale: chiara con il tema chiaro (in armonia con il resto), grafite con quello scuro; la voce attiva resta verde acqua */
+  --side-bg: #f4f6f8;
+  --side-bg-2: #eceff2;
+  --side-text: #3f4b57;
+  --side-text-strong: #11171e;
+  --side-muted: #6b7784;
+  --side-hover: rgba(17, 23, 30, .06);
+  --side-active: rgba(14, 138, 129, .13);
+  --side-accent: #0e8a81;
+  --side-accent-ink: #ffffff;
+  --side-border: #d8dde2;
+  --side-badge: rgba(17, 23, 30, .08);
+  --brand-fluo: #0e8a81;
   --brand-fluo-glow: transparent;
 
   --chart-granted: #2c78cf;
@@ -113,6 +116,7 @@
   --surface-2: #1a2128;
   --surface-3: #212932;
   --surface-hover: #1c242c;
+  --stripe: #181f26;
   --border: #27313b;
   --border-strong: #37424e;
   --text: #e6ecf1;
@@ -168,7 +172,9 @@
   --side-hover: rgba(255, 255, 255, .05);
   --side-active: rgba(44, 197, 182, .13);
   --side-accent: #33c9ba;
+  --side-accent-ink: #06302b;
   --side-border: #1e262e;
+  --side-badge: rgba(255, 255, 255, .07);
   --brand-fluo: #33c9ba;
   --brand-fluo-glow: rgba(51, 201, 186, .45);
 
@@ -475,6 +481,8 @@ input.input.has-value.on-clear {
   border-bottom: 1px solid var(--border);
 }
 .topbar .menu-toggle { display: none; }
+/* pulsante del tema (luna / sole) all'inizio della barra, prima del titolo della pagina */
+.topbar .theme-btn { flex: 0 0 auto; margin-left: -8px; }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 13px; }
 .crumbs .crumb-current { color: var(--text); font-weight: 620; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumbs .icon { width: 14px; height: 14px; color: var(--faint); }
@@ -653,6 +661,8 @@ table.dt thead th.is-sorted { color: var(--text); }
 table.dt thead th.is-sorted .sort-ind { opacity: 1; color: var(--primary-text); }
 table.dt tbody td { padding: 0 12px; height: 44px; border-bottom: 1px solid var(--border); color: var(--text-2); white-space: nowrap; vertical-align: middle; }
 table.dt tbody tr { transition: background .1s linear; }
+/* righe alternate: una riga sì e una no leggermente più scura, così l'occhio segue la riga nelle tabelle larghe */
+table.dt tbody tr:nth-child(even) td { background: var(--stripe); }
 table.dt tbody tr:hover td { background: var(--surface-hover); }
 table.dt tbody tr.is-selected td { background: var(--primary-soft); }
 table.dt tbody tr.is-selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
@@ -1001,6 +1011,7 @@ table.dt .trunc.w-vendor { --w: 200px; }
 /* colonna delle azioni fissa a destra: resta visibile anche se la tabella scorre in orizzontale */
 table.dt th.actions, table.dt td.actions { position: sticky; right: 0; background: var(--surface); }
 table.dt th.actions { background: var(--surface-2); z-index: 3; }
+table.dt tbody tr:nth-child(even) td.actions { background: var(--stripe); }
 table.dt tbody tr:hover td.actions { background: var(--surface-hover); }
 table.dt tbody tr.is-selected td.actions, table.dt tbody tr.is-checked td.actions { background: var(--primary-soft); }
 table.dt tbody tr.is-new td { animation: flashRow 1.6s var(--ease); }
@@ -1174,12 +1185,12 @@ table.dt thead th { text-transform: none; letter-spacing: 0; font-family: var(--
 
 /* barra laterale: il rack */
 .brand { gap: 11px; }
-.brand .brand-mark { width: 30px; height: 30px; border-radius: 6px; background: var(--side-accent); color: #06302b; box-shadow: none; }
+.brand .brand-mark { width: 30px; height: 30px; border-radius: 6px; background: var(--side-accent); color: var(--side-accent-ink); box-shadow: none; }
 .brand-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; letter-spacing: .01em; }
 .brand-short { font-family: var(--font-display); font-weight: 600; color: var(--side-accent); }
 .nav-item, button.nav-item { border-radius: var(--radius-sm); }
 .nav-item.is-active::before { left: -9px; top: 50%; bottom: auto; width: 6px; height: 6px; border-radius: 1.5px; transform: translateY(-50%); box-shadow: 0 0 8px var(--side-accent); }
-.nav-badge.is-neutral { background: rgba(255, 255, 255, .07); color: var(--side-text); font-family: var(--font-display); font-weight: 600; }
+.nav-badge.is-neutral { background: var(--side-badge); color: var(--side-text); font-family: var(--font-display); font-weight: 600; }
 .collapse-btn { border-radius: var(--radius-sm); }
 
 /* barra superiore: Rete del PC e Impostazioni a destra, staccate dalla sessione */
@@ -1599,6 +1610,7 @@ button.chip.quick-pick:hover { background: var(--primary-soft); color: var(--pri
 @media (max-width: 1180px) { .devices-grid { grid-template-columns: minmax(0, 1fr); } }
 .dev-list { display: flex; flex-direction: column; max-height: calc(100vh - 330px); min-height: 240px; overflow: auto; }
 .dev-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px; border: 0; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.dev-row:nth-child(even) { background: var(--stripe); }
 .dev-row:hover { background: var(--surface-hover); }
 .dev-row.is-active { background: var(--primary-soft); border-left-color: var(--primary); }
 .dev-row.is-off .cat-icon { opacity: .55; }
@@ -1626,6 +1638,7 @@ button.chip.quick-pick:hover { background: var(--primary-soft); color: var(--pri
 .ev-list { display: flex; flex-direction: column; max-height: calc(100vh - 340px); overflow: auto; }
 .ev-list.compact { max-height: 260px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .ev-row { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px 9px 22px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ev-row:nth-child(even) { background: var(--stripe); }
 .ev-row:hover { background: var(--surface-hover); }
 .ev-row:last-child { border-bottom: 0; }
 .ev-row.is-unseen::before { content: ""; position: absolute; left: 9px; top: 50%; width: 7px; height: 7px; margin-top: -3px; border-radius: 50%; background: var(--primary); }

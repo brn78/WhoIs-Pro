@@ -505,5 +505,39 @@ Namespace WhoIsPro.Tests
             fronius.Ports.Add(New Network.Scan.OpenPort(80, "TCP", "HTTP", "Titolo: Fronius: 000.000001"))
             Assert.That(DeviceClassifier.Classify(fronius).DeviceType, [Is].EqualTo("Inverter fotovoltaico Fronius"))
         End Sub
+
+        <Test>
+        Public Sub DeviceClassifier_HyperVPort_DistinguishesWorkstationFromServer()
+            ' PC Windows 11 con Hyper-V attivo (VMConnect 2179 aperta) e RDP: è una postazione, non un host di virtualizzazione
+            Dim pc As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.195", .NetBiosName = "DESKTOP-ABC123", .Ttl = 128}
+            For Each p In {135, 445, 2179, 3389}
+                pc.Ports.Add(New Network.Scan.OpenPort(p, "TCP", Nothing, Nothing))
+            Next
+            Dim cPc = DeviceClassifier.Classify(pc)
+            Assert.That(cPc.DeviceType, [Is].EqualTo("PC Windows con Hyper-V"))
+            Assert.That(cPc.Category, [Is].EqualTo(DeviceClassifier.CategoryWorkstation))
+
+            ' solo la 2179 e nessun nome: ancora un PC
+            Dim bare As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.196", .Ttl = 128}
+            bare.Ports.Add(New Network.Scan.OpenPort(2179, "TCP", Nothing, Nothing))
+            Assert.That(DeviceClassifier.Classify(bare).DeviceType, [Is].EqualTo("PC Windows con Hyper-V"))
+
+            ' nome da server con WinRM: host Hyper-V vero
+            Dim srv As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.20", .NetBiosName = "SRV-HV01", .Ttl = 128}
+            For Each p In {135, 445, 2179, 3389, 5985}
+                srv.Ports.Add(New Network.Scan.OpenPort(p, "TCP", Nothing, Nothing))
+            Next
+            Dim cSrv = DeviceClassifier.Classify(srv)
+            Assert.That(cSrv.DeviceType, [Is].EqualTo("Host Hyper-V"))
+            Assert.That(cSrv.Category, [Is].EqualTo(DeviceClassifier.CategoryVirtualization))
+
+            ' senza la 2179 le regole di prima: postazione con nome da PC, server con WinRM
+            Dim plainPc As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.30", .NetBiosName = "LAPTOP-XYZ", .Ttl = 128}
+            plainPc.Ports.Add(New Network.Scan.OpenPort(445, "TCP", Nothing, Nothing))
+            Assert.That(DeviceClassifier.Classify(plainPc).DeviceType, [Is].EqualTo("Portatile Windows"))
+            Dim plainSrv As New Network.Scan.DiscoveredHost With {.Ip = "192.168.1.31", .NetBiosName = "WIN-FILESERVER", .Ttl = 128}
+            plainSrv.Ports.Add(New Network.Scan.OpenPort(5985, "TCP", Nothing, Nothing))
+            Assert.That(DeviceClassifier.Classify(plainSrv).DeviceType, [Is].EqualTo("Server Windows"))
+        End Sub
     End Class
 End Namespace

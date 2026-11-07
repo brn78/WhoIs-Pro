@@ -112,9 +112,10 @@ risposta di Internet (anche IPv6), le **ultime scansioni** da ripetere con un cl
 campo per **ping e nslookup** al volo.
 
 **🎨 Un'interfaccia da tecnico**<br>
-Barra laterale grafite, LED quadrati come quelli delle porte di rete, numeri grandi e leggibili; tabelle ordinabili
-con le colonne **larghe quanto il contenuto**, pannelli di dettaglio, menu e notifiche; **tema** automatico, chiaro
-o scuro; **Impostazioni** e **Rete del PC** sempre in alto; **icona nell'area di notifica** e avvio con Windows;
+Barra laterale grafite (chiara con il tema chiaro), LED quadrati come quelli delle porte di rete, numeri grandi e
+leggibili; tabelle ordinabili con le colonne **larghe quanto il contenuto** e le righe alternate, pannelli di dettaglio,
+menu e notifiche; **tema** automatico, chiaro o scuro, con il cambio al volo in alto a sinistra; **Impostazioni** e
+**Rete del PC** sempre in alto; **icona nell'area di notifica** e avvio con Windows;
 scorciatoie da tastiera. Si aggiorna da sola quando esce una versione nuova.
 
 </td>
@@ -263,7 +264,8 @@ altrui può essere vista come un tentativo di intrusione.
 ## 🛠️ Per chi vuole compilarlo
 
 Programma in **VB.NET** (.NET 10, Windows Forms) con la finestra fatta da una pagina HTML dentro WebView2, con una
-grafica sua: barra laterale grafite, accento verde acqua, LED delle porte e Bahnschrift per titoli e numeri.
+grafica sua: barra laterale grafite (chiara nel tema chiaro), accento verde acqua, LED delle porte e Bahnschrift per
+titoli e numeri.
 
 ```
 WhoIs Pro.vbproj        progetto (la cartella ui\ è incorporata nell'exe)

@@ -102,6 +102,7 @@ function shell() {
     </aside>
     <main class="main">
       <header class="topbar">
+        <button class="icon-btn theme-btn" id="theme-toggle" data-action="theme-toggle" title="${esc(themeButton().title)}">${themeButton().html}</button>
         <div class="topbar-title" id="topbar-title"></div>
         <div class="topbar-middle" id="topbar-middle">${activityChip()}</div>
         <div class="topbar-actions" id="topbar-actions">${topbarActions()}</div>
@@ -221,6 +222,29 @@ function sessionChip() {
       <span class="site-label"><small>${dirty ? 'Modifiche non salvate' : s.file ? 'Sessione salvata' : 'Sessione'}</small><b>${esc(label)}</b></span>${icon('chevronDown')}</button>
     ${dirty ? `<button class="btn btn-primary" data-action="save" title="Salva la sessione (Ctrl+S)">${icon('save')} Salva</button>` : ''}`;
 }
+
+/**
+ * Pulsante del tema in alto a sinistra: mostra il tema a cui si passa con un clic (luna = scuro, sole = chiaro).
+ * La scelta completa (anche «Automatico», che segue Windows) resta in Impostazioni → Generale → Tema.
+ */
+function themeButton() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const auto = window.getTheme && window.getTheme() === 'auto';
+  return {
+    html: icon(dark ? 'sun' : 'moon'),
+    title: `${dark ? 'Passa al tema chiaro' : 'Passa al tema scuro'}${auto ? ' (adesso segue Windows)' : ''} · «Automatico» in Impostazioni`,
+  };
+}
+
+/** Aggiorna icona e suggerimento del pulsante quando il tema cambia, da qui, da Impostazioni o da Windows. */
+function refreshThemeButton() {
+  const b = $('#theme-toggle');
+  if (!b) return;
+  const t = themeButton();
+  b.innerHTML = t.html;
+  b.title = t.title;
+}
+new MutationObserver(refreshThemeButton).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 function topbarActions() {
   const st = S.st;
@@ -578,6 +602,19 @@ const ACTIONS = {
   'close-overlay': () => closeTopOverlay(),
   'pc-network': () => openPcNetwork(),
   'session-details': () => openSessionDrawer(),
+  // tema chiaro ↔ scuro con un clic: la scelta si salva nelle impostazioni come da Impostazioni → Generale → Tema
+  'theme-toggle': async () => {
+    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    if (window.setTheme) window.setTheme(theme);
+    try {
+      const data = await call('saveSettings', { theme });
+      if (S.st) S.st.theme = theme;
+      if (S.settings && S.settings.data) S.settings.data = data;
+      if (S.page === 'settings') renderPage();
+    } catch (err) {
+      toastError(err, 'Tema non salvato');
+    }
+  },
 };
 
 document.addEventListener('click', (e) => {

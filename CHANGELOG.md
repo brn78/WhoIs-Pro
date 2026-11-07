@@ -5,6 +5,23 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.8.1 · 7 novembre 2026
+
+- **Righe alternate** in tutte le tabelle (Rete in Elenco, Porte, DNS, Traceroute, Connessioni, Pacchetti, scansioni
+  dell'archivio) e nelle liste *Dispositivi* e *Cambiamenti*: una riga sì e una no ha un fondo appena più scuro, così
+  l'occhio segue la riga nelle tabelle larghe. La tinta è più tenue di quella del passaggio del mouse e delle righe
+  selezionate, nel tema chiaro e in quello scuro.
+- **Tema con un clic**: in alto a sinistra, prima del titolo della pagina, un pulsante con la luna o il sole passa al
+  tema scuro o chiaro e salva la scelta, la stessa di *Impostazioni → Generale → Tema*, dove resta anche «Automatico»
+  che segue Windows.
+- **Menu laterale chiaro con il tema chiaro**: la barra laterale non resta grafite ma prende una tinta chiara in
+  armonia con il resto della finestra, con testi scuri e lo stesso verde acqua per la voce attiva e la versione; con
+  il tema scuro resta com'era.
+- **Un PC Windows con Hyper-V non è più «Host Hyper-V»**: la porta 2179 (VMConnect) è aperta anche su un Windows 10
+  o 11 Pro con Hyper-V, WSL2 o Docker Desktop. Con un nome da postazione (DESKTOP-…, LAPTOP-…), o senza segni di
+  server, il tipo è «PC Windows con Hyper-V» (categoria Postazione); questa macchina si riconosce dall'edizione di
+  Windows installata. «Host Hyper-V» resta per i server (nome da server, WinRM, oppure RDP con SMB e RPC).
+
 ## 2.8.0 · 7 novembre 2026
 
 - **Dispositivi Hikvision riconosciuti per modello**: durante la scansione, insieme a ping e ARP, parte la sonda **SADP**
