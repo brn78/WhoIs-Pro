@@ -179,6 +179,12 @@ Namespace UI
                     Return New With {.unseen = _store.Network.UnacknowledgedCount(NetworkFilter("")), .state = State()}
                 Case "inventoryNetwork" : Return RenameNetwork(ArgText(args, "key"), ArgText(args, "alias"))
                 Case "inventoryNetworkDhcp" : Return SetNetworkDhcp(ArgText(args, "key"), ArgText(args, "range"))
+                Case "topology" : Return TopologyView(ArgText(args, "network"))
+                Case "topologyLink" : Return TopologyEdit(args, Sub() _store.Network.SetUplink(ArgText(args, "key"), ArgText(args, "uplink")))
+                Case "topologyMove" : Return TopologyEdit(args, Sub() TopologyMove(args))
+                Case "topologyNodeSave" : Return TopologyEdit(args, Sub() _store.Network.SaveTopoNode(TopologyNetworkKey(ArgText(args, "network")), If(ArgLong(args, "id") > 0, CType(ArgLong(args, "id"), Long?), Nothing), ArgText(args, "kind"), ArgText(args, "name")))
+                Case "topologyNodeDelete" : Return TopologyEdit(args, Sub() _store.Network.DeleteTopoNode(ArgLong(args, "id")))
+                Case "topologyReset" : Return TopologyEdit(args, Sub() _store.Network.ResetTopology(TopologyNetworkKey(ArgText(args, "network"))))
                 Case "inventoryForgetNetwork"
                     If _watch.IsScanning Then Throw New UserMessageException("C'è una scansione in corso: aspetta che finisca prima di dimenticare una rete.")
                     _store.Network.DeleteNetwork(ArgText(args, "key"))
@@ -1437,7 +1443,8 @@ Namespace UI
                 .firstSeen = h.FirstSeen, .lastSeen = h.LastSeen, .seenCount = h.SeenCount, .missCount = h.MissCount, .ports = h.Ports, .latencyMs = h.LatencyMs,
                 .alias = h.[Alias], .trust = CInt(h.Trust), .notes = h.Notes, .icon = If(h.Icon, ""), .iconColor = If(h.IconColor, ""),
                 .isOnline = h.IsOnline, .displayName = h.DisplayName, .isNew = isNew, .sensitivePorts = h.SensitivePorts,
-                .network = h.NetworkKey, .networkName = networkName
+                .network = h.NetworkKey, .networkName = networkName,
+                .key = "h:" & h.Id, .uplink = h.Uplink, .topoX = h.TopoX, .topoY = h.TopoY
             }
         End Function
 
@@ -1475,6 +1482,56 @@ Namespace UI
             If String.Equals(_session.NetworkKey, key, StringComparison.Ordinal) Then _session.NetworkName = SessionNetworkName()
             Return InventoryView("", False, key)
         End Function
+
+#Region "Topologia"
+
+        ''' <summary>La rete del disegno: quella chiesta dalla pagina, altrimenti quella in cui si trova il PC.</summary>
+        Private Function TopologyNetworkKey(networkArg As String) As String
+            Dim key = NetworkFilter(networkArg)
+            If key Is Nothing Then key = _watch.CurrentNetwork()?.Key
+            If key Is Nothing Then Throw New UserMessageException("Nessuna rete: collega il PC a una rete oppure scegline una nel menu «Rete».")
+            Return key
+        End Function
+
+        ''' <summary>Dispositivi e nodi virtuali di una rete, con i collegamenti e le posizioni scelte, per la scheda Topologia.</summary>
+        Private Function TopologyView(networkArg As String) As Object
+            Dim key = TopologyNetworkKey(networkArg)
+            Dim inv = _store.Network
+            Dim names = inv.ListNetworks().ToDictionary(Function(n) n.Key, Function(n) n.DisplayName, StringComparer.Ordinal)
+            Dim name As String = Nothing
+            names.TryGetValue(key, name)
+            Return New With {
+                .network = key, .name = If(name, key),
+                .hosts = inv.ListHosts("", False, key).Select(Function(h) HostView(h, False, names)).ToList(),
+                .nodes = inv.ListTopoNodes(key).Select(Function(n) New With {.id = n.Id, .key = n.Key, .kind = n.Kind, .name = n.Name, .uplink = n.Uplink, .topoX = n.TopoX, .topoY = n.TopoY}).ToList()
+            }
+        End Function
+
+        ''' <summary>Una modifica alla topologia (collegamento, spostamento, nodo virtuale) e poi il disegno aggiornato; gli errori arrivano alla pagina come testo.</summary>
+        Private Function TopologyEdit(args As JsonElement, change As Action) As Object
+            Try
+                change()
+            Catch ex As ArgumentException
+                Throw New UserMessageException(ex.Message)
+            End Try
+            Return TopologyView(ArgText(args, "network"))
+        End Function
+
+        ''' <summary>Posizioni appena trascinate, moves = [{key, x, y}]; x e y nulli = torna al posto automatico.</summary>
+        Private Sub TopologyMove(args As JsonElement)
+            Dim moves As JsonElement
+            If args.ValueKind <> JsonValueKind.Object OrElse Not args.TryGetProperty("moves", moves) OrElse moves.ValueKind <> JsonValueKind.Array Then Return
+            For Each m In moves.EnumerateArray()
+                Dim x As JsonElement, y As JsonElement
+                Dim px As Double? = Nothing
+                Dim py As Double? = Nothing
+                If m.TryGetProperty("x", x) AndAlso x.ValueKind = JsonValueKind.Number Then px = x.GetDouble()
+                If m.TryGetProperty("y", y) AndAlso y.ValueKind = JsonValueKind.Number Then py = y.GetDouble()
+                _store.Network.SetPosition(ArgText(m, "key"), px, py)
+            Next
+        End Sub
+
+#End Region
 
         ''' <summary>Intervallo DHCP dichiarato dall'utente per una rete (vuoto = toglierlo): le pagine distinguono gli indirizzi assegnati dal router da quelli fissi.</summary>
         Private Function SetNetworkDhcp(key As String, range As String) As Object

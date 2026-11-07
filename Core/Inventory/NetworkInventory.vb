@@ -28,6 +28,11 @@ Namespace Inventory
         Public Property Ip As String
         ''' <summary>Altri indirizzi IPv4 dello stesso dispositivo (stesso MAC) nell'ultima scansione; vuoto se ne ha uno solo.</summary>
         Public Property ExtraIps As IReadOnlyList(Of String) = Array.Empty(Of String)()
+        ''' <summary>Topologia: chiave del nodo a monte scelto dall'utente («h:12» un dispositivo, «v:3» un nodo virtuale); Nothing = posto automatico.</summary>
+        Public Property Uplink As String
+        ''' <summary>Topologia: posizione scelta dall'utente nel disegno (centro dell'icona); Nothing = disposizione automatica.</summary>
+        Public Property TopoX As Double?
+        Public Property TopoY As Double?
         Public Property HostName As String
         Public Property NetBios As String
         Public Property Workgroup As String
@@ -237,7 +242,7 @@ Namespace Inventory
 
 #Region "Campi"
 
-        Private Const HostColumns As String = "id, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, network_key, extra_ips"
+        Private Const HostColumns As String = "id, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, network_key, extra_ips, uplink, topo_x, topo_y"
         ''' <summary>Scansioni consecutive senza risposta prima di dichiarare un dispositivo assente.</summary>
         Public Const MissesBeforeGone As Integer = 2
         Private ReadOnly _store As InventoryStore
@@ -348,12 +353,161 @@ Namespace Inventory
                 Using tx = _store.BeginTransaction()
                     _store.Execute("DELETE FROM net_events WHERE network_key = $k OR host_id IN (SELECT id FROM net_hosts WHERE network_key = $k)", ("$k", key))
                     _store.Execute("DELETE FROM net_hosts WHERE network_key = $k", ("$k", key))
+                    _store.Execute("DELETE FROM net_topo_nodes WHERE network_key = $k", ("$k", key))
                     _store.Execute("DELETE FROM net_scans WHERE network_key = $k", ("$k", key))
                     _store.Execute("DELETE FROM net_networks WHERE key = $k", ("$k", key))
                     tx.Commit()
                 End Using
             End SyncLock
         End Sub
+
+#Region "Topologia"
+
+        ''' <summary>Nodo virtuale della topologia di una rete: la nuvola Internet, uno switch, un access point o un altro apparato che la scansione non vede.</summary>
+        Public Class TopoNode
+            Public Property Id As Long
+            Public Property NetworkKey As String
+            ''' <summary>"internet", "switch", "ap" oppure "other".</summary>
+            Public Property Kind As String
+            Public Property Name As String
+            ''' <summary>Chiave del nodo a monte («h:12» un dispositivo, «v:3» un nodo virtuale); Nothing = posto automatico.</summary>
+            Public Property Uplink As String
+            Public Property TopoX As Double?
+            Public Property TopoY As Double?
+            ''' <summary>Chiave nel disegno («v:3»); i dispositivi dell'archivio hanno «h:» e il loro id.</summary>
+            Public ReadOnly Property Key As String
+                Get
+                    Return "v:" & Id
+                End Get
+            End Property
+        End Class
+
+        Public Shared ReadOnly TopoNodeKinds As String() = {"internet", "switch", "ap", "other"}
+
+        Public Function ListTopoNodes(networkKey As String) As IReadOnlyList(Of TopoNode)
+            Dim list As New List(Of TopoNode)()
+            Using cmd = _store.Command("SELECT id, network_key, kind, name, uplink, topo_x, topo_y FROM net_topo_nodes WHERE network_key = $n ORDER BY id", ("$n", networkKey))
+                Using r = cmd.ExecuteReader()
+                    While r.Read()
+                        list.Add(New TopoNode With {
+                            .Id = r.GetInt64(0), .NetworkKey = r.GetString(1), .Kind = r.GetString(2), .Name = r.GetString(3), .Uplink = Text(r, 4),
+                            .TopoX = If(r.IsDBNull(5), CType(Nothing, Double?), r.GetDouble(5)), .TopoY = If(r.IsDBNull(6), CType(Nothing, Double?), r.GetDouble(6))
+                        })
+                    End While
+                End Using
+            End Using
+            Return list
+        End Function
+
+        ''' <summary>Nome proposto per un nodo virtuale del tipo indicato.</summary>
+        Public Shared Function DefaultNodeName(kind As String) As String
+            Select Case kind
+                Case "internet" : Return "Internet"
+                Case "switch" : Return "Switch"
+                Case "ap" : Return "Access point"
+                Case Else : Return "Apparato"
+            End Select
+        End Function
+
+        ''' <summary>Nuovo nodo virtuale (id Nothing) oppure nome e tipo di uno esistente; la nuvola «internet» è una sola per rete.</summary>
+        Public Function SaveTopoNode(networkKey As String, id As Long?, kind As String, name As String) As TopoNode
+            Dim k = If(kind, "").Trim().ToLowerInvariant()
+            If Not TopoNodeKinds.Contains(k) Then Throw New ArgumentException("Tipo di nodo sconosciuto.", NameOf(kind))
+            Dim n = If(String.IsNullOrWhiteSpace(name), DefaultNodeName(k), name.Trim())
+            SyncLock _lock
+                If id.HasValue Then
+                    _store.Execute("UPDATE net_topo_nodes SET kind = $k, name = $m WHERE id = $id", ("$k", k), ("$m", n), ("$id", id.Value))
+                    Return ListTopoNodes(networkKey).FirstOrDefault(Function(x) x.Id = id.Value)
+                End If
+                If k = "internet" Then
+                    Dim existing = ListTopoNodes(networkKey).FirstOrDefault(Function(x) x.Kind = "internet")
+                    If existing IsNot Nothing Then Return existing
+                End If
+                _store.Execute("INSERT INTO net_topo_nodes(network_key, kind, name) VALUES ($n, $k, $m)", ("$n", networkKey), ("$k", k), ("$m", n))
+                Dim newId = _store.LastInsertId()
+                Return ListTopoNodes(networkKey).First(Function(x) x.Id = newId)
+            End SyncLock
+        End Function
+
+        ''' <summary>Toglie un nodo virtuale: chi era collegato sotto passa al nodo a monte di quello tolto (o al posto automatico).</summary>
+        Public Sub DeleteTopoNode(id As Long)
+            SyncLock _lock
+                Dim key = "v:" & id
+                Using tx = _store.BeginTransaction()
+                    Reattach(key, StoredUplink(key))
+                    _store.Execute("DELETE FROM net_topo_nodes WHERE id = $id", ("$id", id))
+                    tx.Commit()
+                End Using
+            End SyncLock
+        End Sub
+
+        ''' <summary>
+        ''' «Collegato a»: il nodo a monte di un dispositivo o di un nodo virtuale (vuoto = posto automatico). Rifiuta se
+        ''' stesso e i giri chiusi (un nodo collegato a un suo discendente), con ArgumentException e il messaggio per l'utente.
+        ''' </summary>
+        Public Sub SetUplink(key As String, uplink As String)
+            Dim kind As Char, id As Long
+            If Not ParseKey(key, kind, id) Then Throw New ArgumentException("Nodo non valido.", NameOf(key))
+            Dim up = If(String.IsNullOrWhiteSpace(uplink), Nothing, uplink.Trim())
+            If up IsNot Nothing Then
+                Dim upKind As Char, upId As Long
+                If Not ParseKey(up, upKind, upId) Then Throw New ArgumentException("Nodo a monte non valido.", NameOf(uplink))
+                If up = key Then Throw New ArgumentException("Un dispositivo non può essere collegato a se stesso.", NameOf(uplink))
+                ' risalendo dal nuovo nodo a monte non si deve tornare a key
+                Dim cursor = up
+                Dim guard = 0
+                While cursor IsNot Nothing AndAlso guard < 1000
+                    If cursor = key Then Throw New ArgumentException("Collegamento impossibile: si formerebbe un giro chiuso.", NameOf(uplink))
+                    cursor = StoredUplink(cursor)
+                    guard += 1
+                End While
+            End If
+            SyncLock _lock
+                _store.Execute($"UPDATE {TableOf(kind)} SET uplink = $u WHERE id = $id", ("$u", up), ("$id", id))
+            End SyncLock
+        End Sub
+
+        ''' <summary>Posizione scelta nel disegno (centro dell'icona); x e y Nothing = torna alla disposizione automatica.</summary>
+        Public Sub SetPosition(key As String, x As Double?, y As Double?)
+            Dim kind As Char, id As Long
+            If Not ParseKey(key, kind, id) Then Throw New ArgumentException("Nodo non valido.", NameOf(key))
+            _store.Execute($"UPDATE {TableOf(kind)} SET topo_x = $x, topo_y = $y WHERE id = $id", ("$x", x), ("$y", y), ("$id", id))
+        End Sub
+
+        ''' <summary>«Disposizione automatica»: via le posizioni scelte a mano in una rete; i collegamenti restano.</summary>
+        Public Sub ResetTopology(networkKey As String)
+            SyncLock _lock
+                _store.Execute("UPDATE net_hosts SET topo_x = NULL, topo_y = NULL WHERE network_key = $n", ("$n", networkKey))
+                _store.Execute("UPDATE net_topo_nodes SET topo_x = NULL, topo_y = NULL WHERE network_key = $n", ("$n", networkKey))
+            End SyncLock
+        End Sub
+
+        Private Shared Function ParseKey(key As String, ByRef kind As Char, ByRef id As Long) As Boolean
+            kind = ChrW(0)
+            id = 0
+            If key Is Nothing OrElse key.Length < 3 OrElse key(1) <> ":"c Then Return False
+            kind = Char.ToLowerInvariant(key(0))
+            Return (kind = "h"c OrElse kind = "v"c) AndAlso Long.TryParse(key.Substring(2), id)
+        End Function
+
+        Private Shared Function TableOf(kind As Char) As String
+            Return If(kind = "h"c, "net_hosts", "net_topo_nodes")
+        End Function
+
+        ''' <summary>Il nodo a monte salvato per una chiave; Nothing se non c'è o la chiave non esiste più.</summary>
+        Private Function StoredUplink(key As String) As String
+            Dim kind As Char, id As Long
+            If Not ParseKey(key, kind, id) Then Return Nothing
+            Return TryCast(_store.Scalar($"SELECT uplink FROM {TableOf(kind)} WHERE id = $id", ("$id", id)), String)
+        End Function
+
+        ''' <summary>Chi era collegato a key passa a uplink: prima di togliere un dispositivo o un nodo virtuale.</summary>
+        Private Sub Reattach(key As String, uplink As String)
+            _store.Execute("UPDATE net_hosts SET uplink = $u WHERE uplink = $k", ("$u", uplink), ("$k", key))
+            _store.Execute("UPDATE net_topo_nodes SET uplink = $u WHERE uplink = $k", ("$u", uplink), ("$k", key))
+        End Sub
+
+#End Region
 
         ''' <summary>Rete di un rapporto senza identità (prove, rapporti costruiti a mano): la /24 del bersaglio o del primo host.</summary>
         Private Shared Function PseudoNetworkFor(report As ScanReport) As NetworkIdentity
@@ -514,6 +668,7 @@ Namespace Inventory
                 If String.IsNullOrWhiteSpace(primary.Icon) AndAlso Not String.IsNullOrWhiteSpace(old.Icon) Then SetIcon(primaryId, old.Icon, old.IconColor)
                 If old.FirstSeen < primary.FirstSeen Then _store.Execute("UPDATE net_hosts SET first_seen = $t WHERE id = $id", ("$t", InventoryStore.ToIso(old.FirstSeen)), ("$id", primaryId))
                 _store.Execute("UPDATE net_events SET host_id = $p WHERE host_id = $a", ("$p", primaryId), ("$a", old.Id))
+                Reattach("h:" & old.Id, "h:" & primaryId)
                 _store.Execute("DELETE FROM net_hosts WHERE id = $a", ("$a", old.Id))
                 presentIds.Remove(old.Id)
                 primary = [Get](primaryId, lastScans)
@@ -762,6 +917,8 @@ Namespace Inventory
         ''' <summary>«Dimentica»: il dispositivo e la sua storia spariscono; se ricompare torna «nuovo».</summary>
         Public Sub DeleteHost(id As Long)
             SyncLock _lock
+                ' topologia: chi stava sotto questo dispositivo passa al suo nodo a monte
+                Reattach("h:" & id, StoredUplink("h:" & id))
                 _store.Execute("DELETE FROM net_events WHERE host_id = $id", ("$id", id))
                 _store.Execute("DELETE FROM net_hosts WHERE id = $id", ("$id", id))
             End SyncLock
@@ -936,6 +1093,7 @@ Namespace Inventory
                 .SeenCount = r.GetInt32(15), .MissCount = r.GetInt32(16), .LastScanId = lastScan, .Ports = ports,
                 .LatencyMs = If(r.IsDBNull(19), CType(Nothing, Double?), r.GetDouble(19)), .[Alias] = Text(r, 20), .Trust = CType(r.GetInt32(21), HostTrust), .Notes = Text(r, 22),
                 .Icon = Text(r, 23), .IconColor = Text(r, 24), .NetworkKey = networkKey, .ExtraIps = SplitIps(Text(r, 26)),
+                .Uplink = Text(r, 27), .TopoX = If(r.IsDBNull(28), CType(Nothing, Double?), r.GetDouble(28)), .TopoY = If(r.IsDBNull(29), CType(Nothing, Double?), r.GetDouble(29)),
                 .IsOnline = lastScan.HasValue AndAlso lastScans.TryGetValue(networkKey, networkLast) AndAlso networkLast = lastScan.Value
             }
         End Function

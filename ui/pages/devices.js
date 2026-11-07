@@ -8,6 +8,7 @@ import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { replaceKeepingScroll, table } from '../core/table.js';
+import { renderTopology, bindTopology, setTopologyZoom, fitZoom, centerTopology, clampZoom, branchOf } from '../core/topology.js';
 import { confirmDialog, emptyState, note, openMenu, pageHead, promptDialog, toast, toastError } from '../core/ui.js';
 import { isHikvision, launchItems } from './network.js';
 
@@ -21,6 +22,8 @@ S.devices = {
   selectedId: null, detail: null, saved: false,
   selectMode: false,   // selezione multipla: le righe si spuntano e la barra sopra l'elenco agisce su tutte insieme
   selected: new Set(), // id dei dispositivi spuntati
+  // scheda Topologia: risposta di «topology» (hosts, nodes), ingrandimento, rami chiusi, scena disegnata, posizioni appena trascinate
+  topo: { data: null, zoom: 1, collapsed: new Set(), scene: null, moved: new Map(), loading: false, ctl: null },
   pendingHost: null,   // scheda da aprire appena i dati arrivano (dall'avviso o da un evento)
   badgeSeen: false,    // il contatore «da vedere» si azzera quando si apre la pagina
 };
@@ -319,6 +322,206 @@ function detailCard() {
 // ---------------------------------------------------------------------------------------------------------------------
 // Scheda Cambiamenti e scheda Scansioni
 // ---------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
+// Scheda Topologia: i dispositivi dell'archivio ad albero (ui/core/topology.js) con i nodi virtuali (nuvola Internet,
+// switch, access point, altro apparato), i collegamenti «Collegato a» e le posizioni, salvati nell'archivio per rete
+// ---------------------------------------------------------------------------------------------------------------------
+const TOPO_KINDS = {
+  internet: { label: 'Internet', icon: 'cloud' },
+  switch: { label: 'Switch', icon: 'network' },
+  ap: { label: 'Access point', icon: 'wifi' },
+  other: { label: 'Apparato', icon: 'server' },
+};
+
+function topologyCard() {
+  const t = S.devices.topo;
+  return `<section class="card topo-card">
+    <div class="topo-bar">
+      <button class="btn btn-sm btn-primary" data-action="topo-add">${icon('plus', { size: 14 })} Aggiungi ${icon('chevronDown', { size: 13 })}</button>
+      <button class="btn btn-sm" data-action="topo-reset" title="Rimette ogni dispositivo al suo posto nell'albero; i collegamenti restano">${icon('refresh', { size: 14 })} Disposizione automatica</button>
+      <span class="muted" style="font-size:12.5px">Trascina un dispositivo per spostarlo (con Maiusc solo lui), lascialo sopra un altro per collegarlo lì; tasto destro per le altre azioni.</span>
+      <span class="topo-zoom" role="group" aria-label="Ingrandimento">
+        <button class="icon-btn" type="button" data-action="topo-zoom" data-zoom="-1" title="Rimpicciolisci (o la rotellina)">${icon('minus', { size: 16 })}</button>
+        <button class="btn btn-sm btn-ghost" type="button" data-action="topo-zoom" data-zoom="0" title="Dimensione normale" data-zoom-label>${Math.round(t.zoom * 100)}%</button>
+        <button class="icon-btn" type="button" data-action="topo-zoom" data-zoom="1" title="Ingrandisci (o la rotellina)">${icon('plus', { size: 16 })}</button>
+        <button class="icon-btn" type="button" data-action="topo-zoom" data-zoom="fit" title="Adatta: tutta la rete nella vista">${icon('maximize', { size: 16 })}</button>
+      </span>
+    </div>
+    <div class="topo" id="topo-host"></div>
+    <div class="topo-foot"><span class="topo-legend"><span><i class="topo-swatch is-on"></i>Risponde</span><span><i class="topo-swatch is-off"></i>Non risponde</span><span><i class="topo-swatch"></i>Nodo virtuale</span></span></div>
+  </section>`;
+}
+
+/** I nodi del disegno dai dati del programma: dispositivi e nodi virtuali, con il nodo a monte effettivo. */
+function topoNodes(data) {
+  const hosts = data.hosts || [];
+  const virtual = data.nodes || [];
+  const keys = new Set([...hosts.map((h) => h.key), ...virtual.map((n) => n.key)]);
+  const gw = hosts.find((h) => h.isGateway);
+  const inet = virtual.find((n) => n.kind === 'internet');
+  const valid = (k) => (k && keys.has(k) ? k : null);
+  // senza un collegamento scelto: i dispositivi e gli apparati sotto il router, il router sotto la nuvola Internet (se c'è)
+  const fallback = (self) => {
+    if (gw && self !== gw.key) return gw.key;
+    return inet && self !== inet.key ? inet.key : null;
+  };
+  const out = hosts.map((h) => ({
+    key: h.key, uplink: valid(h.uplink) || (h.isGateway ? (inet ? inet.key : null) : fallback(h.key)),
+    name: h.displayName, sub: h.ip, state: h.isOnline ? 'on' : 'off', tile: catIcon(h, true), x: h.topoX, y: h.topoY, host: h,
+  }));
+  virtual.forEach((n) => {
+    const k = TOPO_KINDS[n.kind] || TOPO_KINDS.other;
+    out.push({ key: n.key, uplink: valid(n.uplink) || (n.kind === 'internet' ? null : fallback(n.key)), name: n.name, sub: k.label, state: 'node', tile: icon(k.icon, { size: 26 }), x: n.topoX, y: n.topoY, node: n });
+  });
+  return out;
+}
+
+function updateZoomLabel() {
+  const l = $('[data-zoom-label]');
+  if (l) l.textContent = `${Math.round(S.devices.topo.zoom * 100)}%`;
+}
+
+/** Disegna (o ridisegna) la topologia; keep tiene scorrimento e riquadro, altrimenti adatta tutto alla vista. */
+function drawTopology({ keep = false } = {}) {
+  const host = $('#topo-host');
+  const t = S.devices.topo;
+  if (!host || !t.data) return;
+  if (t.ctl && t.ctl.busy()) return;
+  const nodes = topoNodes(t.data);
+  if (!nodes.length) {
+    t.scene = null;
+    host.innerHTML = emptyState('network', 'Nessun dispositivo da disegnare', 'Avvia una scansione: i dispositivi dell\'archivio di questa rete compaiono qui ad albero.');
+    return;
+  }
+  const before = keep && t.scene ? t.scene.frame : null;
+  const left = host.scrollLeft;
+  const top = host.scrollTop;
+  t.scene = renderTopology(host, { nodes, collapsed: t.collapsed, zoom: t.zoom, moved: t.moved, keep: before });
+  if (before) { host.scrollLeft = left; host.scrollTop = top; } else {
+    t.zoom = setTopologyZoom(host, t.scene, fitZoom(host, t.scene));
+    centerTopology(host, t.scene);
+    updateZoomLabel();
+  }
+}
+
+async function loadTopology() {
+  const t = S.devices.topo;
+  if (t.loading) return;
+  t.loading = true;
+  try {
+    t.data = await call('topology', { network: S.devices.network });
+    t.moved.clear();
+    drawTopology();
+  } catch (err) {
+    const host = $('#topo-host');
+    if (host) host.innerHTML = emptyState('alert', 'Topologia non disponibile', err.message);
+  }
+  t.loading = false;
+}
+
+/** Una modifica (collegamento, spostamento, nodo) e il disegno aggiornato dal programma. */
+async function topoCall(cmd, args, done) {
+  const t = S.devices.topo;
+  try {
+    t.data = await call(cmd, { network: S.devices.network, ...args });
+    t.moved.clear();
+    drawTopology({ keep: true });
+    if (done) toast(done, { tone: 'success' });
+  } catch (err) {
+    toastError(err);
+    loadTopology();
+  }
+}
+
+function openTopoHost(h) {
+  S.devices.tab = 'hosts';
+  S.devices.selectedId = h.id;
+  S.devices.detail = null;
+  rerender();
+  loadDetail(h.id);
+}
+
+/** Dopo ogni ridisegno della pagina: eventi sul contenitore nuovo, poi i dati (quelli di prima subito, se ci sono). */
+function mountTopology() {
+  const host = $('#topo-host');
+  if (!host) return;
+  const t = S.devices.topo;
+  t.scene = null;
+  t.ctl = bindTopology(host, () => t.scene, {
+    onOpen: (n) => { if (n.host) openTopoHost(n.host); else renameTopoNode(n.node); },
+    onMenu: (n, point) => topoMenu(n, point),
+    onToggle: (key) => { if (t.collapsed.has(key)) t.collapsed.delete(key); else t.collapsed.add(key); drawTopology({ keep: true }); },
+    onLink: (n, uplink) => topoCall('topologyLink', { key: n.key, uplink }, `${n.name} collegato a ${(t.scene.byKey.get(uplink) || { name: '' }).name}.`),
+    onMove: (moves) => { moves.forEach((m) => t.moved.set(m.key, { x: m.x, y: m.y })); drawTopology({ keep: true }); topoCall('topologyMove', { moves }, null); },
+    onZoom: (z) => { t.zoom = z; updateZoomLabel(); },
+    onIdle: () => drawTopology({ keep: true }),
+  });
+  host.innerHTML = '<div class="loading-block"><span class="spinner"></span> Lettura della topologia…</div>';
+  if (t.data) drawTopology();
+  loadTopology();
+}
+
+function topoMenu(n, point) {
+  const stored = n.host ? n.host.uplink : n.node.uplink;
+  const placed = n.host ? n.host.topoX != null : n.node.topoX != null;
+  const items = [{ header: n.name }];
+  if (n.host) items.push({ ic: 'server', label: 'Apri la scheda', run: () => openTopoHost(n.host) });
+  else items.push({ ic: 'edit', label: 'Rinomina…', run: () => renameTopoNode(n.node) });
+  items.push({ ic: 'link', label: 'Collega a…', run: () => topoLinkMenu(n, point) });
+  if (stored) items.push({ ic: 'unlink', label: 'Scollega (collegamento automatico)', run: () => topoCall('topologyLink', { key: n.key, uplink: '' }, `${n.name}: collegamento automatico.`) });
+  if (placed) items.push({ ic: 'refresh', label: 'Riporta nella disposizione automatica', run: () => topoCall('topologyMove', { moves: [{ key: n.key, x: null, y: null }] }, null) });
+  if (n.node) items.push({ sep: true }, { ic: 'trash', label: 'Elimina il nodo', run: () => deleteTopoNode(n.node) });
+  openMenu(point, items);
+}
+
+/** «Collega a…»: tutti i nodi a cui si può collegare (non se stesso, non il suo ramo): prima i nodi virtuali e il router. */
+function topoLinkMenu(n, point) {
+  const t = S.devices.topo;
+  if (!t.scene) return;
+  const branch = branchOf(n.key, t.scene.kids);
+  const rank = (c) => (c.state === 'node' ? 0 : c.host && c.host.isGateway ? 1 : 2);
+  const candidates = [...t.scene.byKey.values()]
+    .filter((c) => c.key !== n.key && !branch.has(c.key) && c.key !== n.uplink)
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  if (!candidates.length) { toast('Nessun altro nodo a cui collegarlo.', { tone: 'info' }); return; }
+  openMenu(point, [{ header: `Collega ${n.name} a…` }, ...candidates.map((c) => ({
+    ic: c.state === 'node' ? (TOPO_KINDS[c.node.kind] || TOPO_KINDS.other).icon : 'server', label: c.name, hint: c.sub,
+    run: () => topoCall('topologyLink', { key: n.key, uplink: c.key }, `${n.name} collegato a ${c.name}.`),
+  }))]);
+}
+
+function topoAddMenu(el) {
+  openMenu(el, [{ header: 'Aggiungi alla topologia' }, ...Object.entries(TOPO_KINDS).map(([kind, k]) => ({
+    ic: k.icon, label: kind === 'internet' ? 'Nuvola Internet' : k.label, run: () => addTopoNode(kind),
+  }))]);
+}
+
+async function addTopoNode(kind) {
+  const k = TOPO_KINDS[kind];
+  let name = k.label;
+  if (kind !== 'internet') {
+    const v = await promptDialog({ title: `Nuovo nodo: ${k.label.toLowerCase()}`, label: 'Nome', value: k.label, placeholder: 'Es. Switch armadio, AP piano terra', ic: k.icon, confirmText: 'Aggiungi' });
+    if (v == null) return;
+    name = v.trim() || k.label;
+  }
+  await topoCall('topologyNodeSave', { kind, name }, `«${name}» aggiunto: trascina i dispositivi sopra per collegarli.`);
+}
+
+async function renameTopoNode(node) {
+  const v = await promptDialog({ title: 'Nome del nodo', label: 'Nome', value: node.name, ic: 'edit', confirmText: 'Salva' });
+  if (v == null) return;
+  await topoCall('topologyNodeSave', { id: node.id, kind: node.kind, name: v.trim() }, null);
+}
+
+async function deleteTopoNode(node) {
+  const ok = await confirmDialog({ title: `Eliminare «${node.name}»?`, message: 'I dispositivi collegati sotto passano al nodo sopra di lui (o al posto automatico).', confirmText: 'Elimina', tone: 'danger' });
+  if (!ok) return;
+  await topoCall('topologyNodeDelete', { id: node.id }, `«${node.name}» eliminato.`);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Scheda Cambiamenti e scheda Scansioni
+// ---------------------------------------------------------------------------------------------------------------------
 function eventRow(e) {
   return `<button class="ev-row ${e.acknowledged ? '' : 'is-unseen'}" data-action="open-event" data-id="${e.id}" data-host="${e.hostId || ''}">
     <span class="pill ${KIND[e.kind] || ''}">${esc(e.kind)}</span>
@@ -367,10 +570,11 @@ function render() {
   if (!d) return `${head}<div class="card"><div class="loading-block"><span class="spinner"></span> Lettura dell'archivio…</div></div>`;
   const unseen = (d.events || []).filter((e) => !e.acknowledged).length;
   const tab = (key, ic, label, extra = '') => `<button class="tab ${S.devices.tab === key ? 'is-active' : ''}" data-action="tab" data-tab="${key}">${icon(ic)}${label}${extra}</button>`;
-  const tabs = `<div class="tabs">${tab('hosts', 'server', 'Dispositivi', ` <span class="count">${d.total}</span>`)}${tab('events', 'history', 'Cambiamenti', unseen ? ` <span class="count is-warning">${unseen}</span>` : '')}${tab('scans', 'clock', 'Scansioni', ` <span class="count">${(d.scans || []).length}</span>`)}</div>`;
+  const tabs = `<div class="tabs">${tab('hosts', 'server', 'Dispositivi', ` <span class="count">${d.total}</span>`)}${tab('topology', 'network', 'Topologia')}${tab('events', 'history', 'Cambiamenti', unseen ? ` <span class="count is-warning">${unseen}</span>` : '')}${tab('scans', 'clock', 'Scansioni', ` <span class="count">${(d.scans || []).length}</span>`)}</div>`;
   let body;
   if (S.devices.tab === 'events') body = eventsCard();
   else if (S.devices.tab === 'scans') body = scansCard();
+  else if (S.devices.tab === 'topology') body = topologyCard();
   else body = `<div class="grid grid-side devices-grid">${listCard()}${detailCard()}</div>`;
   return `${head}${networkBar()}${tabs}${body}<p class="page-foot muted">${icon('info', { size: 14 })} ${esc(footerText())}</p>`;
 }
@@ -380,6 +584,7 @@ function rerender() {
   const content = $('#content');
   // la lista dei dispositivi scorre dentro la sua scheda: dopo un ridisegno deve restare dov'era
   if (content) replaceKeepingScroll(content, render(), '.dev-list');
+  if (S.devices.tab === 'topology') mountTopology();
 }
 
 function renderList() {
@@ -596,6 +801,23 @@ const actions = {
   'sel-none': () => { S.devices.selected.clear(); renderList(); refreshBulkBar(); },
   'bulk-trust': (el) => bulkTrust(Number(el.dataset.trust) || 0),
   'bulk-forget': () => bulkForget(),
+  'topo-add': (el) => topoAddMenu(el),
+  'topo-reset': async () => {
+    if (!(await confirmDialog({ title: 'Disposizione automatica?', message: 'Ogni dispositivo torna al suo posto nell\'albero; i collegamenti restano.', confirmText: 'Riordina' }))) return;
+    S.devices.topo.collapsed.clear();
+    await topoCall('topologyReset', {}, 'Disposizione automatica.');
+    drawTopology();
+  },
+  'topo-zoom': (el) => {
+    const t = S.devices.topo;
+    const host = $('#topo-host');
+    if (!host || !t.scene) return;
+    const z = el.dataset.zoom;
+    const next = z === 'fit' ? fitZoom(host, t.scene) : z === '0' ? 1 : clampZoom(t.zoom * (z === '1' ? 1.2 : 1 / 1.2));
+    t.zoom = setTopologyZoom(host, t.scene, next);
+    updateZoomLabel();
+    if (z === 'fit') centerTopology(host, t.scene);
+  },
   'trust': (el) => { $$('.trust-seg button').forEach((b) => b.classList.toggle('is-active', b === el)); },
   'save-host': () => save(),
   'forget-host': () => forget(),
@@ -665,7 +887,7 @@ definePage('devices', {
   onChange: (el, field) => {
     if (field === 'onlyOnline') { S.devices.onlyOnline = el.checked; refreshList(); }
     if (field === 'subnet') { S.devices.subnet = el.value || ''; rerender(); if (S.devices.selectedId) renderDetail(); }
-    if (field === 'network') { S.devices.network = el.value; S.devices.subnet = ''; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; load(); }
+    if (field === 'network') { S.devices.network = el.value; S.devices.subnet = ''; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; S.devices.topo.data = null; S.devices.topo.collapsed.clear(); load(); }
   },
   onContext: (row, point) => hostMenu(point, row.dataset.id),
 });

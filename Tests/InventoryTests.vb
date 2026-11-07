@@ -124,6 +124,44 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub Topology_NodesLinksPositionsAndNoCycles()
+            store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
+            Dim hosts = store.Network.ListHosts()
+            Dim pc = hosts.Single(Function(h) h.HostName = "pc-prova")
+            Dim nas = hosts.Single(Function(h) h.HostName = "nas-prova")
+            Dim net = store.Network.ListNetworks().Single()
+
+            ' nodi virtuali: la nuvola Internet è una sola per rete, gli altri hanno il nome proposto se non se ne dà uno
+            Dim inet = store.Network.SaveTopoNode(net.Key, Nothing, "internet", "")
+            Assert.That(inet.Name, [Is].EqualTo("Internet"))
+            Assert.That(store.Network.SaveTopoNode(net.Key, Nothing, "internet", "Fibra").Id, [Is].EqualTo(inet.Id), "una sola nuvola")
+            Dim sw = store.Network.SaveTopoNode(net.Key, Nothing, "switch", "Switch armadio")
+            Assert.That(store.Network.ListTopoNodes(net.Key).Select(Function(n) n.Kind), [Is].EquivalentTo({"internet", "switch"}))
+            Assert.Throws(Of ArgumentException)(Sub() store.Network.SaveTopoNode(net.Key, Nothing, "hub", "x"))
+
+            ' collegamenti: pc → switch → nas; niente se stesso, niente giri chiusi
+            store.Network.SetUplink(sw.Key, "h:" & pc.Id)
+            store.Network.SetUplink("h:" & nas.Id, sw.Key)
+            Assert.That(store.Network.Get(nas.Id).Uplink, [Is].EqualTo(sw.Key))
+            Assert.Throws(Of ArgumentException)(Sub() store.Network.SetUplink(sw.Key, sw.Key))
+            Assert.Throws(Of ArgumentException)(Sub() store.Network.SetUplink("h:" & pc.Id, "h:" & nas.Id), "pc → nas → switch → pc sarebbe un giro")
+            Assert.Throws(Of ArgumentException)(Sub() store.Network.SetUplink("h:" & pc.Id, "x:1"))
+
+            ' posizioni: salvate, poi via con la disposizione automatica
+            store.Network.SetPosition("h:" & nas.Id, 120, 80)
+            Assert.That(store.Network.Get(nas.Id).TopoX, [Is].EqualTo(120))
+            store.Network.ResetTopology(net.Key)
+            Assert.That(store.Network.Get(nas.Id).TopoX, [Is].Null)
+            Assert.That(store.Network.Get(nas.Id).Uplink, [Is].EqualTo(sw.Key), "i collegamenti restano")
+
+            ' togliere lo switch: il NAS passa a chi stava sopra lo switch (il PC); togliere il PC: il NAS torna al posto automatico
+            store.Network.DeleteTopoNode(sw.Id)
+            Assert.That(store.Network.Get(nas.Id).Uplink, [Is].EqualTo("h:" & pc.Id))
+            store.Network.DeleteHost(pc.Id)
+            Assert.That(store.Network.Get(nas.Id).Uplink, [Is].Null)
+        End Sub
+
+        <Test>
         Public Sub DhcpRange_NormalizedStoredAndCleared()
             Assert.That(NetworkInventory.NormalizeDhcpRange("192.168.1.100-199"), [Is].EqualTo("192.168.1.100-192.168.1.199"))
             Assert.That(NetworkInventory.NormalizeDhcpRange(" 192.168.1.199 - 192.168.1.100 "), [Is].EqualTo("192.168.1.100-192.168.1.199"), "in ordine anche se scritto al contrario")

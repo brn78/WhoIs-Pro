@@ -171,7 +171,13 @@
     ports: ports.filter((p) => p.host === h.ipAddress && p.protocol === 'TCP').map((p) => ({ port: p.portNumber, protocol: 'TCP', service: p.serviceName, banner: p.banner })),
     latencyMs: h.responseTimeMs, alias: '', trust: 0, notes: '', icon: '', iconColor: '', isOnline: h.status !== 'Offline',
     displayName: h.hostname || h.ipAddress, isNew: i >= hosts.length - 2, sensitivePorts: [], network: NET, networkName: 'Villa Bianchi',
+    key: `h:${i + 1}`, uplink: null, topoX: null, topoY: null,
   }));
+  // topologia: nodi virtuali della rete dimostrativa (uno switch già collegato sotto il router)
+  const topoNodes = [{ id: 1, key: 'v:1', kind: 'switch', name: 'Switch armadio', uplink: null, topoX: null, topoY: null }];
+  let topoSeq = 1;
+  const topoFind = (key) => invHosts.find((h) => h.key === key) || topoNodes.find((n) => n.key === key) || null;
+  const topologyView = () => ({ network: NET, name: invCurrent.name, hosts: invHosts, nodes: topoNodes });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.10'), { alias: 'NAS ufficio', trust: 1, displayName: 'NAS ufficio', sensitivePorts: ['445 · SMB: condivisioni di file esposte'] });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.80'), { sensitivePorts: ['3389 · Desktop remoto (RDP)'] });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.102'), { trust: 2, notes: 'Telefono mai visto prima, compare la sera' });
@@ -235,6 +241,37 @@
       return inventory({ network: a.key });
     },
     inventoryForgetNetwork: () => inventory({}),
+    topology: () => topologyView(),
+    topologyLink: (a) => {
+      const n = topoFind(a.key);
+      if (!n) throw new Error('Nodo non valido.');
+      if (a.uplink === a.key) throw new Error('Un dispositivo non può essere collegato a se stesso.');
+      let cursor = a.uplink || null;
+      for (let guard = 0; cursor && guard < 1000; guard += 1) { if (cursor === a.key) throw new Error('Collegamento impossibile: si formerebbe un giro chiuso.'); const c = topoFind(cursor); cursor = c ? c.uplink : null; }
+      n.uplink = a.uplink || null;
+      return topologyView();
+    },
+    topologyMove: (a) => { for (const m of a.moves || []) { const n = topoFind(m.key); if (n) { n.topoX = m.x == null ? null : m.x; n.topoY = m.y == null ? null : m.y; } } return topologyView(); },
+    topologyNodeSave: (a) => {
+      const kind = String(a.kind || 'other');
+      if (a.id) { const n = topoNodes.find((x) => x.id === Number(a.id)); if (n) { n.name = String(a.name || n.name).trim() || n.name; n.kind = kind; } return topologyView(); }
+      if (kind === 'internet' && topoNodes.some((n) => n.kind === 'internet')) return topologyView();
+      topoSeq += 1;
+      const names = { internet: 'Internet', switch: 'Switch', ap: 'Access point', other: 'Apparato' };
+      topoNodes.push({ id: topoSeq, key: `v:${topoSeq}`, kind, name: String(a.name || '').trim() || names[kind] || 'Apparato', uplink: null, topoX: null, topoY: null });
+      return topologyView();
+    },
+    topologyNodeDelete: (a) => {
+      const i = topoNodes.findIndex((n) => n.id === Number(a.id));
+      if (i >= 0) {
+        const { key, uplink } = topoNodes[i];
+        for (const h of invHosts) if (h.uplink === key) h.uplink = uplink;
+        for (const n of topoNodes) if (n.uplink === key) n.uplink = uplink;
+        topoNodes.splice(i, 1);
+      }
+      return topologyView();
+    },
+    topologyReset: () => { for (const h of invHosts) { h.topoX = null; h.topoY = null; } for (const n of topoNodes) { n.topoX = null; n.topoY = null; } return topologyView(); },
     inventoryScan: () => ({ started: true, state: state() }),
     inventoryStop: () => null,
     // ?autoscan=5 nell'indirizzo dell'anteprima: avviso della scansione all'avvio con 5 secondi

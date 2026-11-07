@@ -48,8 +48,11 @@ Namespace Inventory
                     icon         TEXT,
                     icon_color   TEXT,
                     extra_ips    TEXT,
+                    uplink       TEXT,
+                    topo_x       REAL,
+                    topo_y       REAL,
                     UNIQUE(network_key, host_key)"
-        Private Const HostColumnList As String = "network_key, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, glyph, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, extra_ips"
+        Private Const HostColumnList As String = "network_key, host_key, mac, ip, hostname, netbios, workgroup, vendor, device_type, category, glyph, os_guess, is_gateway, is_local, first_seen, last_seen, seen_count, miss_count, last_scan_id, ports_json, latency_ms, alias, trust, notes, icon, icon_color, extra_ips, uplink, topo_x, topo_y"
 
 #End Region
 
@@ -111,7 +114,15 @@ Namespace Inventory
                     title        TEXT NOT NULL,
                     details      TEXT NOT NULL,
                     acknowledged INTEGER NOT NULL DEFAULT 0,
-                    network_key  TEXT);")
+                    network_key  TEXT);
+                CREATE TABLE IF NOT EXISTS net_topo_nodes (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    network_key  TEXT NOT NULL,
+                    kind         TEXT NOT NULL,
+                    name         TEXT NOT NULL,
+                    uplink       TEXT,
+                    topo_x       REAL,
+                    topo_y       REAL);")
         End Sub
 
         Private Sub CreateIndexes()
@@ -134,6 +145,10 @@ Namespace Inventory
             If Not hostColumns.Contains("icon_color") Then Execute("ALTER TABLE net_hosts ADD COLUMN icon_color TEXT")
             ' 2.8: altri IPv4 dello stesso dispositivo (stesso MAC), prima della ricostruzione per rete che copia tutte le colonne
             If Not hostColumns.Contains("extra_ips") Then Execute("ALTER TABLE net_hosts ADD COLUMN extra_ips TEXT")
+            ' 2.9: topologia (a chi è collegato il dispositivo e dove sta nel disegno)
+            If Not hostColumns.Contains("uplink") Then Execute("ALTER TABLE net_hosts ADD COLUMN uplink TEXT")
+            If Not hostColumns.Contains("topo_x") Then Execute("ALTER TABLE net_hosts ADD COLUMN topo_x REAL")
+            If Not hostColumns.Contains("topo_y") Then Execute("ALTER TABLE net_hosts ADD COLUMN topo_y REAL")
             If Not hostColumns.Contains("network_key") Then MigrateToNetworks()
             ' 2.8.2: intervallo DHCP dichiarato dall'utente per ogni rete
             If Not Columns("net_networks").Contains("dhcp_range") Then Execute("ALTER TABLE net_networks ADD COLUMN dhcp_range TEXT")

@@ -5,6 +5,20 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.9.0 · 7 novembre 2026
+
+- **Topologia della rete**, nuova scheda nella pagina *Dispositivi*: i dispositivi dell'archivio disegnati ad albero da
+  sinistra a destra (Internet → router → switch → dispositivi), con i collegamenti curvi verdi per chi risponde e
+  tratteggiati per chi no, il nome e l'indirizzo sotto ogni icona, il pulsante tondo per chiudere un ramo (chiuso dice
+  quanti dispositivi ci sono dietro). Senza indicazioni tutto sta sotto il router; con **Aggiungi** si mettono la
+  **nuvola Internet**, uno **switch**, un **access point** o un **altro apparato** che la scansione non vede, e
+  trascinando un dispositivo sopra un altro lo si **collega** lì (il menu del tasto destro ha *Collega a…*, *Scollega*,
+  *Rinomina* ed *Elimina*; chi stava sotto un nodo tolto passa a quello sopra). Ogni dispositivo si **trascina** dove si
+  vuole e il suo ramo lo segue (con Maiusc si sposta solo lui); le posizioni e i collegamenti restano nell'archivio, per
+  rete. La rotellina ingrandisce attorno al puntatore, trascinando il fondo si scorre, **Adatta** fa entrare tutto nella
+  vista, **Disposizione automatica** rimette ogni dispositivo al suo posto nell'albero. Un clic su un dispositivo apre
+  la sua scheda.
+
 ## 2.8.3 · 7 novembre 2026
 
 - **Menu dell'icona nell'area di notifica rifatto**, con le icone di Windows accanto a ogni voce e un ordine che segue
