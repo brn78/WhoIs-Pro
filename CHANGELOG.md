@@ -5,6 +5,15 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.8.3 · 7 novembre 2026
+
+- **Menu dell'icona nell'area di notifica rifatto**, con le icone di Windows accanto a ogni voce e un ordine che segue
+  l'uso: **Apri WhoIs Pro** (o **Riduci nell'area di notifica** con la finestra aperta), **Scansiona la rete adesso**
+  (aggiorna l'archivio della rete in cui sei e avvisa alla fine con quanti dispositivi e cosa è cambiato),
+  **N cambiamenti da vedere** quando ce ne sono (apre direttamente la scheda *Cambiamenti*), **Dispositivi**, il
+  sottomenu **Profili di rete** (profili con la spunta su quello attivo, *Torna a DHCP* per le schede con indirizzo
+  fisso, *Gestisci i profili…*), **Impostazioni** ed **Esci**.
+
 ## 2.8.2 · 7 novembre 2026
 
 - **Dispositivi: la lista resta dov'era** quando si apre la scheda di un dispositivo. Prima, mentre la scheda si

@@ -85,29 +85,72 @@ Namespace UI
             _closeToTray = settings.TrayIcon AndAlso settings.CloseToTray
         End Sub
 
+        ' Icone delle voci: glifi di Segoe MDL2 Assets (il carattere delle icone di Windows 10 e 11), disegnati nel colore del testo del menu
+        Private Const GlyphWindow As Integer = &HE7C4    ' finestra
+        Private Const GlyphMinimize As Integer = &HE921  ' riduci
+        Private Const GlyphScan As Integer = &HE72C      ' aggiorna / scansione
+        Private Const GlyphChanges As Integer = &HE7C1   ' bandierina
+        Private Const GlyphDevices As Integer = &HE772   ' dispositivi
+        Private Const GlyphProfiles As Integer = &HE839  ' scheda di rete
+        Private Const GlyphDhcp As Integer = &HE8AB      ' interruttore
+        Private Const GlyphAdd As Integer = &HE710       ' più
+        Private Const GlyphSettings As Integer = &HE713  ' ingranaggio
+        Private Const GlyphExit As Integer = &HE7E8      ' spegni
+        Private Shared ReadOnly GlyphCache As New Dictionary(Of (Code As Integer, Size As Integer, Argb As Integer), Image)()
+
+        ''' <summary>Immagine di un glifo per il menu dell'icona, della misura delle immagini del menu e del colore del suo testo (una volta sola per combinazione).</summary>
+        Private Function Glyph(code As Integer) As Image
+            Dim size = Math.Max(16, _trayMenu.ImageScalingSize.Width)
+            Dim color = _trayMenu.ForeColor
+            Dim key = (code, size, color.ToArgb())
+            Dim cached As Image = Nothing
+            If GlyphCache.TryGetValue(key, cached) Then Return cached
+            Dim bmp As New Bitmap(size, size)
+            Using g = Graphics.FromImage(bmp)
+                g.Clear(Color.Transparent)
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit
+                Using f As New Font("Segoe MDL2 Assets", size * 0.72F, FontStyle.Regular, GraphicsUnit.Pixel)
+                    Using brush As New SolidBrush(color)
+                        Using sf As New StringFormat(StringFormat.GenericTypographic) With {.Alignment = StringAlignment.Center, .LineAlignment = StringAlignment.Center}
+                            g.DrawString(ChrW(code), f, brush, New RectangleF(0, 0, size, size), sf)
+                        End Using
+                    End Using
+                End Using
+            End Using
+            GlyphCache(key) = bmp
+            Return bmp
+        End Function
+
         ''' <summary>
-        ''' Menu dell'icona: Apri (Riduci con la finestra aperta), i profili di rete (con la spunta su quello che la scheda ha adesso), Torna a DHCP per le
-        ''' schede dei profili che hanno un indirizzo statico, Esci. Applicare chiede il consenso di Windows (UAC).
+        ''' Menu dell'icona, nell'ordine dell'uso: Apri (Riduci con la finestra aperta); Scansiona la rete adesso e, se ci sono,
+        ''' i cambiamenti da vedere; Dispositivi; il sottomenu Profili di rete (spunta sul profilo che la scheda ha adesso, Torna a
+        ''' DHCP per le schede con indirizzo statico, Gestisci i profili…); Impostazioni; Esci. Applicare un profilo chiede il
+        ''' consenso di Windows (UAC). Si ricostruisce a ogni apertura.
         ''' </summary>
         Private Sub BuildTrayMenu()
             _trayMenu.Items.Clear()
+            _trayMenu.ImageScalingSize = New Size(LogicalToDeviceUnits(16), LogicalToDeviceUnits(16))
             ' Con la finestra aperta la prima voce la riduce nell'area di notifica, altrimenti la apre
             Dim openItem = If(Visible AndAlso WindowState <> FormWindowState.Minimized,
-                              New ToolStripMenuItem("Riduci nell'area di notifica", Nothing, Sub() HideToTray()),
-                              New ToolStripMenuItem("Apri WhoIs Pro", Nothing, Sub() ShowFromTray()))
+                              New ToolStripMenuItem("Riduci nell'area di notifica", Glyph(GlyphMinimize), Sub() HideToTray()),
+                              New ToolStripMenuItem("Apri WhoIs Pro", Glyph(GlyphWindow), Sub() ShowFromTray()))
             openItem.Font = New Font(openItem.Font, FontStyle.Bold)
             _trayMenu.Items.Add(openItem)
             _trayMenu.Items.Add(New ToolStripSeparator())
 
-            Dim data = _bridge.TrayProfiles()
-            Dim title = New ToolStripMenuItem("Profili di rete") With {.Enabled = False}
-            _trayMenu.Items.Add(title)
-            If data.Profiles.Count = 0 Then
-                _trayMenu.Items.Add(New ToolStripMenuItem("Crea un profilo…", Nothing, Sub()
-                                                                                   ShowFromTray()
-                                                                                   PostEvent("navigate", New With {.page = "settings", .tab = "network"})
-                                                                               End Sub))
+            ' la rete in cui si trova il PC: scansione subito e cambiamenti da vedere nell'archivio
+            Dim status = _bridge.TrayStatus()
+            Dim scanText = If(status.Scanning, "Scansione in corso…", If(status.NetworkName Is Nothing, "Scansiona la rete adesso", $"Scansiona «{status.NetworkName}» adesso"))
+            _trayMenu.Items.Add(New ToolStripMenuItem(scanText, Glyph(GlyphScan), Async Sub() Await _bridge.ScanFromTrayAsync()) With {.Enabled = Not status.Scanning})
+            If status.Unseen > 0 Then
+                _trayMenu.Items.Add(New ToolStripMenuItem(If(status.Unseen = 1, "1 cambiamento da vedere", $"{status.Unseen} cambiamenti da vedere"), Glyph(GlyphChanges), Sub() OpenPage("devices", "events")))
             End If
+            _trayMenu.Items.Add(New ToolStripMenuItem("Dispositivi", Glyph(GlyphDevices), Sub() OpenPage("devices", Nothing)))
+            _trayMenu.Items.Add(New ToolStripSeparator())
+
+            ' Profili di rete: sottomenu con la spunta sul profilo che la scheda ha adesso
+            Dim data = _bridge.TrayProfiles()
+            Dim profiles As New ToolStripMenuItem("Profili di rete", Glyph(GlyphProfiles))
             For Each p In data.Profiles.OrderBy(Function(x) x.Adapter).ThenBy(Function(x) x.Name)
                 Dim profile = p
                 Dim nic = data.Adapters.FirstOrDefault(Function(a) String.Equals(a.Name, profile.Adapter, StringComparison.OrdinalIgnoreCase))
@@ -119,19 +162,30 @@ Namespace UI
                     item.Enabled = False
                     item.Text &= " · scheda assente"
                 End If
-                _trayMenu.Items.Add(item)
+                profiles.DropDownItems.Add(item)
             Next
             ' Torna a DHCP: per le schede dei profili che adesso hanno un indirizzo statico
             Dim statics = data.Adapters.Where(Function(a) a.Up AndAlso Not a.Dhcp AndAlso
                                                   data.Profiles.Any(Function(p) String.Equals(p.Adapter, a.Name, StringComparison.OrdinalIgnoreCase))).ToList()
+            If statics.Count > 0 Then profiles.DropDownItems.Add(New ToolStripSeparator())
             For Each a In statics
                 Dim adapter = a.Name
-                _trayMenu.Items.Add(New ToolStripMenuItem($"Torna a DHCP   ({adapter})", Nothing,
+                profiles.DropDownItems.Add(New ToolStripMenuItem($"Torna a DHCP   ({adapter})", Glyph(GlyphDhcp),
                     Async Sub() Await _bridge.ApplyFromTrayAsync(New Config.NetworkProfile With {.Name = "DHCP", .Adapter = adapter, .Dhcp = True})))
             Next
-
+            If profiles.DropDownItems.Count > 0 Then profiles.DropDownItems.Add(New ToolStripSeparator())
+            profiles.DropDownItems.Add(New ToolStripMenuItem(If(data.Profiles.Count = 0, "Crea un profilo…", "Gestisci i profili…"),
+                                                             Glyph(If(data.Profiles.Count = 0, GlyphAdd, GlyphSettings)), Sub() OpenPage("settings", "network")))
+            _trayMenu.Items.Add(profiles)
+            _trayMenu.Items.Add(New ToolStripMenuItem("Impostazioni", Glyph(GlyphSettings), Sub() OpenPage("settings", Nothing)))
             _trayMenu.Items.Add(New ToolStripSeparator())
-            _trayMenu.Items.Add("Esci", Nothing, Sub() ExitFromTray())
+            _trayMenu.Items.Add(New ToolStripMenuItem("Esci", Glyph(GlyphExit), Sub() ExitFromTray()))
+        End Sub
+
+        ''' <summary>Dal menu dell'icona: la finestra si apre (o torna davanti) su una pagina, eventualmente su una sua scheda.</summary>
+        Private Sub OpenPage(page As String, tab As String)
+            ShowFromTray()
+            PostEvent("navigate", New With {.page = page, .tab = tab})
         End Sub
 
         ''' <summary>Avviso dall'icona anche con la finestra aperta: l'esito di un'azione scelta dal menu dell'icona.</summary>

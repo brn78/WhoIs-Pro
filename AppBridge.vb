@@ -747,6 +747,47 @@ Namespace UI
             End Try
         End Function
 
+        ''' <summary>Per il menu dell'icona: se una scansione è in corso, il nome della rete in cui si trova il PC e quanti cambiamenti sono da vedere.</summary>
+        Public Function TrayStatus() As (Scanning As Boolean, NetworkName As String, Unseen As Integer)
+            Dim current = _watch.CurrentNetwork()
+            Dim name As String = Nothing
+            If current IsNot Nothing Then name = If(_store.Network.GetNetwork(current.Key)?.DisplayName, current.Label)
+            Return (_watch.IsScanning, name, _store.Network.UnacknowledgedCount(NetworkFilter("")))
+        End Function
+
+        ''' <summary>
+        ''' «Scansiona la rete adesso» dal menu dell'icona: aggiorna l'archivio della rete in cui si trova il PC (come
+        ''' «Scansiona adesso» nella pagina Dispositivi) e dice com'è andata con un avviso di Windows.
+        ''' </summary>
+        Public Async Function ScanFromTrayAsync() As Task
+            If _watch.IsScanning Then
+                _owner.ShowTrayMessage("Scansione già in corso", "Aspetta che finisca: il risultato arriva nella pagina Dispositivi.", ToolTipIcon.Info)
+                Return
+            End If
+            Try
+                Dim options As New ScanOptions With {
+                    .Target = If(_settings.NetworkScanTarget, "").Trim(),
+                    .TimeoutMs = Clamp(_settings.NetworkScanTimeoutMs, 100, 10000)
+                }
+                Dim e = Await _watch.ScanAsync(automatic:=False, options:=options)
+                If e Is Nothing Then Return
+                Dim where = If(e.Network Is Nothing, "rete", If(_store.Network.GetNetwork(e.Network.Key)?.DisplayName, e.Network.Label))
+                If e.Cancelled Then
+                    _owner.ShowTrayMessage("Scansione interrotta", $"«{where}»: {e.HostsFound} dispositivi trovati fin lì.", ToolTipIcon.Warning)
+                ElseIf e.Error IsNot Nothing Then
+                    _owner.ShowTrayMessage("Scansione non riuscita", e.Error, ToolTipIcon.Warning)
+                Else
+                    Dim diff = e.Outcome?.Diff
+                    Dim detail = If(diff Is Nothing, "Archivio aggiornato.",
+                                    If(diff.IsFirst, "Archivio di questa rete creato: dalla prossima scansione arrivano i confronti e gli avvisi.",
+                                       If(diff.NewHosts.Count + diff.ReturnedHosts.Count + diff.GoneHosts.Count + diff.ChangedHosts.Count = 0, "Nessun cambiamento rispetto alla scansione precedente.", diff.Summarize())))
+                    _owner.ShowTrayMessage($"«{where}»: {e.HostsFound} dispositivi in {e.Seconds:N0} s", detail, ToolTipIcon.Info)
+                End If
+            Catch ex As Exception
+                _owner.ShowTrayMessage("Scansione non avviata", Describe(ex), ToolTipIcon.Warning)
+            End Try
+        End Function
+
         ''' <summary>Profili salvati e configurazione attuale delle schede, per il menu dell'icona.</summary>
         Public Function TrayProfiles() As (Profiles As List(Of NetworkProfile), Adapters As List(Of AdapterConfig))
             Dim configs As List(Of AdapterConfig)
