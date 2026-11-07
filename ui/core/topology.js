@@ -14,7 +14,11 @@ const TILE = 52; // il riquadro dell'icona
 const PAD = 36;
 const BELOW = 40; // sotto l'icona: nome e indirizzo
 const MARGIN = 360; // spazio libero attorno ai nodi: ci si trascina dentro senza che il disegno salti
+const GRID_FROM = 6; // da quanti dispositivi senza rami in poi, sotto lo stesso nodo, si va a griglia su più colonne
+const TRUNK = 118; // la linea verticale della griglia, a destra del nodo a monte
 const collator = new Intl.Collator('it', { numeric: true, sensitivity: 'base' });
+/** Colonne della griglia dei dispositivi senza rami sotto uno stesso nodo (1 = in colonna come i rami). */
+export const gridColumns = (n) => (n < GRID_FROM ? 1 : Math.min(5, Math.ceil(Math.sqrt(n / 2.5))));
 export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 2;
 export const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(z) || 1));
@@ -62,30 +66,47 @@ function branchInfo(key, kids, seen = new Set()) {
 
 const saved = (n) => (n.x !== null && n.x !== undefined && n.y !== null && n.y !== undefined ? { x: n.x, y: n.y } : null);
 
+const slotX = (col) => PAD + col * COL + TILE / 2 + 60;
+
 /**
  * Dove sta ogni nodo (il centro dell'icona, in punti del disegno): la posizione salvata, altrimenti il posto nell'albero
- * accanto al suo nodo a monte (lo segue se lo si sposta). Anche i rami chiusi hanno un posto: serve a chi li apre.
- * @returns {Map<string, {x:number, y:number, auto:boolean}>}
+ * accanto al suo nodo a monte (lo segue se lo si sposta). Sotto uno stesso nodo prima i rami (switch, access point…),
+ * poi i dispositivi senza rami: pochi in colonna, tanti in una griglia su più colonne (rail: collegati con una linea
+ * verticale e una orizzontale per riga, non con una curva ciascuno). Anche i rami chiusi hanno un posto: serve a chi li apre.
+ * @returns {Map<string, {x:number, y:number, auto:boolean, rail:boolean}>}
  */
 export function topologyPositions(nodes, collapsed = new Set()) {
   const { roots, kids } = topologyTree(nodes);
   const auto = new Map();
+  const rail = new Set();
   let row = 0;
   const place = (n, depth, seen) => {
     if (seen.has(n.key)) return null;
     seen.add(n.key);
     // i rami chiusi occupano una riga sola: i loro nodi si mettono come se fossero aperti, ma non spostano gli altri
     const closed = collapsed.has(n.key);
-    const placed = (kids.get(n.key) || []).map((k) => (closed ? null : place(k, depth + 1, seen))).filter(Boolean);
-    const y = placed.length ? (placed[0].y + placed[placed.length - 1].y) / 2 : (row++) * ROW;
-    const p = { x: PAD + depth * COL + TILE / 2 + 60, y: PAD + y + TILE / 2 };
+    const children = closed ? [] : (kids.get(n.key) || []).filter((k) => !seen.has(k.key));
+    const ys = [];
+    children.filter((k) => kids.has(k.key)).forEach((k) => { const r = place(k, depth + 1, seen); if (r) ys.push(r.y); });
+    const leaves = children.filter((k) => !kids.has(k.key) && !seen.has(k.key));
+    const cols = gridColumns(leaves.length);
+    leaves.forEach((k, i) => {
+      seen.add(k.key);
+      const ky = (row + Math.floor(i / cols)) * ROW;
+      auto.set(k.key, { x: slotX(depth + 1 + (i % cols)), y: PAD + ky + TILE / 2 });
+      if (cols > 1) rail.add(k.key);
+      ys.push(ky);
+    });
+    if (leaves.length) row += Math.ceil(leaves.length / cols);
+    const y = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : (row++) * ROW;
+    const p = { x: slotX(depth), y: PAD + y + TILE / 2 };
     auto.set(n.key, p);
     if (closed) {
       let r = 0;
       const hidden = (pk, d) => (kids.get(pk) || []).forEach((k) => {
         if (seen.has(k.key)) return;
         seen.add(k.key);
-        auto.set(k.key, { x: PAD + d * COL + TILE / 2 + 60, y: p.y + (r++) * ROW });
+        auto.set(k.key, { x: slotX(d), y: p.y + (r++) * ROW });
         hidden(k.key, d + 1);
       });
       hidden(n.key, depth + 1);
@@ -99,12 +120,12 @@ export function topologyPositions(nodes, collapsed = new Set()) {
     const own = saved(n);
     const a = auto.get(n.key);
     let p;
-    if (own) p = { ...own, auto: false };
+    if (own) p = { ...own, auto: false, rail: false };
     else if (parent) {
       const pa = auto.get(parent.key);
       const pp = pos.get(parent.key);
-      p = { x: pp.x + (a.x - pa.x), y: pp.y + (a.y - pa.y), auto: true };
-    } else p = { x: a.x, y: a.y, auto: true };
+      p = { x: pp.x + (a.x - pa.x), y: pp.y + (a.y - pa.y), auto: true, rail: rail.has(n.key) };
+    } else p = { x: a.x, y: a.y, auto: true, rail: false };
     pos.set(n.key, p);
     (kids.get(n.key) || []).forEach((k) => { if (!pos.has(k.key)) walk(k, n); });
   };
@@ -139,19 +160,35 @@ function linkGeometry(p, c, parentHasKids, childHasKids) {
   return `M${p.x} ${y1} C${p.x} ${y1 + k}, ${c.x} ${y2 - k}, ${c.x} ${y2}`;
 }
 
-/** Le linee dei collegamenti tra i nodi mostrati (pos: le posizioni da usare, anche durante un trascinamento). */
+/** Il collegamento di un nodo della griglia: dal nodo a monte una linea verticale, poi orizzontale fino alla sua riga. */
+function railGeometry(p, c) {
+  const x1 = p.x + TILE / 2 + 17;
+  const xt = p.x + TRUNK;
+  const x2 = c.x - TILE / 2 - 4;
+  if (x2 <= xt + 10 || c.x < p.x) return linkGeometry(p, c, true, false);
+  return `M${x1} ${p.y} H${xt} V${c.y} H${x2}`;
+}
+
+/**
+ * Le linee dei collegamenti tra i nodi mostrati (pos: le posizioni da usare, anche durante un trascinamento). Le linee
+ * della griglia si sovrappongono (stessa verticale, stessa riga): si disegnano prima le più lontane, così ogni tratto
+ * prende il colore del nodo più vicino che ci passa.
+ */
 function linksSvg(scene, pos) {
-  const out = [];
+  const links = [];
   scene.shown.forEach((n) => {
     if (!n.uplink || !scene.shown.has(n.uplink)) return;
     const p = pos.get(n.uplink);
     const c = pos.get(n.key);
     if (!p || !c) return;
-    const d = linkGeometry(p, c, scene.kids.has(n.uplink), scene.kids.has(n.key));
-    const tone = n.state === 'off' ? 'off' : n.state === 'on' ? 'on' : 'muted';
-    out.push(`<path class="topo-link is-${tone}" d="${d}"></path>`);
+    links.push({ n, p, c, rail: !!c.rail && !!p });
   });
-  return out.join('');
+  links.sort((a, b) => (a.rail !== b.rail ? (a.rail ? -1 : 1) : a.rail ? (b.c.x - a.c.x) || (b.c.y - a.c.y) : 0));
+  return links.map(({ n, p, c, rail }) => {
+    const d = rail ? railGeometry(p, c) : linkGeometry(p, c, scene.kids.has(n.uplink), scene.kids.has(n.key));
+    const tone = n.state === 'off' ? 'off' : n.state === 'on' ? 'on' : 'muted';
+    return `<path class="topo-link is-${tone}" d="${d}"></path>`;
+  }).join('');
 }
 
 /** Il riquadro dei nodi mostrati (con il posto per nomi e indirizzi). */

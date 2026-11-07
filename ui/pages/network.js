@@ -694,7 +694,7 @@ function details(ip) {
         : '<p class="card-text muted">Nessuna scansione delle porte per questo host.</p>'}</div>
   </div>`;
   const d = openDrawer({
-    ic: 'monitor', title: h.customName ? `${h.customName} · ${h.ipAddress}` : h.ipAddress, sub: `${h.deviceType}${hostName(h) ? ` · ${hostName(h)}` : ''}`, body,
+    ic: 'monitor', title: h.customName ? `${h.customName} · ${h.ipAddress}` : h.ipAddress, sub: `${h.deviceType}${hostName(h) ? ` · ${hostName(h)}` : ''}`, body, resize: 'host',
     foot: `<div class="left">
         ${rescanButton(ip, true)}
         <button class="btn btn-primary" data-action="host-ports" data-ip="${esc(ip)}">${icon('plug')} Scansiona le porte</button>

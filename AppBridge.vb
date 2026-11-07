@@ -182,7 +182,7 @@ Namespace UI
                 Case "topology" : Return TopologyView(ArgText(args, "network"))
                 Case "topologyLink" : Return TopologyEdit(args, Sub() _store.Network.SetUplink(ArgText(args, "key"), ArgText(args, "uplink")))
                 Case "topologyMove" : Return TopologyEdit(args, Sub() TopologyMove(args))
-                Case "topologyNodeSave" : Return TopologyEdit(args, Sub() _store.Network.SaveTopoNode(TopologyNetworkKey(ArgText(args, "network")), If(ArgLong(args, "id") > 0, CType(ArgLong(args, "id"), Long?), Nothing), ArgText(args, "kind"), ArgText(args, "name")))
+                Case "topologyNodeSave" : Return TopologyEdit(args, Sub() TopologyNodeSave(args))
                 Case "topologyNodeDelete" : Return TopologyEdit(args, Sub() _store.Network.DeleteTopoNode(ArgLong(args, "id")))
                 Case "topologyReset" : Return TopologyEdit(args, Sub() _store.Network.ResetTopology(TopologyNetworkKey(ArgText(args, "network"))))
                 Case "inventoryForgetNetwork"
@@ -1516,6 +1516,21 @@ Namespace UI
             End Try
             Return TopologyView(ArgText(args, "network"))
         End Function
+
+        ''' <summary>
+        ''' Nuovo nodo virtuale (senza id) oppure nome e tipo di uno esistente. Dalla scheda di un dispositivo («Collegato a:
+        ''' nuovo switch») arrivano anche uplink, il nodo a monte del nuovo apparato (il posto che aveva il dispositivo), e
+        ''' attach, il dispositivo da collegare sotto di lui: lo switch si mette in mezzo con una sola operazione.
+        ''' </summary>
+        Private Sub TopologyNodeSave(args As JsonElement)
+            Dim inv = _store.Network
+            Dim id = ArgLong(args, "id")
+            Dim node = inv.SaveTopoNode(TopologyNetworkKey(ArgText(args, "network")), If(id > 0, CType(id, Long?), Nothing), ArgText(args, "kind"), ArgText(args, "name"))
+            Dim uplink = ArgText(args, "uplink")
+            If Not String.IsNullOrWhiteSpace(uplink) Then inv.SetUplink(node.Key, uplink)
+            Dim attach = ArgText(args, "attach")
+            If Not String.IsNullOrWhiteSpace(attach) Then inv.SetUplink(attach, node.Key)
+        End Sub
 
         ''' <summary>Posizioni appena trascinate, moves = [{key, x, y}]; x e y nulli = torna al posto automatico.</summary>
         Private Sub TopologyMove(args As JsonElement)

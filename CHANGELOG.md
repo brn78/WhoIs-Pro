@@ -5,6 +5,25 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.10.0 · 7 novembre 2026
+
+- **Scheda del dispositivo nel pannello laterale**, come nella pagina *Rete*: nella pagina *Dispositivi* l'elenco occupa
+  tutta la larghezza e un clic apre la scheda a destra, con i soliti campi (alias, fiducia, note, porte, storia, *Dimentica*,
+  *Scansiona le porte*, *Apri con…*). Il pannello si **ridimensiona** trascinando il bordo sinistro (la larghezza resta
+  memorizzata; doppio clic sul bordo per quella normale), anche quello di *Rete*.
+- **Collegato a… nella scheda**: nella scheda di ogni dispositivo (e di ogni nodo virtuale) c'è la sezione *Topologia* con
+  la tendina **Collegato a** (automatico, uno switch, un access point, il router, un altro dispositivo) e l'elenco
+  **Collegati qui**, con la spunta accanto a ogni dispositivo della rete: spuntarlo lo collega a questo nodo, toglierla lo
+  stacca; una ricerca filtra l'elenco. Dalla stessa tendina si crea un **nuovo switch, access point o apparato «qui in
+  mezzo»**: prende il posto che aveva il dispositivo e il dispositivo si attacca a lui, in una sola mossa.
+- **Scheda del nodo virtuale**: un clic su uno switch, un access point o la nuvola Internet nella topologia apre il suo
+  pannello, con nome e tipo da cambiare, *Collegato a*, l'elenco dei collegati con la spunta, *Posto automatico* ed
+  *Elimina*.
+- **Topologia più leggibile**: sotto uno stesso nodo prima i rami (switch, access point, dispositivi con qualcosa sotto),
+  poi i dispositivi senza rami; da sei in su stanno in una **griglia su più colonne** collegata da una linea verticale e
+  una orizzontale per riga, invece di una colonna lunga quanto la rete con una curva per ciascuno. Le modifiche fatte dal
+  pannello si vedono subito nel disegno dietro.
+
 ## 2.9.0 · 7 novembre 2026
 
 - **Topologia della rete**, nuova scheda nella pagina *Dispositivi*: i dispositivi dell'archivio disegnati ad albero da

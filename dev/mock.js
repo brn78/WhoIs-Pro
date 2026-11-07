@@ -258,7 +258,10 @@
       if (kind === 'internet' && topoNodes.some((n) => n.kind === 'internet')) return topologyView();
       topoSeq += 1;
       const names = { internet: 'Internet', switch: 'Switch', ap: 'Access point', other: 'Apparato' };
-      topoNodes.push({ id: topoSeq, key: `v:${topoSeq}`, kind, name: String(a.name || '').trim() || names[kind] || 'Apparato', uplink: null, topoX: null, topoY: null });
+      const node = { id: topoSeq, key: `v:${topoSeq}`, kind, name: String(a.name || '').trim() || names[kind] || 'Apparato', uplink: a.uplink || null, topoX: null, topoY: null };
+      topoNodes.push(node);
+      // attach: il dispositivo dalla cui scheda nasce il nodo si collega sotto di lui (il nodo prende il suo posto)
+      if (a.attach) { const child = topoFind(a.attach); if (child) child.uplink = node.key; }
       return topologyView();
     },
     topologyNodeDelete: (a) => {

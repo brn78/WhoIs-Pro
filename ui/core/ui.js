@@ -50,12 +50,79 @@ export function openModal({ ic = 'info', tone = '', title, sub = '', body = '', 
   return entry;
 }
 
-export function openDrawer({ ic = 'info', title, sub = '', body, foot = '', size = 'drawer-lg' }) {
-  return mountOverlay(`<div class="drawer-host"><div class="drawer ${size}" role="dialog" aria-modal="true">
-      <div class="drawer-head"><span class="drawer-icon">${icon(ic)}</span>
+/**
+ * Pannello laterale. iconHtml al posto dell'icona del tema (es. l'icona della categoria del dispositivo); resize = una
+ * chiave: il bordo sinistro si trascina per cambiare la larghezza, che resta memorizzata con quella chiave (doppio clic:
+ * larghezza normale); onClose: chiamata quando l'utente lo chiude (non quando lo chiude la pagina cambiando pagina).
+ */
+export function openDrawer({ ic = 'info', iconHtml = '', title, sub = '', body, foot = '', size = 'drawer-lg', resize = '', onClose }) {
+  const entry = mountOverlay(`<div class="drawer-host"><div class="drawer ${size}${resize ? ' is-resizable' : ''}" role="dialog" aria-modal="true">
+      ${resize ? '<div class="drawer-grip" data-drawer-grip title="Trascina per allargare o stringere il pannello · doppio clic: larghezza normale"></div>' : ''}
+      <div class="drawer-head"><span class="drawer-icon${iconHtml ? ' is-plain' : ''}">${iconHtml || icon(ic)}</span>
         <div class="drawer-titles"><h2>${esc(title)}</h2>${sub ? `<p>${esc(sub)}</p>` : ''}</div>
         <button class="btn btn-ghost btn-icon btn-sm" data-action="close-overlay" title="Chiudi">${icon('close')}</button></div>
-      <div class="drawer-body">${body}</div>${foot ? `<div class="drawer-foot">${foot}</div>` : ''}</div></div>`);
+      <div class="drawer-body">${body}</div>${foot ? `<div class="drawer-foot">${foot}</div>` : ''}</div></div>`, onClose);
+  if (resize) resizableDrawer($('.drawer', entry.wrap), resize);
+  return entry;
+}
+
+/** Aggiorna sul posto un pannello aperto (solo le parti passate); il corpo tiene lo scorrimento. */
+export function updateDrawer(drawer, { title, sub, ic, iconHtml, body, foot }) {
+  if (!drawer) return;
+  const h2 = $('.drawer-head h2', drawer);
+  if (h2 && title != null) h2.textContent = title;
+  if (sub != null) {
+    let p = $('.drawer-head p', drawer);
+    if (!p) { p = document.createElement('p'); $('.drawer-titles', drawer).appendChild(p); }
+    p.textContent = sub;
+    p.classList.toggle('hidden', !sub);
+  }
+  const ico = $('.drawer-icon', drawer);
+  if (ico && (iconHtml || ic)) { ico.innerHTML = iconHtml || icon(ic); ico.classList.toggle('is-plain', !!iconHtml); }
+  const b = $('.drawer-body', drawer);
+  if (b && body != null) { const top = b.scrollTop; b.innerHTML = body; b.scrollTop = top; }
+  const f = $('.drawer-foot', drawer);
+  if (f && foot != null) f.innerHTML = foot;
+}
+
+// larghezze scelte dall'utente per i pannelli ridimensionabili, per chiave (solo comodità: restano al prossimo avvio)
+const DRAWER_WIDTHS = 'drawer-widths';
+const DRAWER_MIN = 380;
+function storedWidths() {
+  try { return JSON.parse(localStorage.getItem(DRAWER_WIDTHS) || '{}') || {}; } catch { return {}; }
+}
+function saveWidth(key, width) {
+  try {
+    const all = storedWidths();
+    if (width) all[key] = width; else delete all[key];
+    localStorage.setItem(DRAWER_WIDTHS, JSON.stringify(all));
+  } catch { /* senza memoria locale */ }
+}
+
+/** Il bordo sinistro del pannello si trascina: la larghezza resta tra 380 px e quasi tutta la finestra. */
+function resizableDrawer(drawer, key) {
+  const apply = (w) => { drawer.style.maxWidth = `${Math.min(Math.max(DRAWER_MIN, window.innerWidth - 72), Math.max(DRAWER_MIN, Math.round(w)))}px`; };
+  const saved = Number(storedWidths()[key]);
+  if (saved) apply(saved);
+  const grip = $('[data-drawer-grip]', drawer);
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = drawer.getBoundingClientRect().width;
+    drawer.classList.add('is-resizing');
+    try { grip.setPointerCapture(e.pointerId); } catch { /* puntatore già rilasciato */ }
+    const move = (ev) => apply(w0 + (x0 - ev.clientX));
+    const stop = () => {
+      grip.removeEventListener('pointermove', move);
+      drawer.classList.remove('is-resizing');
+      saveWidth(key, Math.round(drawer.getBoundingClientRect().width));
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', stop, { once: true });
+    grip.addEventListener('pointercancel', stop, { once: true });
+  });
+  grip.addEventListener('dblclick', () => { drawer.style.maxWidth = ''; saveWidth(key, 0); });
 }
 
 export function confirmDialog({ title, message, confirmText = 'Conferma', tone = 'warning', ic = 'alert' }) {

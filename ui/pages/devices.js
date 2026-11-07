@@ -8,8 +8,8 @@ import { catIcon } from '../core/categories.js';
 import { S, definePage, adopt, bus } from '../core/store.js';
 import { navigate } from '../core/nav.js';
 import { replaceKeepingScroll, table } from '../core/table.js';
-import { renderTopology, bindTopology, setTopologyZoom, fitZoom, centerTopology, clampZoom, branchOf } from '../core/topology.js';
-import { confirmDialog, emptyState, note, openMenu, pageHead, promptDialog, toast, toastError } from '../core/ui.js';
+import { renderTopology, bindTopology, setTopologyZoom, fitZoom, centerTopology, clampZoom, branchOf, topologyTree } from '../core/topology.js';
+import { closeOverlays, confirmDialog, emptyState, note, openDrawer, openMenu, pageHead, promptDialog, toast, toastError, updateDrawer } from '../core/ui.js';
 import { isHikvision, launchItems } from './network.js';
 
 S.devices = {
@@ -19,11 +19,14 @@ S.devices = {
   network: '',         // rete mostrata: '' = quella in cui si trova il PC, '*' = tutte, altrimenti la chiave
   networkPinned: false, // vero se l'utente ha scelto una rete: non si segue più quella del PC finché non cambia pagina
   q: '', subnet: '', onlyOnline: false,
-  selectedId: null, detail: null, saved: false,
+  // pannello laterale: il dispositivo aperto (id e scheda letta) oppure il nodo virtuale aperto { key, network }
+  selectedId: null, detail: null, saved: false, node: null, seed: null,
+  topoList: false, topoFilter: '', // sezione Topologia della scheda: elenco «collegati qui» aperto e sua ricerca
   selectMode: false,   // selezione multipla: le righe si spuntano e la barra sopra l'elenco agisce su tutte insieme
   selected: new Set(), // id dei dispositivi spuntati
-  // scheda Topologia: risposta di «topology» (hosts, nodes), ingrandimento, rami chiusi, scena disegnata, posizioni appena trascinate
-  topo: { data: null, zoom: 1, collapsed: new Set(), scene: null, moved: new Map(), loading: false, ctl: null },
+  // scheda Topologia: risposta di «topology» (hosts, nodes), ingrandimento, rami chiusi, scena disegnata, posizioni appena
+  // trascinate; byNet: la stessa risposta per rete, per la sezione Topologia della scheda (anche di un'altra rete)
+  topo: { data: null, zoom: 1, collapsed: new Set(), scene: null, moved: new Map(), loading: false, ctl: null, byNet: new Map(), pending: new Set() },
   pendingHost: null,   // scheda da aprire appena i dati arrivano (dall'avviso o da un evento)
   badgeSeen: false,    // il contatore «da vedere» si azzera quando si apre la pagina
 };
@@ -252,7 +255,7 @@ async function bulkForget() {
     S.devices.data = await call('inventoryBulk', { ids, action: 'forget', network: S.devices.network });
     if (S.st) S.st.inventory = S.devices.data.watch;
     S.devices.selected.clear();
-    if (ids.includes(S.devices.selectedId)) { S.devices.selectedId = null; S.devices.detail = null; }
+    if (ids.includes(S.devices.selectedId)) { S.devices.selectedId = null; S.devices.detail = null; closeOverlays(); }
     rerender();
     toast(`${plural(ids.length, 'dispositivo dimenticato', 'dispositivi dimenticati')}.`, { tone: 'success' });
     bus.dispatchEvent(new Event('state'));
@@ -265,17 +268,81 @@ function portPill(p, sensitive) {
   return `<span class="pill ${bad ? 'warning' : 'success'}" title="${esc(title)}">${p.port}${p.service ? ` · ${esc(p.service)}` : ''}${bad ? ` ${icon('alert', { size: 12 })}` : ''}</span>`;
 }
 
-function detailCard() {
+// ---------------------------------------------------------------------------------------------------------------------
+// Pannello laterale (come in Rete, ridimensionabile): la scheda del dispositivo oppure quella di un nodo virtuale della
+// topologia; si apre dall'elenco, dalla topologia, da un cambiamento o dall'avviso. Un solo pannello alla volta: se è
+// già aperto si aggiorna sul posto (titolo, corpo, piede), così la lista dietro non si ridisegna.
+// ---------------------------------------------------------------------------------------------------------------------
+const drawerEl = () => $('#overlays .drawer[data-dev-drawer]');
+/** Il dispositivo nell'elenco caricato (per titolo e icona mentre la scheda arriva). */
+const listHost = (id) => ((S.devices.data && S.devices.data.hosts) || []).find((h) => h.id === Number(id)) || null;
+
+function highlightRow() {
+  $$('.dev-row').forEach((r) => r.classList.toggle('is-active', !S.devices.selectMode && Number(r.dataset.id) === S.devices.selectedId));
+}
+
+/** Apre (o aggiorna) il pannello con quello che c'è nello stato: nodo virtuale, dispositivo in lettura o scheda completa. */
+function showDrawer() {
+  const parts = S.devices.node ? nodeDrawerParts() : hostDrawerParts();
+  if (!parts) { closeOverlays(); return; }
+  const open = drawerEl();
+  if (open) { updateDrawer(open, parts); return; }
+  const d = openDrawer({
+    ...parts, resize: 'devices',
+    onClose: () => { S.devices.selectedId = null; S.devices.detail = null; S.devices.node = null; highlightRow(); },
+  });
+  const drawer = $('.drawer', d.wrap);
+  if (drawer) { drawer.dataset.devDrawer = '1'; drawer.classList.add('dev-drawer'); }
+}
+
+/** La scheda di un dispositivo dell'archivio; seed = i dati già noti (dall'elenco o dalla topologia) per il titolo immediato. */
+function openDetail(id, seed = null) {
+  S.devices.node = null;
+  S.devices.selectedId = Number(id);
+  S.devices.detail = null;
+  S.devices.saved = false;
+  S.devices.topoList = false;
+  S.devices.topoFilter = '';
+  S.devices.seed = seed;
+  highlightRow();
+  showDrawer();
+  loadDetail(S.devices.selectedId);
+}
+
+/** La scheda di un nodo virtuale (nuvola Internet, switch, access point, apparato): nome, tipo, collegamenti. */
+function openTopoNode(node, network = topoNetworkKey()) {
+  S.devices.selectedId = null;
+  S.devices.detail = null;
+  S.devices.node = { key: node.key, network };
+  S.devices.topoList = true;
+  S.devices.topoFilter = '';
+  highlightRow();
+  showDrawer();
+}
+
+function hostDrawerParts() {
   const det = S.devices.detail;
-  // sempre con l'id: così la scheda si sostituisce sul posto e la lista accanto non viene ridisegnata (e non torna in cima)
-  if (!S.devices.selectedId) return `<section class="card" id="dev-detail"><div class="empty"><div class="empty-icon">${icon('monitor')}</div><h3>Scegli un dispositivo</h3><p>La scheda mostra identità, porte, storia e i campi che puoi compilare: alias, fiducia e note.</p></div></section>`;
-  if (!det) return `<section class="card" id="dev-detail"><div class="loading-block"><span class="spinner"></span> Lettura della scheda…</div></section>`;
+  const id = S.devices.selectedId;
+  if (!id) return null;
+  const known = (det && det.host) || listHost(id) || S.devices.seed;
+  const foot = `<div class="left">
+      <button class="btn btn-sm" data-action="host-ports" ${det ? '' : 'disabled'}>${icon('plug')} Scansiona le porte</button>
+      <button class="btn btn-sm" data-action="host-tools" ${det ? '' : 'disabled'}>${icon('external')} Apri con… ${icon('chevronDown', { size: 13 })}</button></div>
+    <button class="btn btn-sm btn-danger-ghost" data-action="forget-host" ${det ? '' : 'disabled'} title="Toglie il dispositivo e la sua storia dall'archivio: se ricompare torna «nuovo»">${icon('trash')} Dimentica</button>
+    <button class="btn btn-sm btn-ghost" data-action="close-overlay">Chiudi</button>`;
+  if (!det) {
+    return {
+      iconHtml: known ? catIcon(known, true) : '', ic: 'monitor', title: known ? known.displayName : 'Dispositivo', sub: known ? known.deviceType : '',
+      body: '<div class="loading-block"><span class="spinner"></span> Lettura della scheda…</div>', foot,
+    };
+  }
   const h = det.host;
   const t = TRUST[h.trust] || TRUST[0];
   const sensitive = new Set((h.sensitivePorts || []).map((s) => Number(String(s).split(' ')[0])));
   const chip = (ic, text, title = '') => `<span class="chip" title="${esc(title || text)}">${icon(ic, { size: 13 })}${esc(text)}</span>`;
   const addrKind = dhcpKind(h.ip, networkOf(h));
   const chips = [
+    `<span class="pill ${t.tone} pill-dot" title="Fiducia">${t.label}</span>`,
     chip('mapPin', h.ip),
     ...(addrKind ? [chip('mapPin', addrKind === 'dhcp' ? 'assegnato dal router (DHCP)' : 'indirizzo fisso', `Intervallo DHCP della rete: ${networkOf(h).dhcpRange}`)] : []),
     ...(h.extraIps || []).map((ip) => chip('mapPin', ip, `Altro IPv4 dello stesso dispositivo (stesso MAC): ${ip}`)),
@@ -292,10 +359,7 @@ function detailCard() {
   const sens = h.sensitivePorts || [];
   const trustBtn = (v) => `<button type="button" class="${h.trust === v ? 'is-active' : ''}" data-action="trust" data-trust="${v}">${TRUST[v].label}</button>`;
   const history = det.history || [];
-  return `<section class="card dev-detail" id="dev-detail">
-    <div class="card-head"><div class="card-title">${catIcon(h, true)}<div class="dev-title"><h2 class="trunc" title="${esc(h.displayName)}">${esc(h.displayName)}</h2><span class="card-sub">${esc(h.deviceType)}${h.osGuess ? ` · ${esc(h.osGuess)}` : ''}</span></div></div>
-      ${h.trust ? `<span class="pill ${t.tone} pill-dot">${t.label}</span>` : '<span class="pill">Da classificare</span>'}</div>
-    <div class="card-body"><div class="fields">
+  const body = `<div class="fields">
       <div class="chips">${chips}</div>
       <p class="card-text muted">${seen}</p>
       ${sens.length ? note('warning', 'alert', `<b>Da verificare:</b> ${sens.map(esc).join(', ')}. Servizi esposti in rete senza cifratura o con storia di abusi: se non servono, spegnili o limitali.`) : ''}
@@ -305,18 +369,177 @@ function detailCard() {
         <div class="field span-2"><label for="d-notes">Note</label><textarea class="input" id="d-notes" data-field="notes" rows="2" placeholder="Dove sta, a chi appartiene, cosa fa">${esc(h.notes || '')}</textarea></div>
       </div>
       <div class="row"><button class="btn btn-primary btn-sm" data-action="save-host">${icon('save')} Salva</button><span class="field-status ok ${S.devices.saved ? '' : 'hidden'}" id="dev-saved">${icon('checkCircle')} Salvato</span></div>
+      ${topoSection(h.key, h.network)}
       <div><div class="form-section-head"><div class="form-section-title">${icon('plug')}Porte aperte</div><span class="muted" style="font-size:12.5px">${ports.length ? plural(ports.length, 'porta', 'porte') : ''}</span></div>
         ${ports.length ? `<div class="pill-list">${ports.map((p) => portPill(p, sensitive)).join('')}</div>` : '<p class="card-text muted">Nessuna porta aperta tra quelle provate.</p>'}</div>
       <div><div class="form-section-head"><div class="form-section-title">${icon('history')}Storia</div></div>
         ${history.length ? `<div class="ev-list compact">${history.map(eventRow).join('')}</div>` : '<p class="card-text muted">Nessun evento registrato.</p>'}</div>
-    </div></div>
-    <div class="card-foot">
-      <button class="btn btn-sm" data-action="host-ports">${icon('plug')} Scansiona le porte</button>
-      <button class="btn btn-sm" data-action="host-tools">${icon('external')} Apri con… ${icon('chevronDown', { size: 13 })}</button>
-      <span class="spacer"></span>
-      <button class="btn btn-sm btn-danger-ghost" data-action="forget-host" title="Toglie il dispositivo e la sua storia dall'archivio: se ricompare torna «nuovo»">${icon('trash')} Dimentica</button>
-    </div>
-  </section>`;
+    </div>`;
+  return { iconHtml: catIcon(h, true), title: h.displayName, sub: `${h.deviceType}${h.osGuess ? ` · ${h.osGuess}` : ''}`, body, foot };
+}
+
+/** Il nodo virtuale aperto nel pannello, dai dati della topologia della sua rete (null se non c'è più). */
+function openNode() {
+  const n = S.devices.node;
+  if (!n) return null;
+  const data = S.devices.topo.byNet.get(n.network);
+  return data ? (data.nodes || []).find((x) => x.key === n.key) || null : null;
+}
+
+function nodeDrawerParts() {
+  const n = S.devices.node;
+  const data = S.devices.topo.byNet.get(n.network);
+  if (!data) { ensureTopo(n.network); return { ic: 'network', title: 'Nodo', sub: '', body: '<div class="loading-block"><span class="spinner"></span> Lettura della topologia…</div>', foot: '<button class="btn btn-sm btn-ghost" data-action="close-overlay">Chiudi</button>' }; }
+  const node = openNode();
+  if (!node) return null;
+  const k = TOPO_KINDS[node.kind] || TOPO_KINDS.other;
+  const kindOpt = (kind) => `<option value="${kind}" ${kind === node.kind ? 'selected' : ''}>${esc(kind === 'internet' ? 'Nuvola Internet' : TOPO_KINDS[kind].label)}</option>`;
+  const body = `<div class="fields">
+      <p class="card-text muted">${node.kind === 'internet' ? 'La nuvola Internet: ci sta sotto il router (o i router). Non la vede la scansione: è un segnaposto del disegno.' : 'Un apparato che la scansione non vede (non ha un indirizzo, o non risponde): serve a disegnare la rete com\'è davvero. Spunta qui sotto i dispositivi collegati alle sue porte.'}</p>
+      <div class="form-grid">
+        <div class="field ${node.kind === 'internet' ? 'span-2' : ''}"><label for="n-name">Nome</label><input class="input" id="n-name" maxlength="80" value="${esc(node.name)}" placeholder="${esc(k.label)}" autocomplete="off"></div>
+        ${node.kind === 'internet' ? '' : `<div class="field"><label for="n-kind">Tipo</label><select class="select" id="n-kind">${['switch', 'ap', 'other'].map(kindOpt).join('')}</select></div>`}
+      </div>
+      <div class="row"><button class="btn btn-primary btn-sm" data-action="node-save">${icon('save')} Salva</button><span class="field-status ok ${S.devices.saved ? '' : 'hidden'}" id="dev-saved">${icon('checkCircle')} Salvato</span></div>
+      ${topoSection(node.key, n.network)}
+    </div>`;
+  const foot = `<div class="left">${node.topoX != null ? `<button class="btn btn-sm" data-action="node-unpin" title="Torna al posto automatico nel disegno">${icon('refresh')} Posto automatico</button>` : ''}</div>
+    <button class="btn btn-sm btn-danger-ghost" data-action="node-delete" title="Toglie il nodo dal disegno: chi ci stava sotto passa al nodo sopra di lui">${icon('trash')} Elimina</button>
+    <button class="btn btn-sm btn-ghost" data-action="close-overlay">Chiudi</button>`;
+  return { ic: k.icon, iconHtml: '', title: node.name, sub: node.kind === 'internet' ? 'Nuvola Internet' : k.label, body, foot };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Sezione «Topologia» della scheda (dispositivo o nodo virtuale): «Collegato a» con tutti i nodi possibili (o un nuovo
+// switch / access point da creare lì), e l'elenco di chi sta collegato sotto, con la spunta per attaccare o staccare
+// ---------------------------------------------------------------------------------------------------------------------
+const topoCollator = new Intl.Collator('it', { numeric: true, sensitivity: 'base' });
+const storedUplinkOf = (c) => (c.host ? c.host.uplink : c.node.uplink) || '';
+const topoRank = (c) => (c.state === 'node' ? (c.node.kind === 'internet' ? 0 : 1) : c.host && c.host.isGateway ? 2 : 3);
+/** La rete della scheda Topologia (la chiave risolta dal programma, se i dati sono arrivati). */
+const topoNetworkKey = () => (S.devices.topo.data && S.devices.topo.data.network) || S.devices.network;
+
+/** Legge la topologia di una rete per la scheda, una volta sola; poi la sezione si ridisegna. */
+async function ensureTopo(network) {
+  const t = S.devices.topo;
+  if (!network || t.byNet.has(network) || t.pending.has(network)) return;
+  t.pending.add(network);
+  try {
+    const data = await call('topology', { network });
+    t.byNet.set(network, data);
+    if (data.network !== network) t.byNet.set(data.network, data);
+    if (S.devices.node) showDrawer(); else refreshTopoSection();
+  } catch (err) {
+    const box = $('#topo-section');
+    if (box) box.innerHTML = `<div class="form-section-head"><div class="form-section-title">${icon('network')}Topologia</div></div><p class="card-text muted">${esc(err.message)}</p>`;
+  }
+  t.pending.delete(network);
+}
+
+function refreshTopoSection() {
+  const box = $('#topo-section');
+  if (!box) return;
+  const self = S.devices.node ? S.devices.node : S.devices.detail ? { key: S.devices.detail.host.key, network: S.devices.detail.host.network } : null;
+  if (self) box.outerHTML = topoSection(self.key, self.network);
+}
+
+function topoSection(selfKey, network) {
+  const head = (extra = '') => `<div class="form-section-head"><div class="form-section-title">${icon('network')}Topologia</div>${extra}</div>`;
+  const data = S.devices.topo.byNet.get(network);
+  if (!data) { ensureTopo(network); return `<div id="topo-section">${head()}<p class="card-text muted">Lettura…</p></div>`; }
+  const nodes = topoNodes(data);
+  const { kids, byKey } = topologyTree(nodes);
+  const me = byKey.get(selfKey);
+  if (!me) return `<div id="topo-section">${head()}<p class="card-text muted">Questo dispositivo non è nel disegno della sua rete.</p></div>`;
+  const branch = branchOf(selfKey, kids);
+  const ancestors = new Set();
+  for (let c = me.uplink; c && byKey.has(c) && !ancestors.has(c); c = byKey.get(c).uplink) ancestors.add(c);
+  const stored = storedUplinkOf(me);
+  const storedValid = stored && byKey.has(stored) ? stored : '';
+  const byName = (a, b) => topoRank(a) - topoRank(b) || topoCollator.compare(a.name, b.name);
+  const label = (c) => `${c.name}${c.sub && c.sub !== c.name ? ` · ${c.sub}` : ''}`;
+
+  // «Collegato a»: tutti tranne se stesso e il suo ramo; la nuvola Internet non ha nulla sopra
+  let uplinkField = '';
+  if (!(me.node && me.node.kind === 'internet')) {
+    const candidates = [...byKey.values()].filter((c) => c.key !== selfKey && !branch.has(c.key)).sort(byName);
+    const opt = (c) => `<option value="${esc(c.key)}" ${c.key === storedValid ? 'selected' : ''}>${esc(label(c))}</option>`;
+    const virtual = candidates.filter((c) => c.state === 'node');
+    const devices = candidates.filter((c) => c.state !== 'node');
+    const autoLabel = me.uplink && !storedValid && byKey.has(me.uplink) ? `Automatico (sotto ${byKey.get(me.uplink).name})` : 'Automatico';
+    uplinkField = `<div class="field"><label for="d-uplink">Collegato a</label>
+      <select class="select" id="d-uplink" data-field="topo-uplink" title="Il nodo a monte nel disegno della rete: lo switch, l'access point o il dispositivo a cui è attaccato. Si salva subito.">
+        <option value="" ${storedValid ? '' : 'selected'}>${esc(autoLabel)}</option>
+        ${virtual.length ? `<optgroup label="Apparati">${virtual.map(opt).join('')}</optgroup>` : ''}
+        ${devices.length ? `<optgroup label="Dispositivi">${devices.map(opt).join('')}</optgroup>` : ''}
+        <optgroup label="Nuovo apparato, qui in mezzo"><option value="new:switch">Nuovo switch…</option><option value="new:ap">Nuovo access point…</option><option value="new:other">Nuovo apparato…</option></optgroup>
+      </select></div>`;
+  }
+
+  // «Collegati qui»: chi può stare sotto (non se stesso, non chi gli sta sopra); già sotto = spuntato
+  const under = [...byKey.values()].filter((c) => c.key !== selfKey && !ancestors.has(c.key));
+  const direct = under.filter((c) => c.uplink === selfKey);
+  const q = S.devices.topoFilter.trim().toLowerCase();
+  const rows = under
+    .filter((c) => !q || label(c).toLowerCase().includes(q))
+    .sort((a, b) => (b.uplink === selfKey) - (a.uplink === selfKey) || byName(a, b));
+  const row = (c) => {
+    const on = c.uplink === selfKey;
+    const auto = on && storedUplinkOf(c) !== selfKey;
+    const where = !on && c.uplink && byKey.has(c.uplink) ? ` · sotto ${byKey.get(c.uplink).name}` : '';
+    const tile = c.host ? catIcon(c.host) : icon((TOPO_KINDS[c.node.kind] || TOPO_KINDS.other).icon);
+    return `<label class="topo-pick ${on ? 'is-on' : ''} ${auto ? 'is-auto' : ''}" title="${auto ? 'Collegato qui in automatico (nessuna scelta salvata): per spostarlo spuntalo nella scheda di un altro nodo o cambia il suo «Collegato a»' : on ? 'Togli la spunta per staccarlo (torna al posto automatico)' : `Spunta per collegarlo qui${where ? ` (adesso è${where})` : ''}`}">
+      <input type="checkbox" data-field="topo-child" value="${esc(c.key)}" ${on ? 'checked' : ''} ${auto ? 'disabled' : ''}>${tile}
+      <span class="topo-pick-text"><b class="trunc">${esc(c.name)}</b><small class="trunc">${esc(c.sub || '')}${auto ? ' · automatico' : ''}${esc(where)}</small></span></label>`;
+  };
+  const open = S.devices.topoList;
+  const count = direct.length ? `<b>${direct.length}</b> ${direct.length === 1 ? 'collegato qui' : 'collegati qui'}` : 'Nessun dispositivo collegato qui';
+  const list = open
+    ? `<div class="topo-pick-head">${under.length > 8 ? `<div class="search">${icon('search')}<input class="input input-sm" data-field="topo-filter" value="${esc(S.devices.topoFilter)}" placeholder="Cerca tra i dispositivi" autocomplete="off"></div>` : `<span>${count}</span>`}
+        <button class="btn btn-sm btn-ghost" data-action="topo-list" title="Chiude l'elenco">${icon('chevronDown', { size: 14 })} Chiudi</button></div>
+      <div class="topo-pick-list" id="topo-pick-list">${rows.length ? rows.map(row).join('') : '<p class="card-text muted" style="padding:10px 12px">Nessun dispositivo corrisponde.</p>'}</div>`
+    : `<div class="topo-pick-head"><span>${count}</span><button class="btn btn-sm" data-action="topo-list" title="Elenco di tutti i dispositivi della rete: spunta quelli collegati a questo nodo">${icon('link', { size: 14 })} Scegli i collegati…</button></div>`;
+  return `<div id="topo-section">${head(`<span class="muted" style="font-size:12.5px">${esc(data.name || '')}</span>`)}
+    <div class="fields" style="gap:12px">${uplinkField}<div class="field"><span class="field-label">Collegati qui</span>${list}</div></div></div>`;
+}
+
+/** «Collegato a» scelto nella scheda: un nodo esistente, nessuno (automatico) oppure un nuovo apparato da mettere in mezzo. */
+async function pickUplink(selfKey, network, value) {
+  const data = S.devices.topo.byNet.get(network);
+  const nodes = data ? topoNodes(data) : [];
+  const me = nodes.find((n) => n.key === selfKey);
+  const name = me ? me.name : 'Il nodo';
+  if (value.startsWith('new:')) {
+    const kind = value.slice(4);
+    const k = TOPO_KINDS[kind] || TOPO_KINDS.other;
+    const v = await promptDialog({ title: `Nuovo ${k.label.toLowerCase()} sopra ${name}`, sub: 'Prende il posto che aveva il dispositivo nel disegno, e il dispositivo si attacca a lui', label: 'Nome', value: k.label, placeholder: 'Es. Switch armadio, AP piano terra', ic: k.icon, confirmText: 'Crea e collega' });
+    if (v == null) { refreshTopoSection(); return; }
+    const title = v.trim() || k.label;
+    await topoCall('topologyNodeSave', { kind, name: title, uplink: me ? storedUplinkOf(me) : '', attach: selfKey }, `«${title}» creato: ${name} è collegato lì, e «${title}» sta dove stava ${name}.`, network);
+    return;
+  }
+  const target = nodes.find((n) => n.key === value);
+  await topoCall('topologyLink', { key: selfKey, uplink: value }, value ? `${name} collegato a ${target ? target.name : value}.` : `${name}: torna al collegamento automatico.`, network);
+}
+
+/** Spunta tolta o messa nell'elenco «Collegati qui». */
+async function pickChild(selfKey, network, childKey, on) {
+  const data = S.devices.topo.byNet.get(network);
+  const nodes = data ? topoNodes(data) : [];
+  const me = nodes.find((n) => n.key === selfKey);
+  const child = nodes.find((n) => n.key === childKey);
+  const cn = child ? child.name : childKey;
+  await topoCall('topologyLink', { key: childKey, uplink: on ? selfKey : '' }, on ? `${cn} collegato a ${me ? me.name : selfKey}.` : `${cn} staccato: torna al collegamento automatico.`, network);
+}
+
+/** Nome e tipo del nodo virtuale aperto. */
+async function saveNode() {
+  const node = openNode();
+  if (!node) return;
+  const name = ($('#n-name') || {}).value || '';
+  const kind = ($('#n-kind') || {}).value || node.kind;
+  const data = await topoCall('topologyNodeSave', { id: node.id, kind, name: name.trim() }, null, S.devices.node.network);
+  if (data) { S.devices.saved = true; showDrawer(); toast(`Nodo «${name.trim() || node.name}» salvato.`, { tone: 'success' }); }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -404,14 +627,24 @@ function drawTopology({ keep = false } = {}) {
   }
 }
 
+/** La risposta di «topology» entra nella memoria per rete e, se è la rete della scheda Topologia, nel disegno. */
+function adoptTopology(data, { keep = true } = {}) {
+  const t = S.devices.topo;
+  t.byNet.set(data.network, data);
+  const shown = t.data ? t.data.network : topoNetworkKey();
+  if (!shown || shown === '*' || shown === data.network) {
+    t.data = data;
+    t.moved.clear();
+    drawTopology({ keep });
+  }
+}
+
 async function loadTopology() {
   const t = S.devices.topo;
   if (t.loading) return;
   t.loading = true;
   try {
-    t.data = await call('topology', { network: S.devices.network });
-    t.moved.clear();
-    drawTopology();
+    adoptTopology(await call('topology', { network: S.devices.network }), { keep: false });
   } catch (err) {
     const host = $('#topo-host');
     if (host) host.innerHTML = emptyState('alert', 'Topologia non disponibile', err.message);
@@ -419,26 +652,24 @@ async function loadTopology() {
   t.loading = false;
 }
 
-/** Una modifica (collegamento, spostamento, nodo) e il disegno aggiornato dal programma. */
-async function topoCall(cmd, args, done) {
-  const t = S.devices.topo;
+/**
+ * Una modifica (collegamento, spostamento, nodo) sulla rete indicata e il disegno aggiornato dal programma; aggiorna anche
+ * la sezione Topologia del pannello aperto. Restituisce i dati nuovi, null se la modifica è stata rifiutata.
+ */
+async function topoCall(cmd, args, done, network = S.devices.network) {
   try {
-    t.data = await call(cmd, { network: S.devices.network, ...args });
-    t.moved.clear();
-    drawTopology({ keep: true });
+    const data = await call(cmd, { network, ...args });
+    adoptTopology(data);
+    if (network && network !== data.network) S.devices.topo.byNet.set(network, data);
+    if (S.devices.node) showDrawer(); else refreshTopoSection();
     if (done) toast(done, { tone: 'success' });
+    return data;
   } catch (err) {
     toastError(err);
+    if (S.devices.node) showDrawer(); else refreshTopoSection();
     loadTopology();
+    return null;
   }
-}
-
-function openTopoHost(h) {
-  S.devices.tab = 'hosts';
-  S.devices.selectedId = h.id;
-  S.devices.detail = null;
-  rerender();
-  loadDetail(h.id);
 }
 
 /** Dopo ogni ridisegno della pagina: eventi sul contenitore nuovo, poi i dati (quelli di prima subito, se ci sono). */
@@ -448,7 +679,7 @@ function mountTopology() {
   const t = S.devices.topo;
   t.scene = null;
   t.ctl = bindTopology(host, () => t.scene, {
-    onOpen: (n) => { if (n.host) openTopoHost(n.host); else renameTopoNode(n.node); },
+    onOpen: (n) => { if (n.host) openDetail(n.host.id, n.host); else openTopoNode(n.node); },
     onMenu: (n, point) => topoMenu(n, point),
     onToggle: (key) => { if (t.collapsed.has(key)) t.collapsed.delete(key); else t.collapsed.add(key); drawTopology({ keep: true }); },
     onLink: (n, uplink) => topoCall('topologyLink', { key: n.key, uplink }, `${n.name} collegato a ${(t.scene.byKey.get(uplink) || { name: '' }).name}.`),
@@ -457,7 +688,7 @@ function mountTopology() {
     onIdle: () => drawTopology({ keep: true }),
   });
   host.innerHTML = '<div class="loading-block"><span class="spinner"></span> Lettura della topologia…</div>';
-  if (t.data) drawTopology();
+  if (t.data && (t.data.network === S.devices.network || !S.devices.network || S.devices.network === '*')) drawTopology();
   loadTopology();
 }
 
@@ -465,8 +696,8 @@ function topoMenu(n, point) {
   const stored = n.host ? n.host.uplink : n.node.uplink;
   const placed = n.host ? n.host.topoX != null : n.node.topoX != null;
   const items = [{ header: n.name }];
-  if (n.host) items.push({ ic: 'server', label: 'Apri la scheda', run: () => openTopoHost(n.host) });
-  else items.push({ ic: 'edit', label: 'Rinomina…', run: () => renameTopoNode(n.node) });
+  if (n.host) items.push({ ic: 'server', label: 'Apri la scheda', run: () => openDetail(n.host.id, n.host) });
+  else items.push({ ic: 'edit', label: 'Apri la scheda (nome, collegati)', run: () => openTopoNode(n.node) });
   items.push({ ic: 'link', label: 'Collega a…', run: () => topoLinkMenu(n, point) });
   if (stored) items.push({ ic: 'unlink', label: 'Scollega (collegamento automatico)', run: () => topoCall('topologyLink', { key: n.key, uplink: '' }, `${n.name}: collegamento automatico.`) });
   if (placed) items.push({ ic: 'refresh', label: 'Riporta nella disposizione automatica', run: () => topoCall('topologyMove', { moves: [{ key: n.key, x: null, y: null }] }, null) });
@@ -507,16 +738,11 @@ async function addTopoNode(kind) {
   await topoCall('topologyNodeSave', { kind, name }, `«${name}» aggiunto: trascina i dispositivi sopra per collegarli.`);
 }
 
-async function renameTopoNode(node) {
-  const v = await promptDialog({ title: 'Nome del nodo', label: 'Nome', value: node.name, ic: 'edit', confirmText: 'Salva' });
-  if (v == null) return;
-  await topoCall('topologyNodeSave', { id: node.id, kind: node.kind, name: v.trim() }, null);
-}
-
-async function deleteTopoNode(node) {
+async function deleteTopoNode(node, network = S.devices.network) {
   const ok = await confirmDialog({ title: `Eliminare «${node.name}»?`, message: 'I dispositivi collegati sotto passano al nodo sopra di lui (o al posto automatico).', confirmText: 'Elimina', tone: 'danger' });
   if (!ok) return;
-  await topoCall('topologyNodeDelete', { id: node.id }, `«${node.name}» eliminato.`);
+  if (S.devices.node && S.devices.node.key === node.key) { S.devices.node = null; closeOverlays(); }
+  await topoCall('topologyNodeDelete', { id: node.id }, `«${node.name}» eliminato: chi ci stava sotto è passato al nodo sopra.`, network);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -575,7 +801,7 @@ function render() {
   if (S.devices.tab === 'events') body = eventsCard();
   else if (S.devices.tab === 'scans') body = scansCard();
   else if (S.devices.tab === 'topology') body = topologyCard();
-  else body = `<div class="grid grid-side devices-grid">${listCard()}${detailCard()}</div>`;
+  else body = listCard();
   return `${head}${networkBar()}${tabs}${body}<p class="page-foot muted">${icon('info', { size: 14 })} ${esc(footerText())}</p>`;
 }
 
@@ -592,10 +818,9 @@ function renderList() {
   if (box && S.devices.data) box.innerHTML = renderDeviceRows(visibleDeviceHosts()); else rerender();
 }
 
+/** La scheda nel pannello si aggiorna solo se il pannello è aperto (non si apre da solo dopo una scansione). */
 function renderDetail() {
-  const old = $('#dev-detail');
-  if (!old) { rerender(); return; }
-  old.outerHTML = detailCard();
+  if (drawerEl() && (S.devices.selectedId || S.devices.node)) showDrawer();
 }
 
 /** Legge l'archivio della rete scelta; la risposta dice quale rete è stata risolta ('' diventa quella del PC). */
@@ -613,13 +838,16 @@ async function load() {
   s.loading = true;
   try {
     s.data = await fetchInventory();
-    if (s.pendingHost) { s.selectedId = s.pendingHost; s.pendingHost = null; s.tab = 'hosts'; }
+    s.topo.byNet.clear(); // i dati della topologia (presenza, nomi) si rileggono alla prossima scheda
     const ids = new Set(s.data.hosts.map((h) => h.id));
     for (const id of [...s.selected]) if (!ids.has(id)) s.selected.delete(id);
-    if (s.selectedId && !ids.has(s.selectedId) && !s.q && !s.onlyOnline) s.selectedId = null;
-    if (!s.selectedId && s.data.hosts.length) s.selectedId = s.data.hosts[0].id;
     rerender();
-    if (s.selectedId) await loadDetail(s.selectedId);
+    if (s.pendingHost) {
+      const id = s.pendingHost;
+      s.pendingHost = null;
+      s.tab = 'hosts';
+      if (ids.has(id)) openDetail(id); else toast('Il dispositivo non è più nell\'archivio.', { tone: 'warning' });
+    } else if (s.selectedId && drawerEl()) await loadDetail(s.selectedId);
   } catch (err) { toastError(err, 'Archivio non letto'); }
   s.loading = false;
 }
@@ -634,18 +862,10 @@ async function loadDetail(id) {
   } catch (err) {
     S.devices.selectedId = null;
     S.devices.detail = null;
+    closeOverlays();
     toastError(err);
     load();
   }
-}
-
-function select(id) {
-  if (!id) return;
-  S.devices.selectedId = Number(id);
-  S.devices.detail = null;
-  $$('.dev-row').forEach((r) => r.classList.toggle('is-active', Number(r.dataset.id) === S.devices.selectedId));
-  renderDetail();
-  loadDetail(S.devices.selectedId);
 }
 
 async function save() {
@@ -685,7 +905,8 @@ async function forget() {
     await call('inventoryForget', { id: det.host.id, network: S.devices.network });
     S.devices.selectedId = null;
     S.devices.detail = null;
-    toast('Dispositivo dimenticato.', { tone: 'success' });
+    closeOverlays();
+    toast(`${det.host.displayName} e la sua storia sono stati tolti dall'archivio: se ricompare nella rete sarà segnalato come nuovo.`, { tone: 'success', title: 'Dispositivo dimenticato' });
     load();
   } catch (err) { toastError(err); }
 }
@@ -795,8 +1016,12 @@ function hostMenu(anchor, id) {
 
 const actions = {
   'tab': (el) => { S.devices.tab = el.dataset.tab; rerender(); },
-  'pick-host': (el) => { if (S.devices.selectMode) toggleSelected(Number(el.dataset.id)); else select(el.dataset.id); },
+  'pick-host': (el) => { if (S.devices.selectMode) toggleSelected(Number(el.dataset.id)); else openDetail(el.dataset.id); },
   'select-mode': () => { S.devices.selectMode = !S.devices.selectMode; S.devices.selected.clear(); rerender(); },
+  'topo-list': () => { S.devices.topoList = !S.devices.topoList; S.devices.topoFilter = ''; refreshTopoSection(); },
+  'node-save': () => saveNode(),
+  'node-delete': () => { const node = openNode(); if (node) deleteTopoNode(node, S.devices.node.network); },
+  'node-unpin': () => { const node = openNode(); if (node) topoCall('topologyMove', { moves: [{ key: node.key, x: null, y: null }] }, `«${node.name}» torna al posto automatico nel disegno.`, S.devices.node.network); },
   'sel-all': () => { for (const h of visibleDeviceHosts()) S.devices.selected.add(h.id); renderList(); refreshBulkBar(); },
   'sel-none': () => { S.devices.selected.clear(); renderList(); refreshBulkBar(); },
   'bulk-trust': (el) => bulkTrust(Number(el.dataset.trust) || 0),
@@ -849,7 +1074,9 @@ on('inventory.state', (w) => {
     S.devices.network = '';
     S.devices.selectedId = null;
     S.devices.detail = null;
-    if (S.page === 'devices') load();
+    S.devices.node = null;
+    S.devices.topo.data = null;
+    if (S.page === 'devices') { closeOverlays(); load(); }
     return;
   }
   if (S.page === 'devices') updateLive();
@@ -874,8 +1101,8 @@ definePage('devices', {
   badge: () => (S.devices.badgeSeen ? 0 : ((S.st && S.st.inventory && S.st.inventory.unseen) || 0)),
   render,
   after: () => { S.devices.badgeSeen = true; bus.dispatchEvent(new Event('state')); load(); },
-  // tornando sulla pagina si riparte dalla rete in cui si trova il PC
-  leave: () => { S.devices.networkPinned = false; S.devices.network = ''; },
+  // tornando sulla pagina si riparte dalla rete in cui si trova il PC; il pannello aperto si chiude cambiando pagina
+  leave: () => { S.devices.networkPinned = false; S.devices.network = ''; S.devices.selectedId = null; S.devices.detail = null; S.devices.node = null; },
   enter: (params) => {
     if (params.host) { S.devices.pendingHost = Number(params.host); S.devices.q = ''; S.devices.onlyOnline = false; S.devices.tab = 'hosts'; S.devices.network = ''; load(); }
     if (params.tab) { S.devices.tab = params.tab; rerender(); }
@@ -883,11 +1110,19 @@ definePage('devices', {
   actions,
   onInput: (el, field) => {
     if (field === 'q') { S.devices.q = el.value; clearTimeout(searchTimer); searchTimer = setTimeout(refreshList, 180); }
+    if (field === 'topo-filter') {
+      S.devices.topoFilter = el.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { const list = $('#topo-pick-list'); if (!list) return; refreshTopoSection(); const f = $('[data-field="topo-filter"]'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }, 120);
+    }
   },
   onChange: (el, field) => {
     if (field === 'onlyOnline') { S.devices.onlyOnline = el.checked; refreshList(); }
     if (field === 'subnet') { S.devices.subnet = el.value || ''; rerender(); if (S.devices.selectedId) renderDetail(); }
-    if (field === 'network') { S.devices.network = el.value; S.devices.subnet = ''; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; S.devices.topo.data = null; S.devices.topo.collapsed.clear(); load(); }
+    if (field === 'network') { S.devices.network = el.value; S.devices.subnet = ''; S.devices.networkPinned = true; S.devices.selectedId = null; S.devices.detail = null; S.devices.node = null; closeOverlays(); S.devices.topo.data = null; S.devices.topo.collapsed.clear(); load(); }
+    const self = S.devices.node ? S.devices.node : S.devices.detail ? { key: S.devices.detail.host.key, network: S.devices.detail.host.network } : null;
+    if (self && field === 'topo-uplink') pickUplink(self.key, self.network, el.value);
+    if (self && field === 'topo-child') pickChild(self.key, self.network, el.value, el.checked);
   },
   onContext: (row, point) => hostMenu(point, row.dataset.id),
 });
