@@ -5,6 +5,23 @@ Il programma installato con il setup si aggiorna da solo: *Impostazioni → Aggi
 (fino alla 2.3: *Panoramica → Aggiornamenti*).
 Su GitHub restano solo le ultime due release: le novità di tutte le versioni sono qui.
 
+## 2.11.0 · 8 novembre 2026
+
+- **Topologia composta a mano**: nella scheda *Topologia* il selettore **Automatico / A mano**, scelta che resta per ogni
+  rete. A mano la tela parte vuota e a sinistra c'è l'**elenco** di tutto quello che non è ancora disegnato: il router, i
+  dispositivi, gli switch e gli access point già creati, e *Nuovo switch*, *Nuovo access point*, *Nuovo apparato* e la
+  *Nuvola Internet* da creare. Si **trascina** ogni oggetto dove si vuole; lasciato sopra un nodo si collega a lui e si
+  mette alla sua destra; il «+» accanto a ogni riga lo mette al centro della vista. *Togli dalla tela* (dal menu o dalla
+  scheda) lo rimanda nell'elenco con i suoi collegamenti, *Svuota la tela* rimanda tutto. Tornando all'automatico tutto
+  riappare nell'albero e le posizioni scelte restano.
+- **Scheda breve al passaggio del mouse**: fermi un attimo su un'icona della topologia compare la scheda breve: indirizzo,
+  MAC e produttore, tipo, stato e latenza, quante volte è stato visto e da quando, porte aperte, fiducia, note, a cosa è
+  collegato e quanti nodi ha sotto; per switch e access point il tipo e i collegati.
+- **Nuvola Internet con la prova della linea**: la nuvola mostra l'ultima prova della pagina *Prestazioni* (download,
+  upload, latenza, jitter, pacchetti persi, DNS, risposta del router, quando e su quale server, valutazione) nella scheda
+  breve e nella sua scheda, con *Ripeti la prova* e *Prestazioni*; il menu del tasto destro ha *Prova la linea adesso* (o
+  *Ripeti la prova della linea*) e *Vedi le prestazioni*. La prova riguarda la rete in cui si trova il PC.
+
 ## 2.10.0 · 7 novembre 2026
 
 - **Scheda del dispositivo nel pannello laterale**, come nella pagina *Rete*: nella pagina *Dispositivi* l'elenco occupa

@@ -3,13 +3,18 @@
 // non risponde); sotto l'icona il pallino dello stato e il nome, a destra il pulsante tondo per chiudere il ramo (chiuso
 // mostra quanti nodi ci sono dietro). Un nodo si trascina dove si vuole e il suo ramo lo segue (con Maiusc si sposta
 // solo lui); lasciato sopra un altro nodo si collega lì. Chi non è mai stato spostato sta al suo posto nell'albero,
-// accanto al suo nodo a monte. La rotellina ingrandisce attorno al puntatore, trascinando il fondo si scorre.
+// accanto al suo nodo a monte. La rotellina ingrandisce attorno al puntatore, trascinando il fondo si scorre. Fermandosi
+// con il mouse su un'icona compare la scheda breve (tipOf). Nel disegno a mano gli oggetti arrivano dall'elenco a lato
+// (bindTopologyPalette): si trascinano sulla tela e, lasciati sopra un nodo, si collegano lì.
 // Chi usa il modulo passa i nodi già pronti: { key, uplink, name, sub, state ('on' | 'off' | 'node'), tile (HTML
 // dell'icona), x, y (posizione salvata, oppure null) } e riceve le azioni (apri, menu, collega, sposta, chiudi ramo).
 import { esc } from './dom.js';
 
 const COL = 224; // distanza tra le colonne (un livello dell'albero)
 const ROW = 104; // distanza tra le righe
+/** I passi dell'albero, per chi mette un nodo nuovo accanto a uno esistente (es. un nuovo switch a monte di un dispositivo). */
+export const TOPO_STEP = { col: COL, row: ROW };
+const TIP_DELAY = 450; // ms fermi su un'icona prima della scheda breve
 const TILE = 52; // il riquadro dell'icona
 const PAD = 36;
 const BELOW = 40; // sotto l'icona: nome e indirizzo
@@ -233,7 +238,7 @@ export function renderTopology(host, { nodes, collapsed = new Set(), zoom = 1, m
     const info = hasKids ? branchInfo(n.key, kids) : null;
     const up = n.uplink && byKey.get(n.uplink);
     return `<div class="topo-node is-${n.state}" data-topo-key="${esc(n.key)}" style="left:${p.x - frame.x - 80}px;top:${p.y - frame.y - TILE / 2}px">
-      <button type="button" class="topo-tile" data-topo-open title="${esc(n.name)}${n.sub ? ` · ${esc(n.sub)}` : ''}${up ? ` · collegato a ${esc(up.name)}` : ''}">${n.tile}</button>
+      <button type="button" class="topo-tile" data-topo-open aria-label="${esc(n.name)}${n.sub ? ` · ${esc(n.sub)}` : ''}${up ? ` · collegato a ${esc(up.name)}` : ''}">${n.tile}</button>
       ${hasKids ? `<button type="button" class="topo-fold is-${info.tone} ${closed ? 'is-closed' : ''}" data-topo-fold title="${closed ? `Apri il ramo: ${info.count} ${info.count === 1 ? 'nodo' : 'nodi'} dietro` : 'Chiudi il ramo'}" aria-label="${closed ? 'Apri il ramo' : 'Chiudi il ramo'}">${closed ? info.count : '−'}</button>` : ''}
       <div class="topo-label"><span class="topo-dot is-${n.state}"></span><b title="${esc(n.name)}">${esc(n.name)}</b></div>
       ${n.sub ? `<small class="topo-sub mono" title="${esc(n.sub)}">${esc(n.sub)}</small>` : ''}
@@ -286,11 +291,13 @@ export function centerTopology(host, scene) {
 
 /**
  * Collega gli eventi della topologia (una volta sola sul contenitore): clic, tasto destro, rami, trascinamento dei nodi
- * e del fondo, rotellina. get() restituisce la scena attuale. Azioni: onOpen(n), onMenu(n, punto), onToggle(key),
- * onLink(n, uplinkKey), onMove([{key, x, y}]), onZoom(zoom), onIdle() (finito un trascinamento: si può ridisegnare).
- * Restituisce { busy() }: vero mentre si trascina.
+ * e del fondo, rotellina, scheda breve al passaggio del mouse. get() restituisce la scena attuale. Azioni: onOpen(n),
+ * onMenu(n, punto), onToggle(key), onLink(n, uplinkKey), onMove([{key, x, y}]), onZoom(zoom), onIdle() (finito un
+ * trascinamento: si può ridisegnare), tipOf(n) → HTML della scheda breve ('' = nessuna).
+ * Restituisce { busy() (vero mentre si trascina), pointAt(clientX, clientY) (il punto della tela sotto il puntatore e il
+ * nodo che c'è lì, null fuori dalla tela), mark(key) (evidenzia il nodo su cui si sta per lasciare qualcosa), hideTip() }.
  */
-export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMove, onZoom, onIdle }) {
+export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMove, onZoom, onIdle, tipOf = null }) {
   let press = null;     // pulsante premuto: { kind: 'node'|'pan', ... }
   let dragging = null;  // trascinamento di un nodo in corso
   let swallowClick = false;
@@ -308,6 +315,71 @@ export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMo
     const n = el ? nodeOf(el) : null;
     return n && !moving.has(n.key) ? n : null;
   };
+  const none = new Set();
+  /** Da un punto dello schermo al punto della tela (centro dell'icona, in punti del disegno) e al nodo che c'è lì. */
+  const pointAt = (cx, cy) => {
+    const scene = get();
+    if (!scene || !scene.frame) return null;
+    const r = host.getBoundingClientRect();
+    if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return null;
+    return {
+      x: Math.round((cx - r.left + host.scrollLeft) / scene.zoom + scene.frame.x),
+      y: Math.round((cy - r.top + host.scrollTop) / scene.zoom + scene.frame.y),
+      target: targetAt(cx, cy, none),
+    };
+  };
+  const mark = (key) => {
+    clear();
+    if (!key) return;
+    const el = nodeEl(key);
+    if (el) el.classList.add('is-drop-target');
+  };
+
+  // scheda breve: fermi un attimo sull'icona compare sotto (o sopra, se non c'è posto); sparisce muovendo il mouse via,
+  // premendo, con la rotellina e a ogni ridisegno
+  let tipTimer = 0;
+  let tipEl = null;
+  let tipKey = null;
+  const hideTip = () => {
+    clearTimeout(tipTimer);
+    tipTimer = 0;
+    tipKey = null;
+    if (tipEl) { tipEl.remove(); tipEl = null; }
+  };
+  const showTip = (n, tile) => {
+    if (!tipOf || press || dragging || !tile.isConnected) return;
+    const html = tipOf(n);
+    if (!html) return;
+    hideTip();
+    tipEl = document.createElement('div');
+    tipEl.className = 'topo-tip';
+    tipEl.setAttribute('role', 'tooltip');
+    tipEl.innerHTML = html;
+    document.body.appendChild(tipEl);
+    const r = tile.getBoundingClientRect();
+    const w = tipEl.offsetWidth;
+    const h = tipEl.offsetHeight;
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+    let top = r.bottom + 10;
+    if (top + h > window.innerHeight - 8) top = r.top - h - 10;
+    tipEl.style.left = `${left}px`;
+    tipEl.style.top = `${Math.max(8, top)}px`;
+    tipKey = n.key;
+  };
+  host.addEventListener('mouseover', (e) => {
+    const tile = e.target.closest ? e.target.closest('.topo-tile') : null;
+    if (!tile || press || dragging) return;
+    const n = nodeOf(tile);
+    if (!n || n.key === tipKey) return;
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => showTip(n, tile), TIP_DELAY);
+  });
+  host.addEventListener('mouseout', (e) => {
+    const tile = e.target.closest ? e.target.closest('.topo-tile') : null;
+    if (!tile || (e.relatedTarget && tile.contains(e.relatedTarget))) return;
+    hideTip();
+  });
+  host.addEventListener('mouseleave', hideTip);
 
   host.addEventListener('click', (e) => {
     if (swallowClick) { swallowClick = false; e.stopPropagation(); return; }
@@ -329,6 +401,7 @@ export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMo
   host.addEventListener('wheel', (e) => {
     const scene = get();
     if (!scene || !scene.frame) return;
+    hideTip();
     if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
     e.preventDefault();
     const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
@@ -338,6 +411,7 @@ export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMo
   }, { passive: false });
 
   host.addEventListener('pointerdown', (e) => {
+    hideTip();
     if (e.button !== 0 || press) return;
     if (e.target.closest('[data-topo-fold]')) return;
     const n = nodeOf(e.target);
@@ -431,5 +505,86 @@ export function bindTopology(host, get, { onOpen, onMenu, onLink, onToggle, onMo
   host.addEventListener('pointerup', finish);
   host.addEventListener('pointercancel', finish);
 
-  return { busy: () => !!dragging };
+  return { busy: () => !!dragging, pointAt, mark, hideTip };
+}
+
+/**
+ * L'elenco a lato del disegno a mano: ogni riga [data-topo-item="chiave"] si trascina sulla tela (host) con un'ombra
+ * che segue il puntatore; lasciata sulla tela chiama onDrop(chiave, { x, y, target }) con il punto del disegno e il nodo
+ * che c'è lì (si collega a lui), fuori dalla tela non succede nulla; Esc annulla. ctl è quello di bindTopology.
+ */
+export function bindTopologyPalette(palette, host, ctl, { onDrop }) {
+  let press = null; // { key, row, x, y }
+  let drag = null;  // { key, row, ghost, point }
+
+  const cancel = () => {
+    if (drag) {
+      drag.ghost.remove();
+      drag.row.classList.remove('is-dragging');
+      host.classList.remove('is-drop');
+      ctl.mark(null);
+    }
+    document.body.classList.remove('is-topo-dragging');
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', cancel);
+    document.removeEventListener('keydown', onKey);
+    press = null;
+    drag = null;
+  };
+  const onKey = (e) => { if (e.key === 'Escape') cancel(); };
+
+  const start = () => {
+    const row = press.row;
+    const ghost = document.createElement('div');
+    ghost.className = 'topo-ghost';
+    const tile = row.querySelector('.cat-icon, .icon');
+    const name = row.querySelector('b');
+    ghost.innerHTML = `${tile ? tile.outerHTML : ''}<span>${name ? esc(name.textContent) : ''}</span>`;
+    document.body.appendChild(ghost);
+    row.classList.add('is-dragging');
+    document.body.classList.add('is-topo-dragging');
+    ctl.hideTip();
+    drag = { key: press.key, row, ghost, point: null };
+  };
+
+  const move = (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    if (!drag) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
+      start();
+    }
+    drag.ghost.style.left = `${e.clientX}px`;
+    drag.ghost.style.top = `${e.clientY}px`;
+    const pt = ctl.pointAt(e.clientX, e.clientY);
+    drag.point = pt;
+    host.classList.toggle('is-drop', !!pt);
+    ctl.mark(pt && pt.target ? pt.target.key : null);
+    if (!pt) return;
+    // vicino al bordo la tela scorre da sola
+    const r = host.getBoundingClientRect();
+    const edge = 28;
+    if (e.clientX < r.left + edge) host.scrollLeft -= 12; else if (e.clientX > r.right - edge) host.scrollLeft += 12;
+    if (e.clientY < r.top + edge) host.scrollTop -= 12; else if (e.clientY > r.bottom - edge) host.scrollTop += 12;
+  };
+
+  const up = (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    const d = drag;
+    cancel();
+    if (d && d.point) onDrop(d.key, d.point);
+  };
+
+  palette.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || press) return;
+    if (e.target.closest('button, input, a')) return;
+    const row = e.target.closest('[data-topo-item]');
+    if (!row || !palette.contains(row)) return;
+    e.preventDefault();
+    press = { key: row.dataset.topoItem, row, x: e.clientX, y: e.clientY, id: e.pointerId };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', cancel);
+    document.addEventListener('keydown', onKey);
+  });
 }

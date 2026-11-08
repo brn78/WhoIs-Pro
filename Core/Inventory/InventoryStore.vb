@@ -90,6 +90,7 @@ Namespace Inventory
                     gateway_mac  TEXT,
                     alias        TEXT,
                     dhcp_range   TEXT,
+                    topo_manual  INTEGER NOT NULL DEFAULT 0,
                     first_seen   TEXT NOT NULL,
                     last_seen    TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS net_hosts (
@@ -151,7 +152,10 @@ Namespace Inventory
             If Not hostColumns.Contains("topo_y") Then Execute("ALTER TABLE net_hosts ADD COLUMN topo_y REAL")
             If Not hostColumns.Contains("network_key") Then MigrateToNetworks()
             ' 2.8.2: intervallo DHCP dichiarato dall'utente per ogni rete
-            If Not Columns("net_networks").Contains("dhcp_range") Then Execute("ALTER TABLE net_networks ADD COLUMN dhcp_range TEXT")
+            Dim networkColumns = Columns("net_networks")
+            If Not networkColumns.Contains("dhcp_range") Then Execute("ALTER TABLE net_networks ADD COLUMN dhcp_range TEXT")
+            ' 2.11: topologia composta a mano (tela vuota, oggetti trascinati dall'elenco) invece dell'albero automatico
+            If Not networkColumns.Contains("topo_manual") Then Execute("ALTER TABLE net_networks ADD COLUMN topo_manual INTEGER NOT NULL DEFAULT 0")
         End Sub
 
         ''' <summary>

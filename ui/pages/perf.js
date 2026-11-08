@@ -14,6 +14,9 @@ const running = () => !!(S.st && S.st.running.perf);
 const n1 = (v) => (v == null ? '—' : fmtNumber(Math.round(v * 10) / 10));
 /** Millisecondi: sotto 1 ms (il ping di Windows arrotonda a 0) si scrive «< 1». */
 const ms = (v) => (v == null ? '—' : v < 1 ? '< 1' : n1(v));
+export { n1 as perfNumber, ms as perfMs };
+/** Una riga con l'essenziale di un test: «287,4 Mbit/s in download · 96,2 in upload · 9,4 ms» (anche per la nuvola Internet della topologia). */
+export const perfSummary = (r) => `${n1(r.downloadMbps)} Mbit/s in download · ${n1(r.uploadMbps)} in upload · ${r.internet && r.internet.received ? `${n1(r.internet.avgMs)} ms` : 'Internet non risponde al ping'}`;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Valutazione: ogni misura da 0 (scarsa) a 3 (ottima), poi un giudizio complessivo e gli usi
@@ -205,8 +208,7 @@ on('perf.done', (d) => {
   else if (r.error) toast(r.error, { tone: 'error', title: 'Test non riuscito' });
   else {
     const g = grade(r);
-    toast(`${n1(r.downloadMbps)} Mbit/s in download · ${n1(r.uploadMbps)} in upload · ${r.internet && r.internet.received ? `${n1(r.internet.avgMs)} ms` : 'Internet non risponde al ping'}.`,
-      { tone: g && g.level >= 2 ? 'success' : 'warning', title: `Connessione ${g ? g.word : 'misurata'}` });
+    toast(`${perfSummary(r)}.`, { tone: g && g.level >= 2 ? 'success' : 'warning', title: `Connessione ${g ? g.word : 'misurata'}` });
   }
 });
 
@@ -214,6 +216,8 @@ definePage('perf', {
   title: 'Prestazioni', heading: 'Prestazioni della rete', icon: 'zap', section: 'scan', order: 5,
   badge: () => (S.data.perf || []).length,
   render,
+  // dalla nuvola Internet della topologia («Prova la linea adesso») si arriva qui con il test già avviato
+  enter: (params) => { if (params.start) start(); },
   actions: {
     'perf-start': () => start(),
     'perf-stop': () => call('perfStop').catch(toastError),

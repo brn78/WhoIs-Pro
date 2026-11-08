@@ -185,6 +185,7 @@ Namespace UI
                 Case "topologyNodeSave" : Return TopologyEdit(args, Sub() TopologyNodeSave(args))
                 Case "topologyNodeDelete" : Return TopologyEdit(args, Sub() _store.Network.DeleteTopoNode(ArgLong(args, "id")))
                 Case "topologyReset" : Return TopologyEdit(args, Sub() _store.Network.ResetTopology(TopologyNetworkKey(ArgText(args, "network"))))
+                Case "topologyMode" : Return TopologyEdit(args, Sub() _store.Network.SetTopologyManual(TopologyNetworkKey(ArgText(args, "network")), ArgFlag(args, "manual")))
                 Case "inventoryForgetNetwork"
                     If _watch.IsScanning Then Throw New UserMessageException("C'è una scansione in corso: aspetta che finisca prima di dimenticare una rete.")
                     _store.Network.DeleteNetwork(ArgText(args, "key"))
@@ -1493,15 +1494,23 @@ Namespace UI
             Return key
         End Function
 
-        ''' <summary>Dispositivi e nodi virtuali di una rete, con i collegamenti e le posizioni scelte, per la scheda Topologia.</summary>
+        ''' <summary>
+        ''' Dispositivi e nodi virtuali di una rete, con i collegamenti e le posizioni scelte, per la scheda Topologia; manual
+        ''' dice se il disegno è composto a mano. Se la rete è quella della sessione arriva anche l'ultimo test delle
+        ''' prestazioni (perf), che la nuvola Internet mostra; sessionNetwork dice se il test si può fare da qui.
+        ''' </summary>
         Private Function TopologyView(networkArg As String) As Object
             Dim key = TopologyNetworkKey(networkArg)
             Dim inv = _store.Network
-            Dim names = inv.ListNetworks().ToDictionary(Function(n) n.Key, Function(n) n.DisplayName, StringComparer.Ordinal)
-            Dim name As String = Nothing
-            names.TryGetValue(key, name)
+            Dim networks = inv.ListNetworks()
+            Dim names = networks.ToDictionary(Function(n) n.Key, Function(n) n.DisplayName, StringComparer.Ordinal)
+            Dim net = networks.FirstOrDefault(Function(n) n.Key = key)
+            Dim isSession = String.Equals(_session.NetworkKey, key, StringComparison.Ordinal)
+            Dim perf As PerfResult = Nothing
+            If isSession AndAlso _session.PerfTests IsNot Nothing AndAlso _session.PerfTests.Count > 0 Then perf = _session.PerfTests(_session.PerfTests.Count - 1)
             Return New With {
-                .network = key, .name = If(name, key),
+                .network = key, .name = If(net?.DisplayName, key), .manual = net IsNot Nothing AndAlso net.TopoManual,
+                .sessionNetwork = isSession, .perf = perf,
                 .hosts = inv.ListHosts("", False, key).Select(Function(h) HostView(h, False, names)).ToList(),
                 .nodes = inv.ListTopoNodes(key).Select(Function(n) New With {.id = n.Id, .key = n.Key, .kind = n.Kind, .name = n.Name, .uplink = n.Uplink, .topoX = n.TopoX, .topoY = n.TopoY}).ToList()
             }
@@ -1520,7 +1529,8 @@ Namespace UI
         ''' <summary>
         ''' Nuovo nodo virtuale (senza id) oppure nome e tipo di uno esistente. Dalla scheda di un dispositivo («Collegato a:
         ''' nuovo switch») arrivano anche uplink, il nodo a monte del nuovo apparato (il posto che aveva il dispositivo), e
-        ''' attach, il dispositivo da collegare sotto di lui: lo switch si mette in mezzo con una sola operazione.
+        ''' attach, il dispositivo da collegare sotto di lui: lo switch si mette in mezzo con una sola operazione. Dall'elenco
+        ''' del disegno a mano arrivano x e y: il nuovo nodo nasce già sulla tela, dove è stato lasciato.
         ''' </summary>
         Private Sub TopologyNodeSave(args As JsonElement)
             Dim inv = _store.Network
@@ -1530,21 +1540,33 @@ Namespace UI
             If Not String.IsNullOrWhiteSpace(uplink) Then inv.SetUplink(node.Key, uplink)
             Dim attach = ArgText(args, "attach")
             If Not String.IsNullOrWhiteSpace(attach) Then inv.SetUplink(attach, node.Key)
+            Dim x = OptionalNumber(args, "x")
+            Dim y = OptionalNumber(args, "y")
+            If x.HasValue AndAlso y.HasValue Then inv.SetPosition(node.Key, x, y)
         End Sub
 
-        ''' <summary>Posizioni appena trascinate, moves = [{key, x, y}]; x e y nulli = torna al posto automatico.</summary>
+        ''' <summary>
+        ''' Posizioni appena trascinate, moves = [{key, x, y, uplink?}]; x e y nulli = torna al posto automatico (o, nel disegno a
+        ''' mano, nell'elenco). uplink arriva quando un oggetto dell'elenco è stato lasciato sopra un nodo: prima il collegamento
+        ''' (può essere rifiutato: giro chiuso), poi la posizione.
+        ''' </summary>
         Private Sub TopologyMove(args As JsonElement)
             Dim moves As JsonElement
             If args.ValueKind <> JsonValueKind.Object OrElse Not args.TryGetProperty("moves", moves) OrElse moves.ValueKind <> JsonValueKind.Array Then Return
             For Each m In moves.EnumerateArray()
-                Dim x As JsonElement, y As JsonElement
-                Dim px As Double? = Nothing
-                Dim py As Double? = Nothing
-                If m.TryGetProperty("x", x) AndAlso x.ValueKind = JsonValueKind.Number Then px = x.GetDouble()
-                If m.TryGetProperty("y", y) AndAlso y.ValueKind = JsonValueKind.Number Then py = y.GetDouble()
-                _store.Network.SetPosition(ArgText(m, "key"), px, py)
+                Dim key = ArgText(m, "key")
+                Dim up As JsonElement
+                If m.ValueKind = JsonValueKind.Object AndAlso m.TryGetProperty("uplink", up) AndAlso up.ValueKind = JsonValueKind.String Then _store.Network.SetUplink(key, up.GetString())
+                _store.Network.SetPosition(key, OptionalNumber(m, "x"), OptionalNumber(m, "y"))
             Next
         End Sub
+
+        ''' <summary>Numero facoltativo in un oggetto JSON (le coordinate del disegno): Nothing se manca o è nullo.</summary>
+        Private Shared Function OptionalNumber(el As JsonElement, name As String) As Double?
+            Dim v As JsonElement
+            If el.ValueKind = JsonValueKind.Object AndAlso el.TryGetProperty(name, v) AndAlso v.ValueKind = JsonValueKind.Number Then Return v.GetDouble()
+            Return Nothing
+        End Function
 
 #End Region
 

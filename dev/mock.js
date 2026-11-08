@@ -74,7 +74,14 @@
     { kind: 'network', target: '192.168.1.0/24', at: ago(190), seconds: 12.4, found: 13, cancelled: false, error: '' },
   ];
   scans.reverse(); // nel programma lo storico è in ordine di tempo, la più recente in fondo
-  const session = { hosts, ports, whois, dns, trace, scans };
+  // prova della linea (pagina Prestazioni), mostrata anche dalla nuvola Internet della topologia
+  const perf = [{
+    at: ago(95), adapter: 'Ethernet', linkMbps: 1000,
+    local: { target: '192.168.1.1', sent: 20, received: 20, minMs: 0.4, avgMs: 0.9, maxMs: 2.1, jitterMs: 0.3, lossPct: 0 },
+    internet: { target: '1.1.1.1', sent: 20, received: 20, minMs: 7.1, avgMs: 9.4, maxMs: 14.2, jitterMs: 1.8, lossPct: 0 },
+    dnsMs: 21.3, downloadMbps: 287.4, uploadMbps: 96.2, server: 'Cloudflare · MXP', seconds: 21.4, cancelled: false, error: '',
+  }];
+  const session = { hosts, ports, whois, dns, trace, scans, perf };
 
   const adapters = [
     { name: 'Ethernet', description: 'Intel(R) Ethernet Connection I219-LM', ip: '192.168.1.80', mask: '255.255.255.0', gateway: '192.168.1.1', mac: '58:11:22:80:80:80', cidr: '192.168.1.0/24' },
@@ -157,7 +164,7 @@
   // archivio della rete (pagina Dispositivi): gli stessi host della sessione come li vede l'archivio, una seconda rete
   // visitata in passato, qualche cambiamento e le scansioni registrate
   const NET = 'gw:3c:a6:2f:11:22:01';
-  const invCurrent = { key: NET, label: '192.168.1.0/24 · FRITZ!Box', alias: 'Villa Bianchi', name: 'Villa Bianchi', hasGateway: true, cidr: '192.168.1.0/24', dhcpRange: '192.168.1.100-192.168.1.199' };
+  const invCurrent = { key: NET, label: '192.168.1.0/24 · FRITZ!Box', alias: 'Villa Bianchi', name: 'Villa Bianchi', hasGateway: true, cidr: '192.168.1.0/24', dhcpRange: '192.168.1.100-192.168.1.199', topoManual: false };
   const invNetworks = [
     { ...invCurrent, gatewayIp: '192.168.1.1', hostsCount: hosts.length, onlineCount: hosts.length - 1, scansCount: 6, lastScanAt: ago(4), lastSeen: ago(4), unseen: 2, isCurrent: true, isSession: true },
     { key: 'gw:aa:bb:cc:00:00:01', label: '192.168.50.0/24 · router', alias: 'Studio Verdi', name: 'Studio Verdi', hasGateway: true, cidr: '192.168.50.0/24', gatewayIp: '192.168.50.1', hostsCount: 3, onlineCount: 0, scansCount: 2, lastScanAt: ago(3000), lastSeen: ago(3000), unseen: 0, isCurrent: false, isSession: false },
@@ -177,7 +184,7 @@
   const topoNodes = [{ id: 1, key: 'v:1', kind: 'switch', name: 'Switch armadio', uplink: null, topoX: null, topoY: null }];
   let topoSeq = 1;
   const topoFind = (key) => invHosts.find((h) => h.key === key) || topoNodes.find((n) => n.key === key) || null;
-  const topologyView = () => ({ network: NET, name: invCurrent.name, hosts: invHosts, nodes: topoNodes });
+  const topologyView = () => ({ network: NET, name: invCurrent.name, hosts: invHosts, nodes: topoNodes, manual: invCurrent.topoManual, sessionNetwork: true, perf: perf.length ? perf[perf.length - 1] : null });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.10'), { alias: 'NAS ufficio', trust: 1, displayName: 'NAS ufficio', sensitivePorts: ['445 · SMB: condivisioni di file esposte'] });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.80'), { sensitivePorts: ['3389 · Desktop remoto (RDP)'] });
   Object.assign(invHosts.find((h) => h.ip === '192.168.1.102'), { trust: 2, notes: 'Telefono mai visto prima, compare la sera' });
@@ -251,14 +258,23 @@
       n.uplink = a.uplink || null;
       return topologyView();
     },
-    topologyMove: (a) => { for (const m of a.moves || []) { const n = topoFind(m.key); if (n) { n.topoX = m.x == null ? null : m.x; n.topoY = m.y == null ? null : m.y; } } return topologyView(); },
+    // moves = [{key, x, y, uplink?}]: uplink arriva dall'elenco del disegno a mano (lasciato sopra un nodo), prima della posizione
+    topologyMove: (a) => {
+      for (const m of a.moves || []) {
+        if (typeof m.uplink === 'string') handlers.topologyLink({ key: m.key, uplink: m.uplink });
+        const n = topoFind(m.key);
+        if (n) { n.topoX = m.x == null ? null : m.x; n.topoY = m.y == null ? null : m.y; }
+      }
+      return topologyView();
+    },
+    topologyMode: (a) => { invCurrent.topoManual = !!a.manual; return topologyView(); },
     topologyNodeSave: (a) => {
       const kind = String(a.kind || 'other');
       if (a.id) { const n = topoNodes.find((x) => x.id === Number(a.id)); if (n) { n.name = String(a.name || n.name).trim() || n.name; n.kind = kind; } return topologyView(); }
       if (kind === 'internet' && topoNodes.some((n) => n.kind === 'internet')) return topologyView();
       topoSeq += 1;
       const names = { internet: 'Internet', switch: 'Switch', ap: 'Access point', other: 'Apparato' };
-      const node = { id: topoSeq, key: `v:${topoSeq}`, kind, name: String(a.name || '').trim() || names[kind] || 'Apparato', uplink: a.uplink || null, topoX: null, topoY: null };
+      const node = { id: topoSeq, key: `v:${topoSeq}`, kind, name: String(a.name || '').trim() || names[kind] || 'Apparato', uplink: a.uplink || null, topoX: a.x == null ? null : a.x, topoY: a.y == null ? null : a.y };
       topoNodes.push(node);
       // attach: il dispositivo dalla cui scheda nasce il nodo si collega sotto di lui (il nodo prende il suo posto)
       if (a.attach) { const child = topoFind(a.attach); if (child) child.uplink = node.key; }

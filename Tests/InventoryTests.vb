@@ -162,6 +162,23 @@ Namespace WhoIsPro.Tests
         End Sub
 
         <Test>
+        Public Sub Topology_ManualDrawingIsPerNetwork()
+            store.Network.RecordScan(ReportA(New DateTime(2026, 10, 1, 9, 0, 0)))
+            Dim net = store.Network.ListNetworks().Single()
+            Dim nas = store.Network.ListHosts().Single(Function(h) h.HostName = "nas-prova")
+            Assert.That(net.TopoManual, [Is].False, "all'inizio il disegno è automatico")
+
+            ' il disegno a mano è una scelta della rete: posizioni e collegamenti non cambiano passando da un disegno all'altro
+            store.Network.SetPosition("h:" & nas.Id, 300, 120)
+            store.Network.SetTopologyManual(net.Key, True)
+            Assert.That(store.Network.GetNetwork(net.Key).TopoManual, [Is].True)
+            Assert.That(store.Network.Get(nas.Id).TopoX, [Is].EqualTo(300))
+            store.Network.SetTopologyManual(net.Key, False)
+            Assert.That(store.Network.ListNetworks().Single().TopoManual, [Is].False)
+            Assert.That(store.Network.Get(nas.Id).TopoX, [Is].EqualTo(300))
+        End Sub
+
+        <Test>
         Public Sub DhcpRange_NormalizedStoredAndCleared()
             Assert.That(NetworkInventory.NormalizeDhcpRange("192.168.1.100-199"), [Is].EqualTo("192.168.1.100-192.168.1.199"))
             Assert.That(NetworkInventory.NormalizeDhcpRange(" 192.168.1.199 - 192.168.1.100 "), [Is].EqualTo("192.168.1.100-192.168.1.199"), "in ordine anche se scritto al contrario")

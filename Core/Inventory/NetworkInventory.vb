@@ -128,6 +128,8 @@ Namespace Inventory
         Public Property [Alias] As String
         ''' <summary>Intervallo DHCP dichiarato dall'utente («192.168.1.100-192.168.1.199»): dentro gli indirizzi assegnati dal router, fuori quelli fissi. Nothing se non impostato.</summary>
         Public Property DhcpRange As String
+        ''' <summary>Topologia composta a mano: la tela mostra solo i nodi con una posizione scelta, gli altri stanno nell'elenco a lato. False = albero automatico.</summary>
+        Public Property TopoManual As Boolean
         Public Property FirstSeen As DateTime
         Public Property LastSeen As DateTime
         Public Property HostsCount As Integer
@@ -295,7 +297,7 @@ Namespace Inventory
                         (SELECT COUNT(*) FROM net_scans s WHERE s.network_key = n.key),
                         (SELECT s.started_at FROM net_scans s WHERE s.network_key = n.key ORDER BY s.id DESC LIMIT 1),
                         (SELECT COUNT(*) FROM net_events e WHERE e.network_key = n.key AND e.acknowledged = 0),
-                        n.dhcp_range
+                        n.dhcp_range, n.topo_manual
                     FROM net_networks n" & If(onlyKey Is Nothing, " ORDER BY n.last_seen DESC", " WHERE n.key = $k")
                 Using cmd = If(onlyKey Is Nothing, _store.Command(sql), _store.Command(sql, ("$k", onlyKey)))
                     Using r = cmd.ExecuteReader()
@@ -305,7 +307,7 @@ Namespace Inventory
                                 .FirstSeen = InventoryStore.Parse(r.GetString(6)), .LastSeen = InventoryStore.Parse(r.GetString(7)),
                                 .HostsCount = r.GetInt32(8), .OnlineCount = r.GetInt32(9), .ScansCount = r.GetInt32(10),
                                 .LastScanAt = If(r.IsDBNull(11), CType(Nothing, DateTime?), InventoryStore.Parse(r.GetString(11))), .Unseen = r.GetInt32(12),
-                                .DhcpRange = Text(r, 13)
+                                .DhcpRange = Text(r, 13), .TopoManual = Not r.IsDBNull(14) AndAlso r.GetInt64(14) <> 0
                             })
                         End While
                     End Using
@@ -474,7 +476,15 @@ Namespace Inventory
             _store.Execute($"UPDATE {TableOf(kind)} SET topo_x = $x, topo_y = $y WHERE id = $id", ("$x", x), ("$y", y), ("$id", id))
         End Sub
 
-        ''' <summary>«Disposizione automatica»: via le posizioni scelte a mano in una rete; i collegamenti restano.</summary>
+        ''' <summary>
+        ''' Disegno della topologia di una rete: a mano (True: la tela mostra solo i nodi con una posizione, gli altri stanno
+        ''' nell'elenco da trascinare) oppure automatico (False: tutti nell'albero). Posizioni e collegamenti non cambiano.
+        ''' </summary>
+        Public Sub SetTopologyManual(networkKey As String, manual As Boolean)
+            _store.Execute("UPDATE net_networks SET topo_manual = $m WHERE key = $k", ("$m", If(manual, 1, 0)), ("$k", networkKey))
+        End Sub
+
+        ''' <summary>«Disposizione automatica» (o «Svuota la tela» nel disegno a mano): via le posizioni scelte in una rete; i collegamenti restano.</summary>
         Public Sub ResetTopology(networkKey As String)
             SyncLock _lock
                 _store.Execute("UPDATE net_hosts SET topo_x = NULL, topo_y = NULL WHERE network_key = $n", ("$n", networkKey))

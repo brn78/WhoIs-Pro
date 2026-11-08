@@ -60,8 +60,10 @@ le dai un **nome** («Cliente Rossi», «Casa») e vedi i **cambiamenti** di que
 assente. A ogni dispositivo dai **nome**, **icona**, **fiducia** (da classificare, affidabile, sospetto) e **note**,
 anche a più dispositivi insieme con **Seleziona**; la scheda, nel pannello laterale ridimensionabile, mostra porte,
 storia, i servizi esposti **da verificare** e a cosa è **collegato**. La scheda **Topologia** disegna la rete ad albero
-(Internet → router → switch → dispositivi): aggiungi la nuvola Internet, gli switch e gli access point che la scansione
-non vede, collega i dispositivi trascinandoli o con la spunta nella scheda di ogni nodo. **Scansioni automatiche** a intervalli e
+(Internet → router → switch → dispositivi) oppure, a scelta per ogni rete, la **componi a mano** su una tela vuota
+trascinando router, dispositivi e apparati dall'elenco a lato: aggiungi la nuvola Internet (con l'ultima prova della
+linea), gli switch e gli access point che la scansione non vede, collega i dispositivi trascinandoli o con la spunta nella
+scheda di ogni nodo; fermo con il mouse su un'icona vedi la scheda breve. **Scansioni automatiche** a intervalli e
 **avvisi** in basso a destra quando compare un dispositivo nuovo o ne ricompare uno sospetto. La **sessione si salva
 da sola**, una per rete, e si riapre quando torni in quella rete.
 

@@ -1703,6 +1703,56 @@ table.dt td.dt-sel .dev-check { display: inline-grid; vertical-align: middle; }
 .topo-pick .topo-pick-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; flex: 1 1 auto; }
 .topo-pick .topo-pick-text b { font-weight: 600; }
 .topo-pick .topo-pick-text small { color: var(--muted); font-size: 12px; }
+
+/* disegno a mano: l'elenco a lato della tela (righe trascinabili, «+» al passaggio), l'ombra che segue il puntatore,
+   la tela pronta a ricevere, l'invito sulla tela vuota */
+.topo-wrap { display: flex; align-items: stretch; min-width: 0; }
+.topo-wrap > .topo { flex: 1 1 auto; min-width: 0; }
+.topo-palette { flex: 0 0 272px; display: flex; flex-direction: column; min-width: 0; height: max(380px, calc(100vh - 330px)); border-right: 1px solid var(--border); background: var(--surface); }
+.topo-palette-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text); }
+.topo-palette-head > .icon { color: var(--muted); }
+.topo-palette-head b { flex: 1 1 auto; font-weight: 650; }
+.topo-palette-search { flex: 0 0 auto; max-width: none; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.topo-palette-search .icon { left: 20px; }
+.topo-palette-search .input { height: 30px; width: 100%; }
+.topo-palette-list { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.topo-palette-group { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.topo-item { position: relative; padding-right: 40px; cursor: grab; }
+.topo-item.is-new > .icon { color: var(--primary-text); }
+.topo-item.is-new .topo-pick-text b { font-weight: 560; color: var(--text-2); }
+.topo-item.is-off .cat-icon { opacity: .55; }
+.topo-item.is-dragging { opacity: .45; }
+.topo-item .topo-item-add { position: absolute; right: 6px; top: 50%; width: 28px; height: 28px; transform: translateY(-50%); opacity: 0; transition: opacity .12s ease; }
+.topo-item:hover .topo-item-add, .topo-item .topo-item-add:focus-visible { opacity: 1; }
+.topo-palette-empty { padding: 24px 14px; margin: 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+body.is-topo-dragging, body.is-topo-dragging * { cursor: grabbing !important; user-select: none !important; }
+.topo-ghost { position: fixed; z-index: 300; display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 8px; border: 1px solid var(--primary); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-lg); color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; pointer-events: none; transform: translate(-50%, -50%); }
+.topo-ghost .cat-icon { width: 26px; height: 26px; }
+.topo-ghost .cat-icon .icon { width: 14px; height: 14px; }
+.topo-ghost > .icon { width: 20px; height: 20px; color: var(--primary-text); }
+.topo.is-drop { box-shadow: inset 0 0 0 2px var(--primary); }
+.topo-hint { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--muted); pointer-events: none; }
+.topo-hint > .icon { width: 36px; height: 36px; color: var(--faint); margin-bottom: 4px; }
+.topo-hint b { color: var(--text-2); font-size: 14px; }
+.topo-hint p { max-width: 400px; margin: 0; font-size: 13px; }
+.topo-foot .topo-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* scheda breve di un nodo, fermi col mouse sull'icona */
+.topo-tip { position: fixed; z-index: 190; width: 300px; max-width: calc(100vw - 16px); padding: 10px 12px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); color: var(--text-2); font-size: 12.5px; line-height: 1.35; pointer-events: none; animation: menuIn .12s var(--ease); }
+.topo-tip .tip-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.topo-tip .tip-head > div { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.topo-tip .tip-head b { color: var(--text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-tip .tip-head small { color: var(--muted); font-size: 12px; }
+.topo-tip .tip-head .cat-icon { width: 30px; height: 30px; flex: 0 0 auto; }
+.topo-tip .tip-head .cat-icon .icon { width: 17px; height: 17px; }
+.topo-tip .tip-head > .icon { width: 24px; height: 24px; color: var(--muted); }
+.topo-tip .tip-row { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 2px 10px; padding: 2px 0; }
+.topo-tip .tip-row span { color: var(--muted); }
+.topo-tip .tip-row b { font-weight: 560; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.topo-tip .tip-row b b { font-weight: 700; }
+.topo-tip .tip-row .mono { font-size: 12px; }
+.topo-tip .pill { height: 20px; font-size: 11px; }
+.topo-tip .tip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border); color: var(--faint); font-size: 11.5px; }
 .trust-seg { display: flex; width: 100%; height: 36px; align-items: center; }
 .trust-seg button { flex: 1 1 0; min-width: 0; padding: 0 6px; height: 28px; overflow: hidden; text-overflow: ellipsis; }
 .trust-seg button.is-active:nth-child(2) { color: var(--success-text); }
